@@ -55,6 +55,11 @@ local const={
   regexOrderCodeNew="([D%d]%d%d%-%d%d%d%d%d%d%d%-%d%d%d%d%d%d%d)",
   regexPriceOld="EUR%s+(%d+),(%d%d)",
   regexPriceNew="€(%d+),(%d%d)",
+  -- 2024+ layout writes the currency after the amount, e.g. "169,98€" / "0,00 €"
+  regexPriceEur="(%d+),(%d%d)%s*€",
+  -- order details page; the order code is appended. The legacy /gp/css/... paths
+  -- 301-redirect here. Overridable via the orderDetailsUrl account-setting.
+  orderDetailsUrl="/your-orders/order-details?orderID=",
   str2date = {
     Januar=1,
     January=1,
@@ -196,10 +201,12 @@ if debug ~= nil then
 end
 local baseurl='https://www'..const.domain
 
-WebBanking{version  = 1.23,
+-- NOTE: version must be a Lua number (no letters). To mark this as an
+-- unofficial build the "(beta)" tag is added to the description instead.
+WebBanking{version  = 1.24,
   url         = baseurl,
   services    = const.services,
-  description = const.description}
+  description = const.description.." (beta)"}
 
 function debugBuffer.tablePrint(tbl)
   local t={}
@@ -547,9 +554,15 @@ function getPrice(text)
   if type(text)~='string' then
     return invalidPrice
   end
-  local amountHigh,amountLow=string.match(text:gsub("%.",""),const.regexPriceNew)
+  -- normalize non-breaking spaces (UTF-8 \194\160 and latin1 \160) to plain
+  -- spaces so "%s" matches between amount and currency, then drop thousands dots
+  local stripped=text:gsub("\194\160"," "):gsub("\160"," "):gsub("%.","")
+  local amountHigh,amountLow=string.match(stripped,const.regexPriceEur)
   if amountHigh == nil or amountLow == nil then
-    amountHigh,amountLow=string.match(text:gsub("%.",""),const.regexPriceOld)
+    amountHigh,amountLow=string.match(stripped,const.regexPriceNew)
+  end
+  if amountHigh == nil or amountLow == nil then
+    amountHigh,amountLow=string.match(stripped,const.regexPriceOld)
   end
   --debugBuffer.print(text,amountHigh,amountLow)
   if amountHigh == nil or amountLow == nil then
@@ -567,6 +580,27 @@ function getQty(text)
     return qty
   end
   return invalidQty
+end
+
+function trim(text)
+  if type(text)~='string' then
+    return ''
+  end
+  return (text:gsub('^%s+',''):gsub('%s+$',''):gsub('%s+',' '))
+end
+
+-- 2024+ detail layout: the quantity component is empty for single items and
+-- holds a number (or "Menge: n") otherwise.
+function getQtyNew(text)
+  local n=tonumber((text or ''):match('%d+'))
+  if n ~= nil and n > 0 then
+    return n
+  end
+  return 1
+end
+
+function buildDetailsUrl(orderCode)
+  return const.orderDetailsUrl..orderCode
 end
 
 function getQtyFromElement(element)
@@ -696,16 +730,60 @@ end
 
 
 function getTotalsFromDetails(orderDetails)
-  local totals={} --#totals
+  local totals={orderTotal=invalidPrice,refund=0} --#totals
 
-  local xPathPrefix=('//div[contains(@id,"od-subtotals")]//div[contains(@class,"a-span-last")]//')
-  totals.orderTotal=getPrice(getLastElementText(orderDetails,xPathPrefix,'span[contains(@class,"a-color-base") and contains(@class,"a-text-bold")]'))
-  totals.refund=getPrice(getLastElementText(orderDetails,xPathPrefix,'span[contains(@class,"a-color-success") and contains(@class,"a-text-bold")]'))
-  if totals.refund ==invalidPrice then
-    totals.refund=0
+  -- 2024+ layout: order summary is a list of "od-line-item-row" rows; the grand
+  -- total ("Gesamtsumme") is the bold row. Anchor on the label, fall back to the
+  -- last bold row so we stay robust to localized wording.
+  local labelTotal=invalidPrice
+  local lastBold=invalidPrice
+  orderDetails:xpath('.//div[contains(@class,"od-line-item-row")]'):each(function(index,row)
+    local label=row:xpath('.//*[contains(@class,"od-line-item-row-label")]'):text()
+    local value=getPrice(row:xpath('.//*[contains(@class,"od-line-item-row-content")]'):text())
+    if value ~= invalidPrice and not label:find("Erstattung") then
+      if label:find("Gesamtsumme") or label:find("Grand Total") then
+        labelTotal=value
+      end
+      if row:xpath('.//*[contains(@class,"a-text-bold")]'):length() > 0 then
+        lastBold=value
+      end
+    end
+  end)
+  if labelTotal ~= invalidPrice then
+    totals.orderTotal=labelTotal
+  elseif lastBold ~= invalidPrice then
+    totals.orderTotal=lastBold
   end
+
   return totals
 
+end
+
+--- @function getPositionsFromDetails
+-- 2024+ layout: each purchased item is a "purchasedItemsRightGrid" block holding
+-- data-component itemTitle / unitPrice / quantity. Fills order.orderPositions
+-- and order.orderSum.
+-- @param #table orderDetails
+-- @param #order order
+function getPositionsFromDetails(orderDetails,order)
+  order.orderPositions={}
+  order.orderSum=0
+  orderDetails:xpath('.//*[@data-component="purchasedItemsRightGrid"]'):each(function(index,item)
+    local purpose=trim(item:xpath('.//*[@data-component="itemTitle"]'):text())
+    local priceText=item:xpath('.//*[@data-component="unitPrice"]//*[contains(@class,"a-offscreen")]'):text()
+    if priceText == '' then
+      priceText=item:xpath('.//*[@data-component="unitPrice"]'):text()
+    end
+    local amount=getPrice(priceText)
+    local qty=getQtyNew(item:xpath('.//*[@data-component="quantity"]'):text())
+    if purpose ~= '' and amount ~= invalidPrice then
+      table.insert(order.orderPositions,{purpose=purpose,amount=amount,qty=qty})
+      order.orderSum=order.orderSum+amount*qty
+    else
+      order.invalidArticles=true
+      --debugBuffer.print("invalid article",order.orderCode,purpose,amount,qty)
+    end
+  end)
 end
 
 --- @function  getArticleFromShipment
@@ -829,6 +907,30 @@ function getRefundTransActions(orderDetails,order)
   return
 end
 
+--- @function getRefundFromDetails
+-- 2024+ layout: a refunded/returned order keeps all items in the order summary
+-- and adds a "Summe der Erstattung" row with the refunded amount. There is no
+-- refund date in the DOM, so we book it on the order date (best available).
+-- @param #table orderDetails
+-- @param #order order
+function getRefundFromDetails(orderDetails,order)
+  local bookingDate=order.bookingDate
+  if bookingDate == nil or bookingDate == invalidDate then
+    bookingDate=os.time()
+  end
+  orderDetails:xpath('.//div[contains(@class,"od-line-item-row")][.//*[contains(@class,"od-line-item-row-label")]]'):each(function(index,row)
+    local label=row:xpath('.//*[contains(@class,"od-line-item-row-label")]'):text()
+    if label:find("Erstattung") then
+      local amount=getPrice(row:xpath('.//*[contains(@class,"od-line-item-row-content")]'):text())
+      if amount ~= invalidPrice and amount > 0 then
+        makeBranch(order,{'refundTransactions',bookingDate,amount})
+        --debugBuffer.print("refund",order.orderCode,amount)
+      end
+    end
+  end)
+  return
+end
+
 
 --- @function getOrderaddress
 -- @param #table html
@@ -838,82 +940,95 @@ end
 
 function getOrderaddress(orderDetails,order)
   if order.endToEndReference == nil then
-    local name=orderDetails:xpath('//div[contains(@class,"od-shipping-address-container")]//div[@class="a-row"]'):text()
-    local address=orderDetails:xpath('//div[contains(@class,"od-shipping-address-container")]//div[@class="displayAddressDiv"]'):text()
-
-    if name ~='' and address ~= '' then
-      name=name.." "..address
-    elseif name == '' then
-      name=address
+    -- 2024+ layout: shippingAddress component, address split over <li> items.
+    local parts={}
+    orderDetails:xpath('.//*[@data-component="shippingAddress"]//li'):each(function(index,li)
+      local t=trim(li:text())
+      if t ~= '' then
+        table.insert(parts,t)
+      end
+    end)
+    if #parts == 0 then
+      -- legacy layout fallback
+      local name=orderDetails:xpath('//div[contains(@class,"od-shipping-address-container")]//div[@class="a-row"]'):text()
+      local address=orderDetails:xpath('//div[contains(@class,"od-shipping-address-container")]//div[@class="displayAddressDiv"]'):text()
+      if name ~= '' then table.insert(parts,trim(name)) end
+      if address ~= '' then table.insert(parts,trim(address)) end
     end
-
-    if name ~= '' then
-      order.endToEndReference=name
+    if #parts > 0 then
+      order.endToEndReference=table.concat(parts," ")
     end
   end
 end
 
 --- @function getOrderDetails
+-- Fetches and parses an order's "Bestelldetails" page (2024+ layout). The order
+-- list no longer exposes per-order data (the cards are client-side encrypted),
+-- so the details page is the source of truth for date, total, items and address.
 -- @param #order order
 -- @return
 --
 function getOrderDetails(order)
   debugBuffer.context=order.orderCode
-  if order.detailsUrl ~= "" then
-    --debugBuffer.print("getOrderDetails")
-    local html=connectShopWithCheck("GET",order.detailsUrl)
-    local orderDetails=html:xpath('//div[contains(@id,"orderDetails")]')
-    if orderDetails:text() ~="" then
-      local totals=getTotalsFromDetails(html)
-      --debugBuffer.print("total error",order.orderCode,"order",order.orderTotal , "totals",totals.orderTotal)
-      local doInsert=#order.orderPositions == 0
-      if doInsert then
-        order.orderSum=0
-      end
-      local shipments=orderDetails:xpath('.//div[contains(concat(" ", normalize-space(@class), " "), " a-box shipment ")]')
-      if shipments:text()=='' then
-        shipments=orderDetails:xpath('./div[contains(concat(" ", normalize-space(@class), " "), " a-box ")]')
-      end
-      shipments:each( function(index,shipment)
-        getArticleFromShipment(shipment,order,doInsert)
-      end)
-      getReturnsFromDetails(orderDetails,order)
-      getRefundTransActions(orderDetails,order)
-      getOrderaddress(orderDetails,order)
-      order.detailsDate=os.time()+math.floor((math.random()*90+90)*24*60*60) -- distribute rescans randomly in future
-    else
-      debugBuffer.print("getOrderDetails no details",order.orderCode)
+  if order.detailsUrl == nil or order.detailsUrl == "" then
+    order.detailsUrl=buildDetailsUrl(order.orderCode)
+  end
+  local html=connectShopWithCheck("GET",order.detailsUrl)
+  local orderDetails=html:xpath('//div[contains(@id,"orderDetails")]')
+  if orderDetails:text() ~= "" then
+    local date=getDate(orderDetails:xpath('.//*[@data-component="orderDate"]'):text())
+    if date ~= invalidDate then
+      order.bookingDate=date
     end
+
+    local totals=getTotalsFromDetails(orderDetails)
+    if totals.orderTotal ~= invalidPrice then
+      order.orderTotal=totals.orderTotal
+    end
+    order.refund=totals.refund
+
+    getPositionsFromDetails(orderDetails,order)
+    if order.invalidArticles ~= nil then
+      order.orderPositions={}
+      order.orderSum=0
+      order.invalidArticles=nil
+    end
+
+    getRefundFromDetails(orderDetails,order)
+    getOrderaddress(orderDetails,order)
+    order.detailsDate=os.time()+math.floor((math.random()*90+90)*24*60*60) -- distribute rescans randomly in future
   else
-    -- no handling for digital orders
-    order.detailsDate=os.time()+math.floor((math.random()*90+90)*24*60*60) -- distribute rescans in future
+    debugBuffer.print("getOrderDetails no details",order.orderCode)
   end
   debugBuffer.context=''
 end
 
+--- @function getOrdersFromSummary
+-- 2024+ layout: order cards (div.order-card) carry the order code in their
+-- data-csa-c-slot-id attribute even though the card body is encrypted. We only
+-- enumerate the codes here; getOrderDetails fills in everything else.
 function getOrdersFromSummary(html)
   local orders={}
-  html:xpath('//div[contains(@id,"ordersContainer") or contains(@class,"orders-content-container")]//div[contains(@class," order") and  .//div[contains(@class," order-info")]]'):each(function(index,orderBox)
-    local orderInfo=orderBox:xpath('.//div[contains(@class,"order-info")]')
-    local order={orderPositions={},orderSum=0,refund=0,detailsDate=2} -- #order
-    if getOrderInfosFromSummaryHeader(orderInfo,order) then
-      orderBox:xpath('.//div[not(contains(@class,"order-info"))]//div[contains(@class,"a-box-inner")]'):each(function(index,shipment)
-        if isShipmentShorted(shipment) then
-          order.detailsDate=0
-          --debugBuffer.print("shorted",order.orderCode)
-        else
-          getArticleFromShipment(shipment,order)
-        end
-      end) -- shipment
-      if order.invalidArticles ~= nil then
-        order.orderPositions={}
-        order.invalidArticles=nil
-      end
-      orders[order.orderCode]=order
+  html:xpath('//div[contains(@class,"order-card")]'):each(function(index,card)
+    local orderCode=getOrderCode(card:attr("data-csa-c-slot-id"))
+    if orderCode == nil then
+      orderCode=getOrderCode(card:html())
+    end
+    if orderCode ~= nil and orders[orderCode] == nil then
+      orders[orderCode]={
+        orderCode=orderCode,
+        orderPositions={},
+        orderSum=0,
+        orderTotal=0,
+        refund=0,
+        bookingDate=os.time(),
+        detailsDate=0, -- force detail fetch; the list page has no per-order data
+        detailsUrl=buildDetailsUrl(orderCode),
+      }
     end
     debugBuffer.flush()
     debugBuffer.context=''
-  end) -- orderbox
+  end) -- order card
   return orders
 end
 

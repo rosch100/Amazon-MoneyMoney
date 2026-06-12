@@ -1,0 +1,11 @@
+# Personal data: saved Amazon HTML pages used for local parser tests
+test/pages/
+
+# Plugin runtime artifacts (written by the plugin when run with filesystem access)
+amazon_orders.json
+amazon-debug.log
+webCache/
+
+# Regression-test artifacts (written into MoneyMoney's Data dir at runtime)
+*_transactions.json
+*_transactions_master.json
