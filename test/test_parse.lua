@@ -117,5 +117,18 @@ do
   check(o.orderTotal == 1500, "orderTotal 15,00")
 end
 
+------------------------------------------------------------------ QTY > 1
+print("== details-quantity-other-than-1.html ==")
+do
+  local o = parseDetail("details-quantity-other-than-1.html", "304-2173771-7757910")
+  dump(o)
+  check(#o.orderPositions == 1, "1 position")
+  check(o.orderPositions[1] and o.orderPositions[1].qty == 2, "quantity 2 (from badge)")
+  check(o.orderPositions[1] and o.orderPositions[1].amount == 1159, "unit price 11,59")
+  check(o.orderSum == 2318, "orderSum 23,18 (2 x 11,59)")
+  check(o.orderTotal == 2086, "orderTotal 20,86 (Gesamtsumme after coupon)")
+  check(o.orderSum - o.orderTotal == 232, "difference 2,32 (coupon)")
+end
+
 print(string.rep("-", 50))
 if fails == 0 then print("ALL TESTS PASSED") else print(fails .. " CHECK(S) FAILED"); os.exit(1) end

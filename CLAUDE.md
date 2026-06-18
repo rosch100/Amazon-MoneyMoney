@@ -78,7 +78,10 @@ the MoneyMoney plugin contract.
   - `orderDate` ("20. Dezember 2025"), `orderId` ("304-…").
   - Items: each `div[data-component="purchasedItemsRightGrid"]` holds sibling
     `itemTitle`, `unitPrice` (price in `span.a-offscreen`, e.g. "169,98€"),
-    `quantity` (empty = 1), `orderedMerchant`.
+    `quantity` (this component is ALWAYS empty), `orderedMerchant`. The real
+    quantity for qty>1 is a badge over the image: `div.od-item-view-qty > span`
+    in the item's left grid (read via ancestor `a-fixed-left-grid-inner`).
+    `unitPrice` is the PER-ITEM price, so the line total = unitPrice * qty.
   - Totals: `div.od-line-item-row` rows with `.od-line-item-row-label` /
     `.od-line-item-row-content`. Grand total = **Gesamtsumme** (bold, last row);
     e.g. multi: items 33,97 − coupon 1,82 = Gesamtsumme 32,15.

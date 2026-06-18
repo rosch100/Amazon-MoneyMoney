@@ -775,7 +775,13 @@ function getPositionsFromDetails(orderDetails,order)
       priceText=item:xpath('.//*[@data-component="unitPrice"]'):text()
     end
     local amount=getPrice(priceText)
-    local qty=getQtyNew(item:xpath('.//*[@data-component="quantity"]'):text())
+    -- quantity (>1) is shown as a badge over the item image (od-item-view-qty)
+    -- in the enclosing item container, NOT in the (empty) quantity component.
+    local qtyText=item:xpath('ancestor::div[contains(concat(" ",normalize-space(@class)," ")," a-fixed-left-grid-inner ")][1]//div[contains(@class,"od-item-view-qty")]'):text()
+    if qtyText == '' then
+      qtyText=item:xpath('.//*[@data-component="quantity"]'):text()
+    end
+    local qty=getQtyNew(qtyText)
     if purpose ~= '' and amount ~= invalidPrice then
       table.insert(order.orderPositions,{purpose=purpose,amount=amount,qty=qty})
       order.orderSum=order.orderSum+amount*qty
