@@ -116,3 +116,15 @@ repeat runs stay fast. detailsUrl built via const.orderDetailsUrl + code.
   sample; per-item partial refund detail; refund date approximated by order date.
 - Minor: address `<br>` between street and city yields "Chattenweg 4Hünfeld"
   (no space). Cosmetic (endToEndReference only).
+- FIXED (2026-07, from a user-reported MoneyMoney log): `getMessageList()`
+  (~L1086, checks Amazon's message center to flag orders needing a rescan)
+  crashed the whole run. New `/gp/message` layout no longer has the
+  `script[@type contains "a-state"]` it read the ajaxToken from, so
+  `ajaxToken` came back `nil` — but the old `if ajaxToken ~= "" then` check
+  let it fall through anyway into a hardcoded fallback URL that literally sent
+  `token=stateData.token` (a JS placeholder, never a real token) to
+  `/gp/msg/cntr/message-list/`. That 404'd, which the MoneyMoney host turns
+  into a fatal, run-aborting error. Fix: bail out and return no orders when
+  ajaxToken is missing, and removed the dead stateData.token fallback in
+  `getMessageListURL`/`getMessageURL`/`getMessageList` (it never worked).
+  Covered by `test/test_messagelist.lua`.
