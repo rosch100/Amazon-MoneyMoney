@@ -52,7 +52,7 @@ the MoneyMoney plugin contract.
   Connection/WebBanking; io=nil so it behaves like the signed build) and
   returns the env so tests can call its globals (e.g. `getOrdersFromSummary`).
 - `test/selftest.lua` — runs the real `getOrdersFromSummary` against a synthetic
-  OLD-layout page; passes. Proves the shim + sandbox loading works.
+  2024+ order-card page; passes. Proves the shim + sandbox loading works.
 - `test/pages/` — drop saved raw HTML pages here (named per scenario).
 - The Lua file must stay single-file for MoneyMoney; the harness loads it and
   calls its global functions rather than modifying its structure.
