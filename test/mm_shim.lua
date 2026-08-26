@@ -146,7 +146,27 @@ function M.loadPlugin(path)
   function JSONmeta:set(d) self._d = d; return self end
   function JSONmeta:json() return "{}" end
   local function JSON(s)
-    return setmetatable({ _d = {} }, JSONmeta)
+    local d = {}
+    if type(s) == "string" then
+      if s:match("^%s*<") then
+        error("JSON: HTML content")
+      end
+      -- Minimal object parser for offline tests (flat objects: strings, booleans, numbers).
+      for k, v in s:gmatch('"([^"]+)"%s*:%s*"([^"]*)"') do
+        d[k] = v
+      end
+      for k, v in s:gmatch('"([^"]+)"%s*:%s*(true|false)') do
+        if d[k] == nil then
+          d[k] = (v == "true")
+        end
+      end
+      for k, v in s:gmatch('"([^"]+)"%s*:%s*(%-?%d+%.?%d*)') do
+        if d[k] == nil then
+          d[k] = tonumber(v)
+        end
+      end
+    end
+    return setmetatable({ _d = d }, JSONmeta)
   end
 
   -- Provide standard library + host stubs; fall back to real _G for the rest.

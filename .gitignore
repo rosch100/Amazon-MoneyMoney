@@ -6,6 +6,10 @@ amazon_orders.json
 amazon-debug.log
 webCache/
 
+# Local MoneyMoney session logs / analysis dumps (not for git)
+Log/
+HAR/
+
 # Regression-test artifacts (written into MoneyMoney's Data dir at runtime)
 *_transactions.json
 *_transactions_master.json

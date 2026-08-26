@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html><body>
+<div id="cvf-page-content">
+  <div data-test-id="switchableAccounts" class="a-section">
+    <form method="post" action="/ap/removeaccount"
+          class="cvf-widget-form cvf-widget-form-account-switcher a-spacing-none">
+      <a data-name="sign_out_request" data-value="DUMMY_SIGN_OUT"></a>
+      <input type="hidden" name="CsrfToken" value="DUMMY_CSRF"/>
+      <input type="hidden" name="anti-csrftoken-a2z" value="DUMMY_ANTI_CSRF"/>
+    </form>
+  </div>
+  <div data-test-id="switchableAccounts" class="a-section">
+    <form method="post" action="/ap/switchaccount?ref_=switch_atc"
+          data-use-only-form-action="true"
+          class="cvf-widget-form cvf-widget-form-account-switcher a-spacing-none">
+      <a role="button" href="#"
+         data-name="switch_account_request"
+         data-value="DUMMY_SWITCH_TOKEN_PERSONAL"
+         class="cvf-widget-btn-verify-account-switcher"></a>
+      <div class="cvf-account-switcher-personal-account-icon"></div>
+      <div data-test-id="customerName">Test User</div>
+      <span data-test-id="accountType">Personal account</span>
+      <div data-test-id="businessName"></div>
+      <input type="hidden" name="CsrfToken" value="DUMMY_CSRF_PERSONAL"/>
+      <input type="hidden" name="anti-csrftoken-a2z" value="DUMMY_ANTI_PERSONAL"/>
+    </form>
+  </div>
+  <div data-test-id="switchableAccounts" class="a-section">
+    <form method="post" action="/ax/signin/switchaccount?ref_=switch_atb"
+          data-use-only-form-action="true"
+          class="cvf-widget-form cvf-widget-form-account-switcher a-spacing-none">
+      <a role="button" href="#"
+         data-name="switch_account_request"
+         data-value="DUMMY_SWITCH_TOKEN_BUSINESS"
+         class="cvf-widget-btn-verify-account-switcher"></a>
+      <div class="cvf-account-switcher-business-account-icon"></div>
+      <div data-test-id="customerName">Test User</div>
+      <span data-test-id="accountType">Business account</span>
+      <div data-test-id="businessName">Example GmbH</div>
+      <input type="hidden" name="CsrfToken" value="DUMMY_CSRF_BUSINESS"/>
+      <input type="hidden" name="anti-csrftoken-a2z" value="DUMMY_ANTI_BUSINESS"/>
+    </form>
+  </div>
+</div>
+</body></html>
