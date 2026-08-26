@@ -38,7 +38,7 @@ local function dump(order)
   for i, p in ipairs(order.orderPositions) do
     print(string.format("     [%d] qty=%s amount=%s  %s", i, tostring(p.qty), eur(p.amount), (p.purpose or ""):sub(1, 60)))
   end
-  if order.endToEndReference then print("     addr: " .. order.endToEndReference) end
+  if order.shippingAddress then print("     addr: " .. order.shippingAddress) end
 end
 
 ------------------------------------------------------------------ LIST
@@ -67,7 +67,7 @@ do
   check(o.orderPositions[1] and o.orderPositions[1].amount == 16998, "position amount 169,98")
   check(o.orderPositions[1] and o.orderPositions[1].qty == 1, "position qty 1")
   check(o.orderSum == 16998, "orderSum 169,98")
-  check(o.endToEndReference and o.endToEndReference:find("Chattenweg") ~= nil, "address captured")
+  check(o.shippingAddress and o.shippingAddress:find("Chattenweg") ~= nil, "address captured")
 end
 
 ------------------------------------------------------------------ MULTI
