@@ -36,7 +36,8 @@ env.connectShopRaw = function(method, urlArg, postContent, contentType, headers)
   return ""
 end
 
-local csv = env.harvestAbaReportContent("items_report_1", "PAST_12_MONTHS", reportUiHtml)
+local csv = env.tryHarvestAbaCsvFromHtmlPage(
+  reportUiHtml, "items_report_1", "PAST_12_MONTHS", reportUiHtml, "test")
 assert(csv ~= nil, "expected CSV from download link in report HTML")
 assert(csv:find("303-5555555-6666666", 1, true), csv)
 

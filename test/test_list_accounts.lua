@@ -4,17 +4,16 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
-env.LocalStorage = { getOrders = {} }
+env.LocalStorage = {}
 
 local onlyShared = env.ListAccounts({})
 assert(#onlyShared == 1, "without discovery only shared account, got " .. #onlyShared)
 assert(onlyShared[1].accountNumber == "mix")
 assert(onlyShared[1].name:find("Amazon", 1, true))
-assert(env.LocalStorage.getOrders["mix"] == false, "new mix needs reload")
 
 env.rememberDiscoveredSubAccounts({
   { kind = "personal", label = "Persönliches Konto" },
-  { kind = "business", label = "Altanis GmbH" },
+  { kind = "business", label = "Example GmbH" },
 })
 assert(#env.LocalStorage.discoveredSubAccounts == 2)
 
@@ -24,16 +23,15 @@ local byNum = {}
 for _, a in ipairs(listed) do byNum[a.accountNumber] = a end
 assert(byNum["mix"] ~= nil)
 assert(byNum["sub:personal"].name == "Amazon Persönliches Konto")
-assert(byNum["sub:business"].name == "Amazon Altanis GmbH")
+assert(byNum["sub:business"].name == "Amazon Example GmbH")
 
--- Known accounts: do not reset getOrders that already refreshed
-env.LocalStorage.getOrders["mix"] = true
-env.LocalStorage.getOrders["sub:personal"] = true
+-- Known accounts: ListAccounts stays stable (no getOrders / reload gate)
+env.clearPendingInitialSync()
+env.clearAccountSetupState()
+env.LocalStorage.lastHarvestSince = os.time()
 local listedKnown = env.ListAccounts({ "mix", "sub:personal" })
 assert(#listedKnown == 3)
-assert(env.LocalStorage.getOrders["mix"] == true, "known mix must keep getOrders")
-assert(env.LocalStorage.getOrders["sub:personal"] == true)
-assert(env.LocalStorage.getOrders["sub:business"] == false, "new sub still needs reload")
+assert(env.isPendingInitialSync() == false, "account search must not trigger initial full import")
 
 assert(env.subAccountNumberForKind("personal") == "sub:personal")
 assert(env.subAccountNumberForKind("business") == "sub:business")
@@ -44,7 +42,7 @@ assert(env.orderMatchesMoneyMoneyAccount({ subAccountKind = "business" }, "sub:b
 assert(env.orderMatchesMoneyMoneyAccount({ subAccountKind = "personal" }, "sub:business") == false)
 
 -- Legacy cache: label only → backfill kind from discovery
-local legacy = { accountNumber = "Altanis GmbH" }
+local legacy = { accountNumber = "Example GmbH" }
 assert(env.orderMatchesMoneyMoneyAccount(legacy, "sub:business") == true)
 assert(legacy.subAccountKind == "business")
 assert(env.orderNeedsDetailsForAccount({ detailsDate = 1, subAccountKind = "personal" }, 100, "sub:business") == false)
@@ -52,8 +50,8 @@ assert(env.orderNeedsDetailsForAccount({ detailsDate = 1, subAccountKind = "busi
 assert(env.orderNeedsDetailsForAccount({ detailsDate = 1, subAccountKind = "personal" }, 100, "mix") == true)
 
 local order = {}
-env.assignSubAccountMeta(order, "Altanis GmbH", "business")
-assert(order.accountNumber == "Altanis GmbH")
+env.assignSubAccountMeta(order, "Example GmbH", "business")
+assert(order.accountNumber == "Example GmbH")
 assert(order.subAccountKind == "business")
 
 print("test_list_accounts OK")

@@ -90,14 +90,14 @@ assert(env.decodeSwitchAccountRedirect('{"ok":true}') == nil)
 assert(env.decodeSwitchAccountRedirect("") == nil)
 
 local order = {
-  accountNumber = "Altanis GmbH",
-  mandateReference = "MasterCard **** 2022",
-  shippingAddress = "Roland Musterweg 1",
+  accountNumber = "Example GmbH",
+  mandateReference = "MasterCard **** 0000",
+  shippingAddress = "Alex Beispielweg 1",
 }
 local tx = env.makeAccountTransaction(order, "303-1234567-1234567", "USB-Kabel", -9.99, 1700000000)
-assert(tx.accountNumber == "Altanis GmbH", "Unterkonto must be accountNumber")
-assert(tx.batchReference == "Roland Musterweg 1", "Lieferadresse in batchReference")
-assert(tx.bookingText == "Roland Musterweg 1", "Lieferadresse in bookingText (Umsatzart)")
+assert(tx.accountNumber == "Example GmbH", "Unterkonto must be accountNumber")
+assert(tx.batchReference == "Alex Beispielweg 1", "Lieferadresse in batchReference")
+assert(tx.bookingText == "Alex Beispielweg 1", "Lieferadresse in bookingText (Umsatzart)")
 assert(tx.endToEndReference == "303-1234567-1234567", "Referenz must be Bestellnummer")
 assert(tx.name == "USB-Kabel")
 assert(tx.purpose == "USB-Kabel")
@@ -114,7 +114,7 @@ assert(cache["302-1111111-1111111"].accountNumber == "Persönliches Konto")
 assert(cache["302-1111111-1111111"].subAccountKind == "personal")
 
 -- Switch failure must surface (no silent fallback to current session)
-env.LocalStorage = { loginCounter = 1, OrderCache = {}, getOrders = {} }
+env.LocalStorage = { loginCounter = 1, OrderCache = {} }
 env.openAccountSwitcherEmbed = function()
   return mm.HTML(fixture)
 end
@@ -130,7 +130,7 @@ assert(count == nil and type(err) == "string" and err:find("fehlgeschlagen", 1, 
 
 -- Successful switches scrape each sub-account with kind
 local calls = {}
-env.LocalStorage = { loginCounter = 2, OrderCache = {}, getOrders = {} }
+env.LocalStorage = { loginCounter = 2, OrderCache = {} }
 env.switchAmazonSubAccount = function()
   return { ok = true }
 end
@@ -149,7 +149,7 @@ assert(env.LocalStorage.subAccountScan.incomplete ~= true)
 
 -- discoverAmazonSubAccounts: switcher only, never harvests orders
 local discoverCalls = 0
-env.LocalStorage = { loginCounter = 10, OrderCache = {}, getOrders = {} }
+env.LocalStorage = { loginCounter = 10, OrderCache = {} }
 env.openAccountSwitcherEmbed = function()
   return mm.HTML(fixture)
 end
@@ -167,7 +167,7 @@ assert(discoverCalls == 0)
 
 -- Switcher unavailable at start: no options → scrape current session only
 local softCalls = {}
-env.LocalStorage = { loginCounter = 3, OrderCache = {}, getOrders = {} }
+env.LocalStorage = { loginCounter = 3, OrderCache = {} }
 env.openAccountSwitcherEmbed = function()
   return nil
 end
@@ -185,7 +185,6 @@ assert(softCalls[1].label == "")
 env.LocalStorage = {
   loginCounter = 4,
   OrderCache = {},
-  getOrders = {},
   subAccountScan = {
     phase = "running",
     plan = {
@@ -232,7 +231,6 @@ assert(env.LocalStorage.subAccountScan.incomplete ~= true)
 env.LocalStorage = {
   loginCounter = 5,
   OrderCache = {},
-  getOrders = {},
   subAccountScan = { phase = "await_mfa", plan = {}, index = 1, totalNew = 0, loginCounter = 5 },
 }
 env.continueSubAccountScan = function()

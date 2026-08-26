@@ -7,14 +7,14 @@ local env = mm.loadPlugin("amazon-orders.lua")
 
 local businessHome = mm.HTML([[
 <html><body>
-<span class="abnav-accountfor">Konto für Altanis GmbH </span>
+<span class="abnav-accountfor">Konto für Example GmbH </span>
 <a id="nav-orders" href="/gp/css/order-history?ref_=abn_yadd_ad_your_orders">Bestellungen</a>
 </body></html>]])
 
 assert(env.isAmazonBusinessSession(businessHome) == true)
 assert(env.isAmazonBusinessSession(mm.HTML("<html><body></body></html>")) == false)
 
-local cssUrl = env.buildCssOrderHistoryUrl(nil)
+local cssUrl = env.buildOrderHistoryUrl("css")
 assert(cssUrl:find("/gp/css/order-history", 1, true))
 assert(cssUrl:find("ref_=nav_orders_first", 1, true))
 assert(not cssUrl:find("abn_yadd", 1, true), "must not use Business SPA nav ref")

@@ -12,7 +12,7 @@ Order ID,Title,Amount
 ]]
 
 local cache = {}
-local found, foundNew, n = env.mergeOrdersFromRawText(csv, cache, "Altanis GmbH", "business")
+local found, foundNew, n = env.mergeOrdersFromRawText(csv, cache, "Example GmbH", "business")
 assert(found == true)
 assert(foundNew == true)
 assert(n == 2, "expected 2 orders from CSV text, got " .. tostring(n))
