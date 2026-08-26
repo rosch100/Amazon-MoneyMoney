@@ -63,7 +63,8 @@ end
 
 env.MM.sleep = function() end
 
-local csv = env.harvestAbaReportContent("items_report_1", "PAST_12_MONTHS", landingHtml)
+local csv = env.tryHarvestAbaCsvFromHtmlPage(
+  landingHtml, "items_report_1", "PAST_12_MONTHS", landingHtml, "test")
 assert(csv ~= nil, "expected rollupTable JSON harvest")
 assert(csv:find("303-5555555-6666666", 1, true), csv)
 assert(rollupGets >= 1, "expected rollupTable GET")
@@ -74,11 +75,14 @@ assert(id == "675e43a1-9003-4435-bcb6-c5211506491f", id)
 assert(ts == "1787721955", ts)
 
 assert(env.isAbaHtmlDocument(htmlOrders))
-assert(env.rawTextHasHarvestableOrders(htmlOrders))
+assert(env.countPlausibleOrdersInRawText(htmlOrders) >= 1)
 assert(env.countPlausibleOrdersInRawText(htmlOrders) >= 2)
 assert(htmlOrders:find("303-1111111-2222222", 1, true))
 assert(htmlOrders:find("303-3333333-4444444", 1, true))
 assert(env.harvestAbaOrdersFromHtml == nil, "HTML order scrape helper removed from harvest path")
+assert(env.harvestAbaReportContent == nil)
+assert(env.rawTextHasHarvestableOrders == nil)
+assert(env.fetchAbaCsvFromUrl == nil)
 
 rollupGets = 0
 schedGets = 0
@@ -103,7 +107,8 @@ env.connectShopRaw = function(method, urlArg)
   return landingHtml
 end
 
-local csv2 = env.harvestAbaReportContent("items_report_1", "PAST_12_MONTHS", landingHtml)
+local csv2 = env.tryHarvestAbaCsvFromHtmlPage(
+  landingHtml, "items_report_1", "PAST_12_MONTHS", landingHtml, "test")
 assert(csv2 ~= nil, "expected scheduler/download fallback")
 assert(csv2:find("303-9999999-8888888", 1, true), csv2)
 assert(rollupGets >= 1)

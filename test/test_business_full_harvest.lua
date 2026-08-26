@@ -59,7 +59,7 @@ local jobs = env.enumerateAbaReportJobs(nil, os.time())
 assert(#jobs == 1, "full harvest must use exactly one ABA job")
 assert(jobs[1].span == "PAST_12_MONTHS")
 
-local n, err = env.collectBusinessSpaOrders("Altanis GmbH", "business", 0)
+local n, err = env.collectBusinessSpaOrders("Example GmbH", "business", 0)
 assert(err == nil, tostring(err))
 assert(n >= 2, "expected new orders from ABA and/or GET, got " .. tostring(n))
 assert(rollupCalls == 1, "expected one rollupTable call, got " .. tostring(rollupCalls))

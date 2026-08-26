@@ -28,13 +28,13 @@ histFile:close()
 local hist = mm.HTML(histHtml)
 
 local cache = {}
-local found, foundNew, n = env.mergeOrdersFromPage(hist, cache, "Altanis GmbH", "business")
+local found, foundNew, n = env.mergeOrdersFromPage(hist, cache, "Example GmbH", "business")
 if n == 0 then
-  found, foundNew, n = env.mergeOrdersFromRawText(histHtml, cache, "Altanis GmbH", "business")
+  found, foundNew, n = env.mergeOrdersFromRawText(histHtml, cache, "Example GmbH", "business")
 end
 assert(found == true)
 assert(n == 2, "expected 2 new orders, got " .. tostring(n))
 assert(cache["303-1111111-2222222"].subAccountKind == "business")
-assert(cache["303-3333333-4444444"].accountNumber == "Altanis GmbH")
+assert(cache["303-3333333-4444444"].accountNumber == "Example GmbH")
 
 print("test_ab_order_history OK")

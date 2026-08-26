@@ -1,6 +1,6 @@
 -- Amazon Plugin for https://moneymoney-app.com
 --
--- Plugin Homepage https://github.com/Michael-Beutling/Amazon-MoneyMoney
+-- Plugin Homepage https://github.com/rosch100/Amazon-MoneyMoney
 --
 -- Copyright 2019-2023 Michael Beutling
 
@@ -42,8 +42,7 @@ local webCacheHit=false
 local webCacheState='start'
 local invalidPrice=1e99
 local invalidDate=1e99
-local invalidQty=1e99
-local cacheVersion=16
+local cacheVersion=20
 local debugBuffer={context=''}
 local webCacheLastId=nil
 
@@ -62,9 +61,12 @@ local config={
   cookieLanguage='',
   rescanOrder='',
   blackListOrders='',
+  keepStorno=false,
 }
 
+local daySeconds=24*60*60
 local const={
+  daySeconds=daySeconds,
   regexOrderCodeNew="([D%d]%d%d%-%d%d%d%d%d%d%d%-%d%d%d%d%d%d%d)",
   regexPriceOld="EUR%s+(%d+),(%d%d)",
   regexPriceNew="€(%d+),(%d%d)",
@@ -100,26 +102,28 @@ local const={
   domain='.amazon.de',
   services    = {"Amazon Orders"},
   description = "Give you an overview about your amazon orders.",
-  contra="Amazon contra ",
   returnText="Returned item: ",
-  returnTextContra="Amazon contra returned item: ",
   refundTransaction="Refund for order ",
-  refundTransactionContra="Amazon contra refund for order ",
+  floatingBalanceName="Amazon Ausgleich",
+  floatingBalancePurpose="Saldoausgleich (wird bei jedem Abruf aktualisiert)",
+  floatingBalanceRef="AMAZON-AUSGLEICH",
+  fullReimportStatus="Amazon: Alle Umsätze dieses Kontos in MoneyMoney löschen, danach resetCache in den Notizen setzen und erneut abrufen.",
   fixEncoding='latin1',
-  differenceText='Difference (shipping costs, coupon etc.)',
+  residualText='Bestelldifferenz',
+  stornoText='Storno',
   xpathOrderHistoryLink='//a[@id="nav-orders" or contains(@href,"/order-history")]',
   xpathOrderMonthForm="//form[contains(@action,'order')][.//option]",
   xpathOrderMonthSelect='//select[@name="orderFilter" or @name="timeFilter"]',
+  -- Classic unified order history (form + GET orderFilter=).
   orderListLink='/gp/your-account/order-history?unifiedOrders=1',
-  orderListLinkBusiness='/ab/your-orders',
   -- Retail-style list with explicit timeFilter (works for Business session without SPA XHR).
   yourOrdersTimeFilterPath='/your-orders/orders',
   yourOrdersTimeFilterRef='ppx_yo2ov_dt_b_filter_all',
-  classicOrderFilterPath='/gp/your-account/order-history?unifiedOrders=1',
   -- Server-rendered order cards on Amazon Business (nav SPA link is AB shell).
   cssOrderHistoryPath='/gp/css/order-history',
   cssOrderHistoryRef='nav_orders_first',
   businessHomepageAfterSwitch='/gp/css/homepage.html?ref_=nav_youraccount_switchacct',
+  businessHomepageYourAccount='/gp/css/homepage.html?ref_=nav_youraccount_btn',
   abaLandingPath='/b2b/aba/',
   abaItemsReportPath='/b2b/aba/reports',
   abaRollupTablePath='/b2b/aba/ajax/v2/report/rollupTable',
@@ -134,7 +138,7 @@ local const={
   abaFullHarvestSpan='PAST_12_MONTHS',
   abaCustomRangeSpan='CUSTOM_RANGE',
   abaCoverageMonths=12,
-  abaIncrementalMaxAgeSec=366 * 24 * 60 * 60,
+  abaIncrementalMaxAgeSec=366 * daySeconds,
   abaLandingMarkers={
     'reportType', 'items_report', 'dateSpanSelection',
     'Business Analytics', 'Geschäftsanalyse', 'Beschaffungsanalysen', 'dashboard',
@@ -145,7 +149,8 @@ local const={
   },
   monthlyContra="monthy contra",
   yearlyContra="yearly contra",
-  daysByMonth={31,28,31,30,31,30,31,31,30,31,30,31}
+  daysByMonth={31,28,31,30,31,30,31,31,30,31,30,31},
+  legacyEmitAccountKeys={"mix", "normal", "inverse", "monthly", "yearly"},
 }
 
 function mergeConfig(default,read)
@@ -200,6 +205,123 @@ function clearOrderFilterCaches()
   LocalStorage.orderFilterCacheByAccount={}
 end
 
+--- @function resetImportState
+-- Drops order/import caches. requireFullReimport=true blocks emit until resetCache.
+function resetImportState(requireFullReimport)
+  if LocalStorage == nil then
+    return
+  end
+  LocalStorage.OrderCache={}
+  clearOrderFilterCaches()
+  LocalStorage.invalidCache={}
+  LocalStorage.balancesByPeriod=nil
+  LocalStorage.lastHarvestSince=nil
+  LocalStorage.subAccountScan=nil
+  LocalStorage.legacyEmitMigrationVersion=nil
+  LocalStorage.pendingInitialSync=nil
+  LocalStorage.initialSyncHarvestDone=nil
+  LocalStorage.initialSyncRefreshedAccounts=nil
+  LocalStorage.floatingBalanceAnchorByAccount=nil
+  if requireFullReimport then
+    LocalStorage.requireFullReimport=true
+  else
+    LocalStorage.requireFullReimport=nil
+  end
+end
+
+function legacyTxLeafHasEmitMarkers(leaf)
+  return type(leaf) == 'table'
+    and (leaf.emitted == true or type(leaf.since) == 'number')
+end
+
+function orderHasLegacyRefundMarkers(order)
+  if type(order) ~= 'table' or type(order.refundTransactions) ~= 'table' then
+    return false
+  end
+  for _,byAmount in pairs(order.refundTransactions) do
+    if type(byAmount) == 'table' then
+      for _,leaf in pairs(byAmount) do
+        if legacyTxLeafHasEmitMarkers(leaf) then
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
+
+function orderHasLegacyReturnMarkers(order)
+  if type(order) ~= 'table' or type(order.returns) ~= 'table' then
+    return false
+  end
+  for _,byAmount in pairs(order.returns) do
+    if type(byAmount) == 'table' then
+      for _,byPurpose in pairs(byAmount) do
+        if type(byPurpose) == 'table' then
+          for _,leaf in pairs(byPurpose) do
+            if legacyTxLeafHasEmitMarkers(leaf) then
+              return true
+            end
+          end
+        end
+      end
+    end
+  end
+  return false
+end
+
+function orderCacheHasLegacyEmitMarkers(orderCache)
+  if type(orderCache) ~= 'table' then
+    return false
+  end
+  for _,order in pairs(orderCache) do
+    if type(order) ~= 'table' then
+      -- skip
+    elseif order.emitted == true or type(order.since) == 'number' then
+      return true
+    elseif orderHasLegacyRefundMarkers(order) then
+      return true
+    elseif orderHasLegacyReturnMarkers(order) then
+      return true
+    end
+  end
+  return false
+end
+
+function localStorageHasLegacyGetOrdersGate()
+  local gate=LocalStorage and LocalStorage.getOrders
+  return type(gate) == 'table' and next(gate) ~= nil
+end
+
+--- @function applyImportSchemaUpgrade
+-- Numbered older cacheVersion → wipe plugin import state. Nil version with legacy
+-- emit markers (or old getOrders gate) also requires full reimport.
+function applyImportSchemaUpgrade()
+  if LocalStorage == nil then
+    return false
+  end
+  if LocalStorage.cacheVersion == cacheVersion then
+    return false
+  end
+  local from=LocalStorage.cacheVersion
+  if type(from) == 'number' and from ~= cacheVersion then
+    print("import schema", from, "->", cacheVersion, "full reimport required")
+    resetImportState(true)
+    LocalStorage.cacheVersion=cacheVersion
+    return true
+  end
+  if from == nil and (orderCacheHasLegacyEmitMarkers(LocalStorage.OrderCache)
+      or localStorageHasLegacyGetOrdersGate()) then
+    print("legacy cache without schema version -> full reimport required")
+    resetImportState(true)
+    LocalStorage.cacheVersion=cacheVersion
+    LocalStorage.getOrders=nil
+    return true
+  end
+  LocalStorage.cacheVersion=cacheVersion
+  return false
+end
+
 function orderHasPositions(order)
   if type(order) ~= 'table' or type(order.orderPositions) ~= 'table' then
     return false
@@ -210,135 +332,392 @@ function orderHasPositions(order)
   return false
 end
 
--- Marks already-detailed orders so MoneyMoney does not re-import them after the
--- name/purpose field layout change (name was Bestellnr, now Artikel).
--- Matching for new bookings: purpose (Artikel) + amount + bookingDate; Bestellnr in endToEndReference.
--- Also stamps refundTransactions: a later details parse must not emit
--- "Refund for order" when purchase+Amazon contra were already booked.
-function suppressRefundReemit(order)
-  if type(order) ~= 'table' or type(order.refundTransactions) ~= 'table' then
-    return 0
+--- @function emitAccountKey
+-- MoneyMoney accountNumber used as key in emittedAccounts maps.
+function emitAccountKey(accountNumber)
+  if accountNumber == nil or accountNumber == '' then
+    return "mix"
   end
-  local n=0
-  for _,byAmount in pairs(order.refundTransactions) do
-    if type(byAmount) == 'table' then
-      for _,leaf in pairs(byAmount) do
-        if type(leaf) == 'table' then
-          leaf.since=0
-          n=n+1
-        end
-      end
-    end
-  end
-  return n
+  return tostring(accountNumber)
 end
 
-function suppressReemitForDetailedOrders(orderCache)
+function isOrderEmittedForAccount(owner, accountNumber)
+  return type(owner) == 'table'
+    and type(owner.emittedAccounts) == 'table'
+    and owner.emittedAccounts[emitAccountKey(accountNumber)] == true
+end
+
+function markOrderEmittedForAccount(owner, accountNumber)
+  if type(owner) ~= 'table' then
+    return
+  end
+  if type(owner.emittedAccounts) ~= 'table' then
+    owner.emittedAccounts={}
+  end
+  owner.emittedAccounts[emitAccountKey(accountNumber)]=true
+end
+
+function markEmitAccountKeys(owner, keys)
+  if type(owner) ~= 'table' or type(keys) ~= 'table' then
+    return
+  end
+  for _,accountNumber in ipairs(keys) do
+    markOrderEmittedForAccount(owner, accountNumber)
+  end
+end
+
+--- @function clearOrderEmittedFlags
+-- Clears emit tracking. keepDetailsParsed=true keeps a successful detailsParsed marker
+-- (used when positions appear after an empty prior parse).
+function clearOrderEmittedFlags(order, keepDetailsParsed)
+  if type(order) ~= 'table' then
+    return
+  end
+  order.emittedAccounts=nil
+  if not keepDetailsParsed then
+    order.detailsParsed=nil
+  end
+end
+
+function knownLegacyEmitAccountKeys()
+  local keys={}
+  for i,key in ipairs(const.legacyEmitAccountKeys) do
+    keys[i]=key
+  end
+  return keys
+end
+
+function migrateTxLeafEmitFlags(leaf, legacyKeys)
+  if type(leaf) ~= 'table' or type(legacyKeys) ~= 'table' then
+    return
+  end
+  if leaf.emitted == true or leaf.since == 0 then
+    markEmitAccountKeys(leaf, legacyKeys)
+  elseif type(leaf.since) == 'number' then
+    markEmitAccountKeys(leaf, {"mix"})
+  end
+  leaf.emitted=nil
+  leaf.since=nil
+end
+
+function migrateOrderTxLeaves(order, legacyKeys)
+  forEachAdjustmentLeaf(order, function(leaf)
+    migrateTxLeafEmitFlags(leaf, legacyKeys)
+  end)
+end
+
+--- Migrates order.emitted / refund leaf flags into emittedAccounts maps.
+-- Order-level flags map to legacy MM account types only (not sub:* — subs stay independent).
+function migrateLegacyEmitFlags(orderCache)
   if type(orderCache) ~= 'table' then
     return 0
   end
+  local legacyKeys=knownLegacyEmitAccountKeys()
   local n=0
   for _,order in pairs(orderCache) do
-    if orderHasPositions(order) then
-      order.since=0
-      suppressRefundReemit(order)
-      n=n+1
+    if type(order) == 'table' then
+      if order.emitted == true or order.since == 0 then
+        markEmitAccountKeys(order, legacyKeys)
+        order.emitted=nil
+        order.since=nil
+        n=n+1
+      elseif type(order.since) == 'number' then
+        markEmitAccountKeys(order, {"mix"})
+        order.since=nil
+      end
+      migrateOrderTxLeaves(order, legacyKeys)
     end
   end
   return n
 end
 
---- @function shouldSuppressFullRefundReimport
--- Mixed mode already booked purchase + "Amazon contra <order>" for the order.
--- Re-parsing details later finds "Summe der Erstattung" and would emit
--- "Refund for order" / "Amazon contra refund for order" — MoneyMoney does not
--- match those names to the existing pair, causing duplicates.
--- Suppress only full refunds on orders reported in a prior sync (order.since < since).
--- Partial refunds are intentionally not suppressed: matching purchase+contra pairs by
--- amount is ambiguous; users may still see duplicate partial-refund lines until matched manually.
-function shouldSuppressFullRefundReimport(order, amount, accountSince, mixed)
-  if not mixed then
+function ensureLegacyEmitFlagsMigrated()
+  if LocalStorage == nil or LocalStorage.legacyEmitMigrationVersion == cacheVersion then
+    return
+  end
+  if type(LocalStorage.OrderCache) ~= 'table' then
+    LocalStorage.OrderCache={}
+  end
+  local n=migrateLegacyEmitFlags(LocalStorage.OrderCache)
+  if n > 0 then
+    print("migrated legacy emit flags for", n, "orders")
+  end
+  LocalStorage.legacyEmitMigrationVersion=cacheVersion
+end
+
+function clearAccountSetupState()
+  if LocalStorage == nil then
+    return
+  end
+  LocalStorage.accountSetupSession=nil
+end
+
+--- MoneyMoney "Konten einrichten": ListAccounts precedes RefreshAccount in the same login session.
+function isAccountSetupSession()
+  local session=LocalStorage and LocalStorage.accountSetupSession
+  if type(session) ~= 'table' or session.active ~= true then
     return false
   end
-  if type(order) ~= 'table' or type(amount) ~= 'number' then
+  if type(session.loginCounter) == 'number' then
+    return type(LocalStorage.loginCounter) == 'number'
+      and session.loginCounter == LocalStorage.loginCounter
+  end
+  -- Setup before loginCounter exists: valid only until the first login assigns a counter.
+  return type(LocalStorage.loginCounter) ~= 'number'
+end
+
+function beginAccountSetupSession(enableInitialSync)
+  if LocalStorage == nil then
+    return
+  end
+  local session={active=true}
+  if type(LocalStorage.loginCounter) == 'number' then
+    session.loginCounter=LocalStorage.loginCounter
+  end
+  LocalStorage.accountSetupSession=session
+  if enableInitialSync then
+    LocalStorage.pendingInitialSync=true
+    LocalStorage.initialSyncHarvestDone=nil
+    LocalStorage.initialSyncRefreshedAccounts=nil
+  end
+end
+
+function recordInitialSyncAccountRefresh(accountNumber)
+  if not isPendingInitialSync() or type(accountNumber) ~= 'string' or LocalStorage == nil then
+    return
+  end
+  if type(LocalStorage.initialSyncRefreshedAccounts) ~= 'table' then
+    LocalStorage.initialSyncRefreshedAccounts={}
+  end
+  LocalStorage.initialSyncRefreshedAccounts[emitAccountKey(accountNumber)]=accountNumber
+end
+
+function initialSyncRefreshedAccountNumbers()
+  local refreshed=LocalStorage and LocalStorage.initialSyncRefreshedAccounts
+  local accounts={}
+  if type(refreshed) ~= 'table' then
+    return accounts
+  end
+  for _,accountNumber in pairs(refreshed) do
+    if type(accountNumber) == 'string' then
+      accounts[#accounts+1]=accountNumber
+    end
+  end
+  return accounts
+end
+
+function hasInitialSyncRefreshedAccounts()
+  return #initialSyncRefreshedAccountNumbers() > 0
+end
+
+function shouldRecordInitialSyncAccountRefresh(harvest, scanErr, scanComplete)
+  if not isPendingInitialSync() or isAccountSetupSession() then
     return false
   end
-  if type(order.since) ~= 'number' or type(accountSince) ~= 'number' then
+  if harvest then
+    return scanErr == nil and scanComplete
+  end
+  return isInitialSyncHarvestDone()
+end
+
+--- First RefreshAccount after Konten einrichten: full harvest from the beginning (since=0).
+function isPendingInitialSync()
+  return LocalStorage ~= nil and LocalStorage.pendingInitialSync == true
+end
+
+function isInitialSyncHarvestDone()
+  return LocalStorage ~= nil and LocalStorage.initialSyncHarvestDone == true
+end
+
+function clearPendingInitialSync()
+  if LocalStorage ~= nil then
+    LocalStorage.pendingInitialSync=nil
+    LocalStorage.initialSyncHarvestDone=nil
+    LocalStorage.initialSyncRefreshedAccounts=nil
+  end
+end
+
+function markInitialSyncHarvestDone()
+  if LocalStorage ~= nil then
+    LocalStorage.initialSyncHarvestDone=true
+  end
+end
+
+function ordersNeedingDetailsForInitialSync(now)
+  if type(now) ~= 'number' then
     return false
   end
-  if not (order.since < accountSince) then
+  for _,accountNumber in ipairs(initialSyncRefreshedAccountNumbers()) do
+    if #ordersNeedingDetailsForAccount(accountNumber, now) > 0 then
+      return true, accountNumber
+    end
+  end
+  return false
+end
+
+function isSubAccountScanComplete()
+  local state=LocalStorage and LocalStorage.subAccountScan
+  if state == nil then
     return false
   end
-  local total=tonumber(order.orderTotal)
-  if total == nil or total <= 0 then
+  if state.phase ~= 'done' then
     return false
   end
-  return amount >= total
+  return state.incomplete ~= true
+end
+
+function tryCompleteInitialSync(now)
+  if not isPendingInitialSync() or not isInitialSyncHarvestDone() then
+    return
+  end
+  if not hasInitialSyncRefreshedAccounts() then
+    return
+  end
+  local detailsPending, detailsAccount=ordersNeedingDetailsForInitialSync(now)
+  if detailsPending then
+    if type(detailsAccount) == 'string' then
+      MM.printStatus("Amazon: Erstimport – Bestelldetails für "..detailsAccount.." noch offen")
+    end
+    return
+  end
+  clearPendingInitialSync()
+end
+
+function effectiveRefreshSince(since)
+  if isPendingInitialSync() and not isAccountSetupSession() then
+    return 0
+  end
+  if type(since) == 'number' then
+    return since
+  end
+  return 0
+end
+
+function emptyRefreshResult()
+  return {balance=0, transactions={}}
+end
+
+--- Early RefreshAccount exits: full reimport gate and account-setup session (no emit).
+function refreshAccountBlockedResult()
+  if LocalStorage ~= nil and LocalStorage.requireFullReimport then
+    MM.printStatus(const.fullReimportStatus)
+    return emptyRefreshResult()
+  end
+  ensureLegacyEmitFlagsMigrated()
+  if isAccountSetupSession() then
+    print("Konten einrichten: keine Umsätze laden")
+    return emptyRefreshResult()
+  end
+  return nil
+end
+
+--- @function ensureBalancesByPeriodForAccount
+-- Persisted period contra balances, keyed by MoneyMoney accountNumber.
+function ensureBalancesByPeriodForAccount(accountNumber)
+  if LocalStorage.balancesByPeriod == nil then
+    LocalStorage.balancesByPeriod={}
+  end
+  local key=emitAccountKey(accountNumber)
+  local root=LocalStorage.balancesByPeriod
+  if type(root[key]) ~= 'table' then
+    root[key]={}
+  end
+  return root[key]
+end
+
+--- @function applyPeriodBalanceDelta
+-- Period contra ledger in cents. report=false marks the bucket already booked.
+function applyPeriodBalanceDelta(balancesByPeriod, periodFmt, unixTime, delta, report)
+  if type(balancesByPeriod) ~= 'table' or type(periodFmt) ~= 'string' then
+    return
+  end
+  if type(unixTime) ~= 'number' or type(delta) ~= 'number' then
+    return
+  end
+  local period=os.date(periodFmt, unixTime)
+  local bucket=balancesByPeriod[period]
+  if bucket == nil then
+    bucket={report=true, balance=0}
+    balancesByPeriod[period]=bucket
+  end
+  bucket.balance=bucket.balance+delta
+  if report == false then
+    bucket.report=false
+  end
+end
+
+--- @function orderDetailsCompleteForEmit
+-- Details loaded and not queued for another fetch.
+function orderDetailsCompleteForEmit(order, now, accountNumber)
+  if type(order) ~= 'table' or type(now) ~= 'number' then
+    return false
+  end
+  if type(order.detailsDate) ~= 'number' or order.detailsDate <= 1 then
+    return false
+  end
+  return not orderNeedsDetailsForAccount(order, now, accountNumber)
 end
 
 --- @function registerRefundTransaction
--- Stores refundTransactions[bookingDate][amount]. When the order was already
--- reported and this is a new full-refund leaf, stamp since=0 immediately.
+-- Stores refundTransactions[bookingDate][amount].
 function registerRefundTransaction(order, bookingDate, amount)
   if type(order) ~= 'table' or type(bookingDate) ~= 'number' or type(amount) ~= 'number' then
     return
   end
-  local existed=type(order.refundTransactions) == 'table'
-    and type(order.refundTransactions[bookingDate]) == 'table'
-    and type(order.refundTransactions[bookingDate][amount]) == 'table'
   makeBranch(order, {'refundTransactions', bookingDate, amount})
-  local leaf=order.refundTransactions[bookingDate][amount]
-  if type(leaf) ~= 'table' or leaf.since ~= nil or existed then
+end
+
+function forEachRefundLeaf(order, fn)
+  if type(order) ~= 'table' or type(fn) ~= 'function' or type(order.refundTransactions) ~= 'table' then
     return
   end
-  local total=tonumber(order.orderTotal)
-  if type(order.since) == 'number' and total ~= nil and total > 0 and amount >= total then
-    leaf.since=0
+  for bookingDate,byAmount in pairs(order.refundTransactions) do
+    if type(byAmount) == 'table' then
+      for amount,leaf in pairs(byAmount) do
+        if type(leaf) == 'table' then
+          fn(leaf, bookingDate, amount)
+        end
+      end
+    end
   end
 end
 
--- Legacy: Lieferadresse lived in order.endToEndReference; MoneyMoney "Referenz"
--- is endToEndReference and must carry the Bestellnummer instead.
-function migrateShippingAddressFromLegacy(orderCache)
-  if type(orderCache) ~= 'table' then
-    return 0
+function forEachReturnLeaf(order, fn)
+  if type(order) ~= 'table' or type(fn) ~= 'function' or type(order.returns) ~= 'table' then
+    return
   end
-  local n=0
-  for orderCode,order in pairs(orderCache) do
-    if type(order) == 'table' then
-      local legacy=order.endToEndReference
-      if (order.shippingAddress == nil or order.shippingAddress == '')
-          and type(legacy) == 'string' and legacy ~= ''
-          and legacy ~= orderCode and legacy ~= order.orderCode then
-        order.shippingAddress=legacy
-        n=n+1
+  for bookingDate,byAmount in pairs(order.returns) do
+    if type(byAmount) == 'table' then
+      for amount,byPurpose in pairs(byAmount) do
+        if type(byPurpose) == 'table' then
+          for purpose,leaf in pairs(byPurpose) do
+            if type(leaf) == 'table' then
+              fn(leaf, bookingDate, amount, purpose)
+            end
+          end
+        end
       end
-      order.endToEndReference=nil
     end
   end
-  return n
+end
+
+--- Refund and return leaves share the same emit/migrate shape; purpose is nil for refunds.
+function forEachAdjustmentLeaf(order, fn)
+  if type(order) ~= 'table' or type(fn) ~= 'function' then
+    return
+  end
+  forEachRefundLeaf(order, fn)
+  forEachReturnLeaf(order, fn)
 end
 
 if LocalStorage ~=nil then
-  if LocalStorage.cacheVersion ~= cacheVersion then
+  if applyImportSchemaUpgrade() then
     configDirty=true
-    -- Keep OrderCache: wiping it re-emits booked transactions and risks MoneyMoney duplicates
-    -- when name/purpose mapping changes. Only reset filter completion markers.
-    print("migrate filter caches (keep OrderCache)...")
-    clearOrderFilterCaches()
-    local moved=migrateShippingAddressFromLegacy(LocalStorage.OrderCache)
-    if moved > 0 then
-      print("migrated shippingAddress from legacy endToEndReference for", moved, "orders")
-    end
-    local suppressed=suppressReemitForDetailedOrders(LocalStorage.OrderCache)
-    if suppressed > 0 then
-      print("suppressed re-emit for", suppressed, "already-detailed orders after name/purpose layout change")
-      LocalStorage.txLayoutNotice=true
-    end
-    LocalStorage.cacheVersion = cacheVersion
   end
 
-  if config.cleanOrdersCache and LocalStorage ~=nil then
+  ensureLegacyEmitFlagsMigrated()
+
+  if config.cleanOrdersCache then
     config.cleanOrdersCache=false
     configDirty=true
     print("clean orders cache...")
@@ -463,14 +842,6 @@ function connectShop(method, url, postContent, postContentType, headers)
     return nil
   end
   return HTML(connectShopRaw(method, url, postContent, postContentType, headers))
-end
-
-function connectShopJson(method, url, postContent, postContentType, headers)
-  if method == nil then
-    return nil
-  end
-  headers={["X-Requested-With"]="XMLHttpRequest" }
-  return JSON(connectShopRaw(method, url, postContent, postContentType, headers)):dictionary()
 end
 
 function connectShopRaw(method, url, postContent, postContentType, headers)
@@ -752,17 +1123,6 @@ function getPrice(text)
   return amountHigh*100+amountLow
 end
 
-function getQty(text)
-  if type(text)~='string' then
-    return invalidQty
-  end
-  local qty=tonumber(text)
-  if qty>0 then
-    return qty
-  end
-  return invalidQty
-end
-
 function trim(text)
   if type(text)~='string' then
     return ''
@@ -784,101 +1144,12 @@ function buildDetailsUrl(orderCode)
   return const.orderDetailsUrl..orderCode
 end
 
-function getQtyFromElement(element)
-  local qty=1
-  if nodeExists(element,'.//span[contains(@class,"item-view-qty")]') then
-    qty=getQty(element:xpath('.//span[contains(@class,"item-view-qty")]'):text())
-  end
-  return qty
-end
-
 function getOrderCode(text)
   if type(text)~='string' then
     return nil
   end
   local orderCode=string.match(text,const.regexOrderCodeNew)
   return orderCode
-end
-
-function nodeExists(element,xpath)
-  return element:xpath(xpath)[1] ~= nil
-end
-
-function getLastElementText(html,...)
-  local elements=html:xpath(table.concat({...}))
-  if elements:length() == 0 then
-    return ''
-  end
-  return elements:get(elements:length()):text()
-end
-
-function getOrderInfosFromSummaryHeader(orderInfo,order)
-  if orderInfo:text() == "" then
-    return false
-  end
-
-  local headData={}
-
-  orderInfo:xpath('.//span[contains(@class,"a-color-secondary") and contains(@class,"value")]'):each(function(index,element)
-    headData[index]=element:text()
-  end)
-
-  if #headData == 3 then
-    -- customer account
-    order.orderCode=getOrderCode(headData[3])
-    debugBuffer.context=order.orderCode
-    order.bookingDate=getDate(headData[1])
-    order.orderTotal=getPrice(headData[2])
-  elseif #headData == 4 then
-    -- business account
-    order.orderCode=getOrderCode(headData[4])
-    debugBuffer.context=order.orderCode
-    order.bookingDate=getDate(headData[1])
-    order.accountNumber=headData[2]
-    order.orderTotal=getPrice(headData[3])
-  elseif #headData == 5 then
-    -- business account
-    order.orderCode=getOrderCode(headData[5])
-    debugBuffer.context=order.orderCode
-    order.bookingDate=getDate(headData[1])
-    order.accountNumber=headData[2]
-    order.bookingText=headData[4]
-    order.orderTotal=getPrice(headData[3])
-  else
-    debugBuffer.print("unkown elements",table.concat(headData,"#"))
-    return false
-  end
-
-  -- only business accounts: who placed the order (not MoneyMoney Referenz)
-  local placedBy=orderInfo:xpath('.//div[contains(@class,"placed-by")]//span[contains(@class,"trigger-text")]'):text()
-  if placedBy ~= '' then
-    order.placedBy=placedBy
-  end
-
-  if order.bookingDate == invalidDate then
-    debugBuffer.print("getOrderInfosFromSummaryHeader invalidDate")
-    order.orderCode=nil
-  end
-
-  if order.orderTotal == invalidPrice then
-    debugBuffer.print("getOrderInfosFromSummaryHeader invalidPrice")
-    order.orderCode=nil
-  end
-
-  order.detailsUrl=orderInfo:xpath('.//a[contains(@class,"a-link-normal") and contains(@href,"/order-details/")]'):attr('href')
-  if order.detailsUrl == "" then
-    order.digitalUrl=orderInfo:xpath('.//a[contains(@class,"a-link-normal") and contains(@href,"/digital/")]'):attr('href')
-    if order.digitalUrl == "" then
-      debugBuffer.print("getOrderInfosFromSummaryHeader nodetails")
-      order.orderCode=nil
-    end
-  end
-
-  return order.orderCode ~= nil
-end
-
-function isShipmentShorted(shipment)
-  return shipment:xpath('.//a[contains(@href,"/order-details/")]'):length() ~= 0
 end
 
 --- @type orderPosition
@@ -890,16 +1161,16 @@ end
 -- @field #string orderCode
 -- @field #number totalSum
 -- @field #number orderTotal   total from header
--- @field #number refund       sum of refund from header
 -- @field #number bookingDate  date of order
 -- @field #string detailsUrl
--- @field #string digitalUrl
 -- @field #list<#orderPosition> orderPositions
 -- @field #boolean invalidArticles
 -- @field #number detailsDate
 -- @field #string accountNumber  Amazon-Unterkonto (persönlich / Firma)
 -- @field #string shippingAddress  Lieferadresse (auch in purpose)
 -- @field #string mandateReference  payment method (Zahlungsart)
+-- @field #boolean unbilledCancel  storniert und nicht berechnet
+-- @field #list summaryExtras  named Bestellübersicht extras (signed cents)
 
 --- @function utf8CharLen
 -- Length in bytes of the UTF-8 character starting at index i, or nil if invalid.
@@ -994,6 +1265,345 @@ function encodeFormText(text)
   return MM.toEncoding(const.fixEncoding, text)
 end
 
+--- @function orderRealAmount
+-- Sum of real mix bookings for one order, in account currency.
+function orderRealAmount(order, divisor)
+  if type(order) ~= 'table' or type(divisor) ~= 'number' or divisor == 0 then
+    return 0
+  end
+  if order.unbilledCancel then
+    return 0
+  end
+  local sum=0
+  if type(order.orderPositions) == 'table' then
+    for _,position in pairs(order.orderPositions) do
+      local amount=tonumber(position.amount)
+      local qty=tonumber(position.qty)
+      if amount ~= nil and qty ~= nil then
+        sum=sum+amount/divisor*qty
+      end
+    end
+  end
+  local orderSum=tonumber(order.orderSum)
+  local orderTotal=tonumber(order.orderTotal)
+  if orderSum ~= nil and orderTotal ~= nil and orderSum ~= orderTotal then
+    sum=sum+(orderTotal-orderSum)/divisor
+  end
+  local function addCredit(_, _, amountCents)
+    local amount=tonumber(amountCents)
+    if amount ~= nil then
+      sum=sum+amount/divisor*-1
+    end
+  end
+  forEachAdjustmentLeaf(order, addCredit)
+  return sum
+end
+
+function earliestOrderBookingDateForAccount(accountNumber)
+  if LocalStorage == nil or type(LocalStorage.OrderCache) ~= 'table' then
+    return nil
+  end
+  local earliest=nil
+  for _,order in pairs(LocalStorage.OrderCache) do
+    if type(order) == 'table' and orderMatchesMoneyMoneyAccount(order, accountNumber) then
+      local booking=order.bookingDate
+      if type(booking) == 'number' and (earliest == nil or booking < earliest) then
+        earliest=booking
+      end
+    end
+  end
+  return earliest
+end
+
+function ensureFloatingAnchorRoot()
+  if LocalStorage.floatingBalanceAnchorByAccount == nil then
+    LocalStorage.floatingBalanceAnchorByAccount={}
+  end
+end
+
+function storedMixFloatingAnchorDate(accountNumber)
+  if type(accountNumber) ~= 'string' or LocalStorage == nil then
+    return nil
+  end
+  ensureFloatingAnchorRoot()
+  local stored=LocalStorage.floatingBalanceAnchorByAccount[emitAccountKey(accountNumber)]
+  if type(stored) == 'number' then
+    return stored
+  end
+  return nil
+end
+
+function persistMixFloatingAnchorDate(accountNumber, anchor)
+  if type(accountNumber) ~= 'string' or type(anchor) ~= 'number' or LocalStorage == nil then
+    return anchor
+  end
+  ensureFloatingAnchorRoot()
+  LocalStorage.floatingBalanceAnchorByAccount[emitAccountKey(accountNumber)]=anchor
+  return anchor
+end
+
+--- @function mixFloatingBookingDate
+-- Anchor before the first booking (opening balance in the past). Persisted per account for stable pending identity.
+function mixFloatingBookingDate(since, now, accountNumber)
+  if type(now) ~= 'number' then
+    now=os.time()
+  end
+  local stored=storedMixFloatingAnchorDate(accountNumber)
+  if type(stored) == 'number' then
+    return stored
+  end
+  local anchor=nil
+  local earliest=earliestOrderBookingDateForAccount(accountNumber)
+  if type(earliest) == 'number' then
+    anchor=earliest - const.daySeconds
+  else
+    anchor=getLastDayOfPeriod(os.date("%Y-%m", now))
+  end
+  if type(since) == 'number' and since > 0 and anchor < since then
+    anchor=since
+  end
+  if type(accountNumber) == 'string' and not isPendingInitialSync() then
+    return persistMixFloatingAnchorDate(accountNumber, anchor)
+  end
+  return anchor
+end
+
+--- @function makeFloatingBalanceTransaction
+-- One pending offset so mix bookings sum to zero and stay out of net worth.
+function makeFloatingBalanceTransaction(amount, since, now, accountNumber)
+  return {
+    name=encodeFormText(const.floatingBalanceName),
+    purpose=encodeFormText(const.floatingBalancePurpose),
+    amount=amount,
+    bookingDate=mixFloatingBookingDate(since, now, accountNumber),
+    endToEndReference=const.floatingBalanceRef,
+    booked=false,
+  }
+end
+
+--- @function addMixFloatingBalance
+-- Pending Ausgleich for the full emitted mix ledger (clean reimport, no legacy offset).
+function addMixFloatingBalance(transactions, accountNumber, since, now, divisor)
+  if type(transactions) ~= 'table' or type(divisor) ~= 'number' or divisor == 0 then
+    return
+  end
+  if LocalStorage == nil or type(LocalStorage.OrderCache) ~= 'table' then
+    return
+  end
+  local ledger=0
+  for orderCode,order in pairs(LocalStorage.OrderCache) do
+    if type(blackListOrders) == 'table' and blackListOrders[orderCode] then
+      -- skip
+    elseif orderMatchesMoneyMoneyAccount(order, accountNumber)
+        and isOrderEmittedForAccount(order, accountNumber) then
+      ledger=ledger+orderRealAmount(order, divisor)
+    end
+  end
+  if ledger ~= 0 then
+    table.insert(transactions, makeFloatingBalanceTransaction(-ledger, since, now, accountNumber))
+  end
+end
+
+--- @function adjustmentCreditCents
+-- Refund and return amounts in cents.
+function adjustmentCreditCents(order)
+  local sum=0
+  forEachAdjustmentLeaf(order, function(_, _, amount)
+    local n=tonumber(amount)
+    if n ~= nil then
+      sum=sum+n
+    end
+  end)
+  return sum
+end
+
+--- @function billedOrderCents
+-- Charged order total in cents (header total, else item sum).
+function billedOrderCents(order)
+  if type(order) ~= 'table' then
+    return 0
+  end
+  local total=tonumber(order.orderTotal)
+  if total ~= nil and total > 0 then
+    return total
+  end
+  local sum=tonumber(order.orderSum)
+  if sum ~= nil and sum > 0 then
+    return sum
+  end
+  return 0
+end
+
+--- @function orderIsFullyReversed
+-- Unbilled cancel or credits covering the billed total.
+function orderIsFullyReversed(order)
+  if type(order) ~= 'table' then
+    return false
+  end
+  if order.unbilledCancel then
+    return true
+  end
+  local billed=billedOrderCents(order)
+  if billed <= 0 then
+    return false
+  end
+  return adjustmentCreditCents(order) >= billed
+end
+
+--- @function shouldOmitReversedPair
+-- Default: drop booking+storno together. keepStorno or already-emitted purchase keeps them.
+function shouldOmitReversedPair(order, accountNumber)
+  if config.keepStorno then
+    return false
+  end
+  if not orderIsFullyReversed(order) then
+    return false
+  end
+  return not isOrderEmittedForAccount(order, accountNumber)
+end
+
+function markReversedPairOmitted(order, accountNumber)
+  markOrderEmittedForAccount(order, accountNumber)
+  forEachAdjustmentLeaf(order, function(leaf)
+    markOrderEmittedForAccount(leaf, accountNumber)
+  end)
+end
+
+function emitAdjustmentLeaf(ctx, order, orderCode, leaf, bookingDate, amountCents, name)
+  local amount=tonumber(amountCents)
+  if type(leaf) ~= 'table' or amount == nil then
+    return
+  end
+  if not ctx.mixed then
+    ctx.balance=ctx.balance-amount
+  end
+  local report=not isOrderEmittedForAccount(leaf, ctx.accountNumber)
+  if ctx.periodly then
+    applyPeriodBalanceDelta(ctx.balancesByPeriod, ctx.periodFmt, bookingDate, -amount, report)
+  end
+  if not report then
+    return
+  end
+  table.insert(ctx.transactions, makeAccountTransaction(
+    order, orderCode, name, amount/ctx.divisor*-1, bookingDate))
+  markOrderEmittedForAccount(leaf, ctx.accountNumber)
+end
+
+function emitPurchaseLines(ctx, order, orderCode)
+  if order.unbilledCancel and not config.keepStorno then
+    markOrderEmittedForAccount(order, ctx.accountNumber)
+    return
+  end
+  local didEmit=false
+  if type(order.orderPositions) == 'table' then
+    for _,position in pairs(order.orderPositions) do
+      table.insert(ctx.transactions, makeAccountTransaction(
+        order,
+        orderCode,
+        position.purpose,
+        position.amount/ctx.divisor*position.qty,
+        order.bookingDate+1
+      ))
+      didEmit=true
+    end
+  end
+  local extras, leftover=resolvedSummaryExtras(order)
+  for _,extra in ipairs(extras) do
+    if extra.amount ~= 0 then
+      table.insert(ctx.transactions, makeAccountTransaction(
+        order,
+        orderCode,
+        extra.name,
+        extra.amount/ctx.divisor,
+        order.bookingDate
+      ))
+      didEmit=true
+    end
+  end
+  if leftover ~= 0 then
+    local leftoverName=const.residualText
+    if order.unbilledCancel then
+      leftoverName=const.stornoText
+    end
+    table.insert(ctx.transactions, makeAccountTransaction(
+      order,
+      orderCode,
+      leftoverName,
+      leftover/ctx.divisor,
+      order.bookingDate
+    ))
+    didEmit=true
+  end
+  if didEmit then
+    markOrderEmittedForAccount(order, ctx.accountNumber)
+  end
+end
+
+function appendOrderToRefresh(ctx, order, orderCode)
+  if shouldOmitReversedPair(order, ctx.accountNumber) then
+    markReversedPairOmitted(order, ctx.accountNumber)
+    return
+  end
+  if not ctx.mixed then
+    ctx.balance=ctx.balance+order.orderTotal
+  end
+  local report=not isOrderEmittedForAccount(order, ctx.accountNumber)
+    and orderDetailsCompleteForEmit(order, ctx.now, ctx.accountNumber)
+  if ctx.periodly then
+    applyPeriodBalanceDelta(ctx.balancesByPeriod, ctx.periodFmt, order.bookingDate, order.orderTotal, report)
+  end
+  if report then
+    emitPurchaseLines(ctx, order, orderCode)
+  end
+  forEachAdjustmentLeaf(order, function(leaf, bookingDate, amount, purpose)
+    local name=purpose and (const.returnText..purpose) or (const.refundTransaction..orderCode)
+    emitAdjustmentLeaf(ctx, order, orderCode, leaf, bookingDate, amount, name)
+  end)
+end
+
+function appendPeriodContras(ctx, periodContra)
+  if not ctx.periodly then
+    return
+  end
+  local storedBalances=ensureBalancesByPeriodForAccount(ctx.accountNumber)
+  local lastPeriod=""
+  for k,_ in pairs(ctx.balancesByPeriod) do
+    if lastPeriod<k then
+      lastPeriod=k
+    end
+  end
+  for k,bucket in pairs(ctx.balancesByPeriod) do
+    if bucket.report then
+      if k == lastPeriod then
+        storedBalances[k]={bucket.balance}
+      else
+        if storedBalances[k] == nil then
+          storedBalances[k]={}
+        end
+        local sum=0
+        for _,delta in ipairs(storedBalances[k]) do
+          sum=sum+delta
+        end
+        if sum ~= bucket.balance then
+          table.insert(storedBalances[k],bucket.balance-sum)
+        end
+      end
+      for _,delta in ipairs(storedBalances[k]) do
+        table.insert(ctx.transactions,{
+          name=k,
+          amount = delta/ctx.divisor*-1,
+          bookingDate = getLastDayOfPeriod(k),
+          purpose = periodContra,
+          booked= k~=lastPeriod,
+        })
+        if k == lastPeriod then
+          ctx.balance=delta
+        end
+      end
+    end
+  end
+end
+
 function makeAccountTransaction(order, orderCode, name, amount, bookingDate, purpose)
   local fullName=name or ""
   local shortName=truncateUtf8(fullName, const.nameMaxLength)
@@ -1020,20 +1630,131 @@ function makeAccountTransaction(order, orderCode, name, amount, bookingDate, pur
   return tx
 end
 
--- @field  #number orderTotal Sum of order showed by Amazon
--- @field  #number refund amount of refund showed by Amazon
+--- @function normalizeSummaryLabel
+-- Amazon Bestellübersicht label without trailing colon/space.
+function normalizeSummaryLabel(label)
+  return trim((trim(label)):gsub(':+$',''))
+end
 
---- @function  getTotalsFromDetails
--- @return #totals
---
+--- @function summaryLabelKind
+-- skip = totals/VAT/refund; credit = coupon/promo; debit = shipping/gift; other = keep.
+function summaryLabelKind(name)
+  if name == '' then
+    return 'skip'
+  end
+  if name:find('Erstattung') then
+    return 'skip'
+  end
+  if name:find('Gesamtsumme') or name:find('Grand Total') then
+    return 'skip'
+  end
+  if name == 'Summe' or name:find('Summe ohne') or name:find('Gesamt vor') then
+    return 'skip'
+  end
+  if name:find('Zwischensumme') or name:find('Subtotal') then
+    return 'skip'
+  end
+  if name:find('MwSt') or name:find('USt') or name:find('VAT') or name:find('Mehrwertsteuer') then
+    return 'skip'
+  end
+  if name:find('Werbeaktion') or name:find('Gutschein') or name:find('Rabatt')
+      or name:find('Promotion') or name:find('[Cc]oupon') or name:find('[Dd]iscount') then
+    return 'credit'
+  end
+  if name:find('Versand') or name:find('Verpackung') or name:find('Geschenk')
+      or name:find('[Ss]hipping') or name:find('[Gg]ift wrap') then
+    return 'debit'
+  end
+  return 'other'
+end
 
+--- @function signedSummaryAmount
+-- Expense-positive cents (same sign as orderTotal-orderSum pieces).
+function signedSummaryAmount(priceText, kind)
+  local cents=getPrice(priceText)
+  if cents == invalidPrice then
+    return invalidPrice
+  end
+  cents=math.abs(cents)
+  local negative=(priceText:find('%-') ~= nil) or (priceText:find('−') ~= nil)
+  if kind == 'credit' or negative then
+    return -cents
+  end
+  return cents
+end
 
+--- @function isUnbilledCancellation
+-- Amazon: Storniert and explicitly not billed.
+function isUnbilledCancellation(orderDetails)
+  local status=trim(orderDetails:xpath('.//*[@data-component="shipmentStatus"]'):text())
+  if status == '' then
+    status=trim(orderDetails:xpath('.//*[contains(@class,"od-status-message")]'):text())
+  end
+  if status:find('Storniert') == nil and status:find('Cancelled') == nil then
+    return false
+  end
+  return status:find('nicht in Rechnung') ~= nil
+    or status:find('not billed') ~= nil
+    or status:find('was not charged') ~= nil
+end
+
+--- @function getSummaryExtrasFromDetails
+-- Bookable Bestellübersicht rows (shipping, coupon, gift wrap, …), signed cents.
+function getSummaryExtrasFromDetails(orderDetails)
+  local extras={}
+  orderDetails:xpath('.//div[contains(@class,"od-line-item-row")]'):each(function(index,row)
+    local name=normalizeSummaryLabel(row:xpath('.//*[contains(@class,"od-line-item-row-label")]'):text())
+    local kind=summaryLabelKind(name)
+    if kind == 'skip' then
+      return
+    end
+    local amount=signedSummaryAmount(row:xpath('.//*[contains(@class,"od-line-item-row-content")]'):text(), kind)
+    if amount == invalidPrice or amount == 0 then
+      return
+    end
+    table.insert(extras,{name=name,amount=amount})
+  end)
+  return extras
+end
+
+--- @function resolvedSummaryExtras
+-- Named extras plus leftover; leftover of the same sign folds into a single extra.
+function resolvedSummaryExtras(order)
+  local extras={}
+  if type(order) == 'table' and type(order.summaryExtras) == 'table' then
+    for _,extra in ipairs(order.summaryExtras) do
+      local amount=tonumber(extra.amount)
+      local name=extra.name
+      if type(name) == 'string' and name ~= '' and amount ~= nil and amount ~= 0 then
+        table.insert(extras,{name=name,amount=amount})
+      end
+    end
+  end
+  local leftover=0
+  if type(order) == 'table' then
+    local orderSum=tonumber(order.orderSum)
+    local orderTotal=tonumber(order.orderTotal)
+    if orderSum ~= nil and orderTotal ~= nil then
+      leftover=orderTotal-orderSum
+    end
+  end
+  for _,extra in ipairs(extras) do
+    leftover=leftover-extra.amount
+  end
+  if leftover ~= 0 and #extras == 1 then
+    local extra=extras[1]
+    if extra.amount * leftover > 0 then
+      extra.amount=extra.amount+leftover
+      leftover=0
+    end
+  end
+  return extras, leftover
+end
+
+--- @function getTotalsFromDetails
+-- Grand total in cents from the 2024+ order summary, or invalidPrice.
 function getTotalsFromDetails(orderDetails)
-  local totals={orderTotal=invalidPrice,refund=0} --#totals
-
-  -- 2024+ layout: order summary is a list of "od-line-item-row" rows; the grand
-  -- total ("Gesamtsumme") is the bold row. Anchor on the label, fall back to the
-  -- last bold row so we stay robust to localized wording.
+  -- Anchor on "Gesamtsumme" / "Grand Total"; fall back to the last bold row.
   local labelTotal=invalidPrice
   local lastBold=invalidPrice
   orderDetails:xpath('.//div[contains(@class,"od-line-item-row")]'):each(function(index,row)
@@ -1049,13 +1770,9 @@ function getTotalsFromDetails(orderDetails)
     end
   end)
   if labelTotal ~= invalidPrice then
-    totals.orderTotal=labelTotal
-  elseif lastBold ~= invalidPrice then
-    totals.orderTotal=lastBold
+    return labelTotal
   end
-
-  return totals
-
+  return lastBold
 end
 
 --- @function getPositionsFromDetails
@@ -1091,56 +1808,6 @@ function getPositionsFromDetails(orderDetails,order)
   end)
 end
 
---- @function  getArticleFromShipment
--- @param #string shipment
--- @param #order order
--- @param #boolean doInsert
--- @return
-function getArticleFromShipment(shipment,order,doInsert)
-  doInsert=doInsert ~= false
-
-  local refund=invalidPrice
-  local refundText=shipment:xpath('.//div[contains(@class,"actions")]'):text()
-  if refundText ~=""then
-    refund=getPrice(refundText)
-    --debugBuffer.print("action",order.orderCode,doInsert,refund)
-  end
-
-  shipment:xpath('.//div[contains(@class,"a-fixed-left-grid-inner")]'):each(function(index,article)
-    local purpose
-    local amount=invalidPrice
-    local qty=getQtyFromElement(article)
-    article:xpath('.//div[contains(@class,"a-row")]'):each(function(index,row)
-      if purpose==nil then
-        purpose=row:text()
-      else
-        local price=getPrice(row:text())
-        if price~=invalidPrice and amount == invalidPrice then
-          amount=price
-        end
-      end
-    end) -- row
-    if order.digitalUrl ~= nil then
-      amount=order.orderTotal
-      --debugBuffer.print(amount,purpose,qty)
-    end
-    if purpose~= nil and amount ~=invalidPrice and qty~= invalidQty then
-      if doInsert then
-        table.insert(order.orderPositions,{purpose=purpose,amount=amount,qty=qty})
-        order.orderSum=order.orderSum+amount*qty
-      end
-      if refund~=invalidPrice then
-        order.orderPositions[#order.orderPositions].refund=refund
-        refund=invalidPrice
-        --debugBuffer.print("refunded",order)
-      end
-    else
-      order.invalidArticles=true
-      --debugBuffer.print("invalid article",order.orderCode,amount,qty)
-    end
-  end) -- article
-end
-
 --- @function makeBranch
 -- @param #map tree
 -- @param #list branch
@@ -1156,60 +1823,6 @@ function makeBranch(tree,branch)
     temp=temp[v]
   end
   return temp
-end
-
---- @type returned
---  @field #number amount
---  @number #number bookingDate
-
---- @function getReturnsFromDetails
--- @param #table orderDetails
--- @param #order order
--- @return
-
-function getReturnsFromDetails(orderDetails,order)
-  orderDetails:xpath('//div[contains(@id,"od-returns-panel")]//div[contains(@class,"a-box-inner")]'):each(function(index,returnedShipments)
-    -- debugBuffer.print(order.orderCode)
-    local bookingDate=getDate(returnedShipments:xpath('.//div[@class="a-row a-spacing-base"]'):text())
-
-    if bookingDate ~= invalidDate then
-      returnedShipments:xpath('.//div[contains(@class,"a-row")and contains(@class,"a-spacing-mini")]'):each(function(index,returnedItems)
-        local purpose
-        local amount=invalidPrice
-        returnedItems:xpath('.//div[contains(@class,"a-row")]'):each(function(index,row)
-          if purpose==nil then
-            purpose=row:text()
-          else
-            local price=getPrice(row:text())
-            if price~=invalidPrice then
-              amount=price
-            end
-          end
-        end) -- row
-        if amount ~=invalidPrice and bookingDate ~=invalidDate then
-          makeBranch(order,{'returns',bookingDate,amount,purpose})
-          -- debugBuffer.print(order.returns)
-        end
-      end)
-    end
-  end)
-  return
-end
-
---- @function getRefundTransActions
--- @param  #table orderDetails
--- @param #order order
--- @return
---
-function getRefundTransActions(orderDetails,order)
-  orderDetails:xpath('.//div[contains(@class,"a-box") and contains(@class,"a-last")]//div[contains(@class,"a-row") and contains(@class,"a-color-success")]'):each(function(index,transaction)
-    local bookingDate=getDate(transaction:text())
-    local amount=getPrice(transaction:text())
-    if bookingDate ~= invalidDate and amount ~= invalidPrice  then
-      registerRefundTransaction(order, bookingDate, amount)
-    end
-  end)
-  return
 end
 
 --- @function getRefundFromDetails
@@ -1302,16 +1915,24 @@ function getOrderDetails(order)
   local html=connectShopWithCheck("GET",order.detailsUrl)
   local orderDetails=html:xpath('//div[contains(@id,"orderDetails")]')
   if orderDetails:text() ~= "" then
+    local hadPositionsBeforeParse=orderHasPositions(order)
     local date=getDate(orderDetails:xpath('.//*[@data-component="orderDate"]'):text())
     if date ~= invalidDate then
       order.bookingDate=date
     end
 
-    local totals=getTotalsFromDetails(orderDetails)
-    if totals.orderTotal ~= invalidPrice then
-      order.orderTotal=totals.orderTotal
+    if isUnbilledCancellation(orderDetails) then
+      order.unbilledCancel=true
+    else
+      order.unbilledCancel=nil
     end
-    order.refund=totals.refund
+
+    local orderTotal=getTotalsFromDetails(orderDetails)
+    if order.unbilledCancel then
+      order.orderTotal=0
+    elseif orderTotal ~= invalidPrice then
+      order.orderTotal=orderTotal
+    end
 
     getPositionsFromDetails(orderDetails,order)
     if order.invalidArticles ~= nil then
@@ -1319,11 +1940,18 @@ function getOrderDetails(order)
       order.orderSum=0
       order.invalidArticles=nil
     end
-
-    getRefundFromDetails(orderDetails,order)
+    order.summaryExtras=getSummaryExtrasFromDetails(orderDetails)
+    if not hadPositionsBeforeParse and orderHasPositions(order) then
+      -- Empty/failed parse must not permanently block a later real position emit.
+      clearOrderEmittedFlags(order, true)
+    end
+    if not order.unbilledCancel then
+      getRefundFromDetails(orderDetails,order)
+    end
     getOrderaddress(orderDetails,order)
     order.mandateReference=getPaymentMethod(orderDetails)
-    order.detailsDate=os.time()+math.floor((math.random()*90+90)*24*60*60) -- distribute rescans randomly in future
+    order.detailsParsed=true
+    scheduleNextDetailsDate(order, os.time())
   else
     debugBuffer.print("getOrderDetails no details",order.orderCode)
   end
@@ -1380,7 +2008,7 @@ function isRecentOrderFilter(filterVal)
   if string.find(filterVal, "30 Tage", 1, true) or string.find(filterVal, "3 Monate", 1, true) then
     return true
   end
-  -- Amazon Business SPA filter ids used by /ab/your-orders/orderHistory
+  -- Business SPA / GET timeFilter ids (still used in some sessions)
   if filterVal == "yoLast30Days" or filterVal == "yoPast3months"
       or filterVal == "last_30_days" or filterVal == "last_3_months" then
     return true
@@ -1438,11 +2066,6 @@ function getSelectedOrderFilterLabel(htmlNode, filterVal)
   return firstNonEmpty(label, filterVal)
 end
 
---- @function mergeOrdersFromPage
--- Merges getOrdersFromSummary(html) into orderCache.
--- @param subAccountLabel optional Amazon-Unterkonto label stored on new orders
--- @param kind optional "personal"|"business" for ListAccounts filtering
--- @return foundOrders, foundNewOrders, newCount
 function assignSubAccountMeta(order, subAccountLabel, kind)
   if type(order) ~= 'table' then
     return
@@ -1457,10 +2080,100 @@ function assignSubAccountMeta(order, subAccountLabel, kind)
   end
 end
 
-function assignSubAccountLabel(order, subAccountLabel)
-  assignSubAccountMeta(order, subAccountLabel, nil)
+--- @function scheduleKnownOrderDetailsRefresh
+-- Incremental harvest: known Bestellnummer reappearing in the window re-queues details
+-- so refunds/returns are picked up without the obsolete message-center scrape.
+function scheduleKnownOrderDetailsRefresh(order)
+  if type(order) ~= 'table' or LocalStorage == nil then
+    return false
+  end
+  local refreshSince=LocalStorage.refreshSince
+  local now=os.time()
+  if not isIncrementalMoneyMoneyRefresh(refreshSince, now) then
+    return false
+  end
+  if type(order.detailsDate) == 'number' and order.detailsDate <= 1 then
+    return false
+  end
+  order.detailsDate=1
+  return true
 end
 
+--- Incremental refresh: re-queue details for already-emitted orders in the harvest window
+-- (refund/return pickup without the obsolete message-center scrape).
+function incrementalRefundWatchSince(now)
+  if type(now) ~= 'number' then
+    return nil
+  end
+  return now - const.abaIncrementalMaxAgeSec
+end
+
+function scheduleIncrementalRefundWatch(accountNumber, refreshSince, now)
+  if type(LocalStorage) ~= 'table' or type(LocalStorage.OrderCache) ~= 'table' then
+    return 0
+  end
+  if not isIncrementalMoneyMoneyRefresh(refreshSince, now) then
+    return 0
+  end
+  local watchSince=incrementalRefundWatchSince(now)
+  if watchSince == nil then
+    return 0
+  end
+  local n=0
+  for _,order in pairs(LocalStorage.OrderCache) do
+    if type(order) ~= 'table' or not orderMatchesMoneyMoneyAccount(order, accountNumber) then
+      -- skip
+    elseif type(order.bookingDate) ~= 'number' or order.bookingDate < watchSince then
+      -- skip orders outside incremental max-age window
+    elseif type(order.detailsDate) == 'number' and order.detailsDate <= 1 then
+      -- already queued
+    elseif type(order.detailsDate) == 'number' and order.detailsDate > now then
+      -- respect scheduleNextDetailsDate; do not re-fetch before rescan is due
+    elseif isOrderEmittedForAccount(order, accountNumber)
+        or isOrderEmittedForAccount(order, "mix") then
+      order.detailsDate=1
+      n=n+1
+    end
+  end
+  return n
+end
+
+--- Inserts a new order or refreshes sub-account meta on an existing one.
+-- When orderStub is nil, builds a minimal stub from orderCode.
+-- @return true if newly inserted
+function upsertOrderInCache(orderCache, orderCode, orderStub, subAccountLabel, kind)
+  if type(orderCache) ~= 'table' or type(orderCode) ~= 'string' or orderCode == '' then
+    return false
+  end
+  local existing=orderCache[orderCode]
+  if existing ~= nil then
+    assignSubAccountMeta(existing, subAccountLabel, kind)
+    scheduleKnownOrderDetailsRefresh(existing)
+    return false
+  end
+  local order=orderStub
+  if type(order) ~= 'table' then
+    order={
+      orderCode=orderCode,
+      orderPositions={},
+      orderSum=0,
+      orderTotal=0,
+      refund=0,
+      bookingDate=os.time(),
+      detailsDate=0,
+      detailsUrl=buildDetailsUrl(orderCode),
+    }
+  end
+  assignSubAccountMeta(order, subAccountLabel, kind)
+  orderCache[orderCode]=order
+  return true
+end
+
+--- @function mergeOrdersFromPage
+-- Merges getOrdersFromSummary(html) into orderCache.
+-- @param subAccountLabel optional Amazon-Unterkonto label stored on new orders
+-- @param kind optional "personal"|"business" for ListAccounts filtering
+-- @return foundOrders, foundNewOrders, newCount
 function mergeOrdersFromPage(htmlNode, orderCache, subAccountLabel, kind)
   if type(orderCache) ~= 'table' then
     error("mergeOrdersFromPage: orderCache must be a table")
@@ -1470,13 +2183,9 @@ function mergeOrdersFromPage(htmlNode, orderCache, subAccountLabel, kind)
   local newCount=0
   for orderCode,order in pairs(getOrdersFromSummary(htmlNode)) do
     foundOrders=true
-    if orderCache[orderCode] == nil then
-      assignSubAccountMeta(order, subAccountLabel, kind)
-      orderCache[orderCode]=order
+    if upsertOrderInCache(orderCache, orderCode, order, subAccountLabel, kind) then
       foundNewOrders=true
       newCount=newCount+1
-    else
-      assignSubAccountMeta(orderCache[orderCode], subAccountLabel, kind)
     end
   end
   return foundOrders, foundNewOrders, newCount
@@ -1688,7 +2397,7 @@ end
 --- @function defaultAccountSwitcherSigninUrl
 -- OpenID account-picker entry used when the nav link cannot be recovered.
 function defaultAccountSwitcherSigninUrl()
-  local returnTo=MM.urlencode(baseurl.."/gp/css/homepage.html?ref_=nav_youraccount_switchacct")
+  local returnTo=MM.urlencode(baseurl..const.businessHomepageAfterSwitch)
   return "/ap/signin?openid.return_to="..returnTo
     .."&openid.identity="..MM.urlencode("http://specs.openid.net/auth/2.0/identifier_select")
     .."&openid.assoc_handle=deflex"
@@ -1701,7 +2410,7 @@ end
 --- @function openAccountSwitcherEmbed
 -- Opens Your Account → Konto wechseln → CVF embed with switchable accounts.
 function openAccountSwitcherEmbed()
-  local ya=connectShop("GET", absoluteAmazonUrl("/gp/css/homepage.html?ref_=nav_youraccount_btn"))
+  local ya=connectShop("GET", absoluteAmazonUrl(const.businessHomepageYourAccount))
   local switchHref=findAccountSwitcherHref(ya)
   if switchHref == '' then
     switchHref=defaultAccountSwitcherSigninUrl()
@@ -1976,6 +2685,15 @@ function ensureOrderCache()
   return LocalStorage.OrderCache
 end
 
+function ensureInvalidCache()
+  if LocalStorage == nil then
+    return
+  end
+  if LocalStorage.invalidCache == nil then
+    LocalStorage.invalidCache={}
+  end
+end
+
 function shouldHarvestOrderFilter(orderFilterVal, orderFilterCache, numbersOfNewOrders, refreshSince, now)
   now=now or os.time()
   local scanMonths=effectiveScanFiltersMonths(refreshSince, now)
@@ -2014,7 +2732,7 @@ function orderListPageReady(htmlNode)
 end
 
 --- @function isAmazonBusinessSession
--- Active Amazon Business identity (e.g. after switch to Altanis GmbH).
+-- Active Amazon Business identity (e.g. after switch to a business account).
 function isAmazonBusinessSession(htmlNode)
   if htmlNode == nil then
     return false
@@ -2072,13 +2790,6 @@ function htmlNodeRaw(htmlNode)
   return raw
 end
 
-function firstStringMatch(text, pattern)
-  if type(text) ~= 'string' or type(pattern) ~= 'string' then
-    return nil
-  end
-  return string.match(text, pattern)
-end
-
 function jsonQuote(value)
   local s=tostring(value or '')
   s=s:gsub('\\', '\\\\'):gsub('"', '\\"')
@@ -2109,7 +2820,8 @@ function countPlausibleOrdersInRawText(raw)
 end
 
 --- @function mergeOrdersFromRawText
--- Extracts Bestellnummern from arbitrary HTML/CSV/text (ABA report, orderHistory).
+-- Extracts Bestellnummern from arbitrary HTML/CSV/text (ABA report).
+-- @return foundOrders, foundNewOrders, newCount
 function mergeOrdersFromRawText(raw, orderCache, subAccountLabel, kind)
   local foundOrders=false
   local foundNewOrders=false
@@ -2120,23 +2832,9 @@ function mergeOrdersFromRawText(raw, orderCache, subAccountLabel, kind)
   for orderCode in raw:gmatch(const.regexOrderCodeNew) do
     if isPlausibleAmazonOrderCode(orderCode) then
       foundOrders=true
-      if orderCache[orderCode] == nil then
-        local order={
-          orderCode=orderCode,
-          orderPositions={},
-          orderSum=0,
-          orderTotal=0,
-          refund=0,
-          bookingDate=os.time(),
-          detailsDate=0,
-          detailsUrl=buildDetailsUrl(orderCode),
-        }
-        assignSubAccountMeta(order, subAccountLabel, kind)
-        orderCache[orderCode]=order
+      if upsertOrderInCache(orderCache, orderCode, nil, subAccountLabel, kind) then
         foundNewOrders=true
         newCount=newCount+1
-      else
-        assignSubAccountMeta(orderCache[orderCode], subAccountLabel, kind)
       end
     end
   end
@@ -2303,7 +3001,7 @@ function effectiveScanFiltersMonths(refreshSince, now)
   if not isIncrementalMoneyMoneyRefresh(refreshSince, now) then
     return configured
   end
-  local days=math.ceil((now - refreshSince) / (24 * 60 * 60))
+  local days=math.ceil((now - refreshSince) / const.daySeconds)
   local months=math.max(1, math.ceil(days / 31))
   if configured == nil or configured <= 0 then
     return months
@@ -2313,6 +3011,15 @@ end
 
 function shouldRunAccountHarvest(refreshSince, now)
   if config.noRefresh then
+    return false
+  end
+  if isAccountSetupSession() then
+    return false
+  end
+  if isPendingInitialSync() and not isInitialSyncHarvestDone() then
+    return true
+  end
+  if isPendingInitialSync() then
     return false
   end
   if LocalStorage.loginCounter ~= LocalStorage.lastLoginCounter then
@@ -2325,20 +3032,24 @@ function shouldRunAccountHarvest(refreshSince, now)
   return type(lastHarvest) ~= 'number' or refreshSince > lastHarvest
 end
 
-function logMoneyMoneyRefreshMode(refreshSince, now)
+function logHarvestMode(refreshSince, now, incrementalMsg, fullMsg)
   if isIncrementalMoneyMoneyRefresh(refreshSince, now) then
-    print("incremental refresh since", formatAbaDateLabel(refreshSince))
+    print(incrementalMsg)
     return
   end
-  print("full refresh: harvest all order history (empty cache, since=0, or since > 366 days)")
+  print(fullMsg)
+end
+
+function logMoneyMoneyRefreshMode(refreshSince, now)
+  logHarvestMode(refreshSince, now,
+    "incremental refresh since "..formatAbaDateLabel(refreshSince),
+    "full refresh: harvest all order history (empty cache, since=0, or since > 366 days)")
 end
 
 function logAbaHarvestMode(refreshSince, now)
-  if isIncrementalMoneyMoneyRefresh(refreshSince, now) then
-    print("Business ABA harvest: CUSTOM_RANGE since", formatAbaDateLabel(refreshSince))
-    return
-  end
-  print("Business ABA harvest:", const.abaFullHarvestSpan, "(max preset window, no overlapping spans)")
+  logHarvestMode(refreshSince, now,
+    "Business ABA harvest: CUSTOM_RANGE since "..formatAbaDateLabel(refreshSince),
+    "Business ABA harvest: "..const.abaFullHarvestSpan.." (max preset window, no overlapping spans)")
 end
 
 function buildAbaAjaxUrl(path, reportType, span)
@@ -2367,15 +3078,11 @@ function fetchAbaAjaxContent(url, csrf, referer, postBody)
   return fetchShopRawContent('GET', url, nil, nil, buildAbaAjaxHeaders(csrf, referer))
 end
 
-function rawTextHasHarvestableOrders(raw)
-  return countPlausibleOrdersInRawText(raw) >= 1
-end
-
 function fetchAbaRollupTable(reportType, span, csrf, referer, logPrefix, fromParts, toParts)
   local querySpan=span
   local postBody=nil
   if span == const.abaCustomRangeSpan and type(fromParts) == 'table' and type(toParts) == 'table' then
-    querySpan='PAST_12_MONTHS'
+    querySpan=const.abaFullHarvestSpan
     postBody=buildAbaRollupTablePostBody(reportType, fromParts, toParts)
     print(logPrefix, "try rollupTable POST CUSTOM_RANGE")
   else
@@ -2395,7 +3102,7 @@ function fetchAbaRollupTable(reportType, span, csrf, referer, logPrefix, fromPar
     print(logPrefix, "rollupTable returned HTML error page")
     return nil
   end
-  if not rawTextHasHarvestableOrders(content) then
+  if countPlausibleOrdersInRawText(content) < 1 then
     print(logPrefix, "rollupTable no orders in response")
     return nil
   end
@@ -2595,12 +3302,6 @@ function isAbaDownloadUrl(url)
       or string.find(url, "GetReport", 1, true))
 end
 
-function isAbaReportLink(url, reportType, span)
-  return string.find(url, "/b2b/aba/", 1, true)
-    and string.find(url, reportType, 1, true)
-    and (span == nil or span == '' or string.find(url, span, 1, true))
-end
-
 function extractAbaDownloadUrls(raw)
   local urls=collectAbaHrefs(raw, isAbaDownloadUrl)
   local seen={}
@@ -2624,12 +3325,6 @@ function extractAbaDownloadUrls(raw)
     end
   end
   return urls
-end
-
-function extractAbaReportLinksFromLanding(raw, reportType, span)
-  return collectAbaHrefs(raw, function(url)
-    return isAbaReportLink(url, reportType, span)
-  end)
 end
 
 function fetchShopRawContent(method, url, body, contentType, headers)
@@ -2656,24 +3351,6 @@ function fetchAbaGetContent(url)
     return nil
   end
   return content
-end
-
-function fetchAbaCsvFromUrl(url, logPrefix, reportType, span, landingRaw)
-  local content=fetchAbaGetContent(url)
-  if content == nil then
-    return nil
-  end
-  if isAbaCsvOrOrderText(content) then
-    print(logPrefix, url)
-    return content
-  end
-  if isAbaHtmlDocument(content) and type(reportType) == 'string' and type(span) == 'string' then
-    local fromHtml=tryHarvestAbaCsvFromHtmlPage(content, reportType, span, landingRaw, logPrefix)
-    if fromHtml ~= nil then
-      return fromHtml
-    end
-  end
-  return harvestAbaDownloadUrls(content, logPrefix)
 end
 
 function abaPrimaryReportJob(refreshSince, now, reportType)
@@ -2723,25 +3400,22 @@ end
 
 function harvestAbaReportJob(job, landing, orderCache, subAccountLabel, kind)
   if type(job) ~= 'table' or landing == nil or type(orderCache) ~= 'table' then
-    return 0
+    return 0, false
   end
   MM.printStatus('Amazon Business Bericht: '..job.reportType..' / '..abaJobStatusLabel(job))
-  local content=harvestAbaReportContent(job.reportType, job.span, landing, job.fromDate, job.toDate)
+  local logPrefix="ABA report "..job.reportType.." "..job.span
+  local pageHtml=type(landing) == 'string' and landing or ''
+  local content=tryHarvestAbaCsvFromHtmlPage(
+    pageHtml, job.reportType, job.span, landing, logPrefix, job.fromDate, job.toDate)
   if content == nil then
     print("ABA no orders for", job.reportType, job.span)
-    return 0
+    return 0, false
   end
-  local _, _, n=mergeOrdersFromRawText(content, orderCache, subAccountLabel, kind)
+  local foundOrders, _, n=mergeOrdersFromRawText(content, orderCache, subAccountLabel, kind)
   if n > 0 then
     print("ABA harvest", job.reportType, job.span, "new=", n)
   end
-  return n
-end
-
-function harvestAbaReportContent(reportType, span, landingRaw, fromParts, toParts)
-  local logPrefix="ABA report "..reportType.." "..span
-  local pageHtml=type(landingRaw) == 'string' and landingRaw or ''
-  return tryHarvestAbaCsvFromHtmlPage(pageHtml, reportType, span, landingRaw, logPrefix, fromParts, toParts)
+  return n, foundOrders
 end
 
 function failAbaReportsSession(logMsg, statusMsg)
@@ -2779,10 +3453,21 @@ function collectOrdersFromAbaReports(subAccountLabel, kind, refreshSince)
   if not sessionOk then
     return nil, sessionErr or "Amazon Business Analytics nicht erreichbar"
   end
-  local job=abaPrimaryReportJob(refreshSince, now, const.abaItemsReportType)
-  local totalNew=harvestAbaReportJob(job, landing, orderCache, subAccountLabel, kind)
+  local totalNew=0
+  local foundOrders=false
+  for _, job in ipairs(enumerateAbaReportJobs(refreshSince, now)) do
+    local n, found=harvestAbaReportJob(job, landing, orderCache, subAccountLabel, kind)
+    totalNew=totalNew+n
+    if found then
+      foundOrders=true
+    end
+  end
   if totalNew == 0 then
-    MM.printStatus("Amazon Business: keine Bestellnummern in ABA-Berichten gefunden")
+    if foundOrders then
+      print("ABA harvest: 0 new order ids (already in OrderCache)")
+    else
+      MM.printStatus("Amazon Business: keine Bestellnummern in ABA-Berichten gefunden")
+    end
   else
     print("ABA harvest total new=", totalNew)
   end
@@ -2830,7 +3515,7 @@ end
 function enterOrderList ()
   if html ~= nil and isAmazonBusinessSession(html) then
     print("Business session: open css order-history")
-    if tryEnterOrderListGet(buildCssOrderHistoryUrl(nil)) then
+    if tryEnterOrderListGet(buildOrderHistoryUrl('css')) then
       return
     end
   end
@@ -2849,7 +3534,7 @@ function enterOrderList ()
       end
     end
   end
-  if tryEnterOrderListGet(buildCssOrderHistoryUrl(nil)) then
+  if tryEnterOrderListGet(buildOrderHistoryUrl('css')) then
     return
   end
   if tryEnterOrderListGet(baseurl..const.orderListLink) then
@@ -2874,34 +3559,32 @@ function submitOrderTimeFilter(htmlNode, orderFilterVal)
   return connectShop(form:submit())
 end
 
---- @function buildCssOrderHistoryUrl
--- gp/css order-history serves order-card HTML on Business sessions; the Business
--- nav link (abn_yadd_ad_your_orders) and /ab/your-orders land on the SPA shell.
-function buildCssOrderHistoryUrl(filterVal)
-  local url=baseurl..const.cssOrderHistoryPath..'?ref_='..const.cssOrderHistoryRef
-  if type(filterVal) == 'string' and filterVal ~= '' then
-    url=url..'&timeFilter='..MM.urlencode(filterVal)
+--- @function buildOrderHistoryUrl
+-- kind: "css" | "yourOrders" | "classic". Optional timeFilter/orderFilter.
+function buildOrderHistoryUrl(kind, filterVal)
+  if kind == 'css' then
+    local url=baseurl..const.cssOrderHistoryPath..'?ref_='..const.cssOrderHistoryRef
+    if type(filterVal) == 'string' and filterVal ~= '' then
+      url=url..'&timeFilter='..MM.urlencode(filterVal)
+    end
+    return url
   end
-  return url
-end
-
---- @function buildYourOrdersTimeFilterUrl
--- GET URL used by the retail your-orders UI (also valid after Business account switch).
-function buildYourOrdersTimeFilterUrl(filterVal)
-  if type(filterVal) ~= 'string' or filterVal == '' then
-    return nil
+  if kind == 'yourOrders' then
+    if type(filterVal) ~= 'string' or filterVal == '' then
+      return nil
+    end
+    return baseurl..const.yourOrdersTimeFilterPath
+      ..'?timeFilter='..MM.urlencode(filterVal)
+      ..'&ref_='..const.yourOrdersTimeFilterRef
   end
-  return baseurl..const.yourOrdersTimeFilterPath
-    ..'?timeFilter='..MM.urlencode(filterVal)
-    ..'&ref_='..const.yourOrdersTimeFilterRef
-end
-
-function buildClassicOrderFilterUrl(filterVal)
-  if type(filterVal) ~= 'string' or filterVal == '' then
-    return nil
+  if kind == 'classic' then
+    if type(filterVal) ~= 'string' or filterVal == '' then
+      return nil
+    end
+    return baseurl..const.orderListLink
+      ..'&orderFilter='..MM.urlencode(filterVal)
   end
-  return baseurl..const.classicOrderFilterPath
-    ..'&orderFilter='..MM.urlencode(filterVal)
+  return nil
 end
 
 function recentYourOrdersGetFilters()
@@ -2954,9 +3637,9 @@ end
 -- Loads a timeFilter page via GET. css order-history first (Business-safe).
 function loadYourOrdersFilterPage(filterVal)
   local urls={
-    buildCssOrderHistoryUrl(filterVal),
-    buildYourOrdersTimeFilterUrl(filterVal),
-    buildClassicOrderFilterUrl(filterVal),
+    buildOrderHistoryUrl('css', filterVal),
+    buildOrderHistoryUrl('yourOrders', filterVal),
+    buildOrderHistoryUrl('classic', filterVal),
   }
   local lastPage=nil
   for _, url in ipairs(urls) do
@@ -2994,7 +3677,7 @@ function sessionMatchesSubAccountKind(kind)
 end
 
 function businessGetHarvestBlockedBySpaShell()
-  local cssPage=connectShop('GET', buildCssOrderHistoryUrl('last30'))
+  local cssPage=connectShop('GET', buildOrderHistoryUrl('css', 'last30'))
   if cssPage ~= nil then
     local resolved=resolveAkamaiInterstitial(cssPage)
     if resolved ~= nil and orderListPageReady(resolved) then
@@ -3005,16 +3688,25 @@ function businessGetHarvestBlockedBySpaShell()
   return probe ~= nil and isAmazonBusinessOrdersSpa(probe) and not orderListPageReady(probe)
 end
 
-function harvestGetOrderFilter(orderFilterVal, label, orderFilterCache, subAccountLabel, kind)
-  MM.printStatus('Amazon Bestellübersicht: "'..label..'"')
-  html=loadYourOrdersFilterPage(orderFilterVal)
-  if html == nil then
-    print("GET timeFilter failed", orderFilterVal)
-    return 0
+--- @function runOrderFilterHarvest
+-- Shared status + optional page load + readiness check + scan.
+-- opts.loadPage(filterVal) → html | nil; opts.requireReady marks incomplete filters.
+function runOrderFilterHarvest(orderFilterVal, statusLabel, orderFilterCache, subAccountLabel, kind, opts)
+  opts=type(opts) == 'table' and opts or {}
+  MM.printStatus('Amazon Bestellübersicht: "'..statusLabel..'"')
+  if type(opts.loadPage) == 'function' then
+    local page=opts.loadPage(orderFilterVal)
+    if page == nil then
+      print(opts.failLog or "filter load failed", orderFilterVal)
+      return 0
+    end
+    html=page
   end
-  if not orderListPageReady(html) then
-    print("GET timeFilter not ready", orderFilterVal)
-    if not isRecentOrderFilter(orderFilterVal) and not isAmazonBusinessOrdersSpa(html) then
+  if opts.requireReady and not orderListPageReady(html) then
+    print(opts.notReadyLog or "filter not ready", orderFilterVal)
+    if opts.markIncompleteOnNotReady
+        and not isRecentOrderFilter(orderFilterVal)
+        and not isAmazonBusinessOrdersSpa(html) then
       markOrderFilterCacheIfComplete(orderFilterCache, orderFilterVal, false)
     end
     return 0
@@ -3051,14 +3743,21 @@ function collectOrdersViaYourOrdersGet(subAccountLabel, kind, refreshSince, opts
     filters=enumerateYourOrdersGetFilters(refreshSince, now)
   end
   local orderFilterCache=filterCacheForSubAccount(subAccountLabel)
-  local totalNew=0
+  local newCount=0
+  local getHarvestOpts={
+    loadPage=loadYourOrdersFilterPage,
+    requireReady=true,
+    markIncompleteOnNotReady=true,
+    failLog="GET timeFilter failed",
+    notReadyLog="GET timeFilter not ready",
+  }
   for _, item in ipairs(filters) do
-    if shouldHarvestOrderFilter(item.val, orderFilterCache, totalNew, refreshSince, now) then
-      totalNew=totalNew
-        + harvestGetOrderFilter(item.val, item.label, orderFilterCache, subAccountLabel, kind)
+    if shouldHarvestOrderFilter(item.val, orderFilterCache, newCount, refreshSince, now) then
+      newCount=newCount
+        + runOrderFilterHarvest(item.val, item.label, orderFilterCache, subAccountLabel, kind, getHarvestOpts)
     end
   end
-  return totalNew
+  return newCount
 end
 
 --- @function collectOrdersFromOrderList
@@ -3073,10 +3772,9 @@ function collectOrdersFromOrderList(subAccountLabel, kind, refreshSince)
   if isAmazonBusinessOrdersSpa(html) and not orderListPageReady(html) then
     return collectBusinessSpaOrders(subAccountLabel, kind, refreshSince)
   end
-  local orderCache=ensureOrderCache()
   local orderFilterCache=filterCacheForSubAccount(subAccountLabel)
   local orderFilterSelect=html:xpath(const.xpathOrderMonthSelect):children()
-  local numbersOfNewOrders=0
+  local newCount=0
   local scannedFilters={}
   local now=os.time()
   local scanMonths=effectiveScanFiltersMonths(refreshSince, now)
@@ -3086,25 +3784,17 @@ function collectOrdersFromOrderList(subAccountLabel, kind, refreshSince)
 
   local function harvestFilter(orderFilterVal, statusLabel, submitFilter)
     if scannedFilters[orderFilterVal]
-        or not shouldHarvestOrderFilter(orderFilterVal, orderFilterCache, numbersOfNewOrders, refreshSince, now) then
+        or not shouldHarvestOrderFilter(orderFilterVal, orderFilterCache, newCount, refreshSince, now) then
       return
     end
-    MM.printStatus('Amazon Bestellübersicht: "'..statusLabel..'"')
-    if submitFilter then
-      local nextHtml=submitOrderTimeFilter(html, orderFilterVal)
-      if nextHtml == nil then
-        print("skip filter", orderFilterVal, "(submit failed or no form)")
-        scannedFilters[orderFilterVal]=true
-        return
-      end
-      html=nextHtml
-    end
-    local _, _, newCount=scanOrderFilterPages(orderFilterVal, orderCache, orderFilterCache, subAccountLabel, kind)
-    numbersOfNewOrders=numbersOfNewOrders+newCount
-    if newCount > 0 then
-      print("harvested "..newCount.." new order(s) from filter "..orderFilterVal)
-    end
     scannedFilters[orderFilterVal]=true
+    local n=runOrderFilterHarvest(orderFilterVal, statusLabel, orderFilterCache, subAccountLabel, kind, {
+      loadPage=submitFilter and function(val)
+        return submitOrderTimeFilter(html, val)
+      end or nil,
+      failLog="skip filter (submit failed or no form)",
+    })
+    newCount=newCount+n
   end
 
   local selectedFilterVal=getSelectedOrderFilter(html)
@@ -3117,7 +3807,7 @@ function collectOrdersFromOrderList(subAccountLabel, kind, refreshSince)
     return true
   end)
 
-  return numbersOfNewOrders, nil
+  return newCount, nil
 end
 
 function findSubAccountByKind(options, kind)
@@ -3207,6 +3897,70 @@ function orderMatchesMoneyMoneyAccount(order, accountNumber)
   return order.subAccountKind == wantKind
 end
 
+--- Legacy MoneyMoney account types: divisor, mixed ledger, optional period contra.
+function refreshAccountLedgerProfile(accountNumber)
+  local profile={
+    divisor=-100,
+    mixed=false,
+    periodly=false,
+    periodFmt=nil,
+    periodContra=nil,
+  }
+  if accountNumber == "inverse" then
+    profile.divisor=100
+  end
+  if accountNumber == "mix"
+      or accountNumber == "monthly"
+      or accountNumber == "yearly"
+      or not isCombinedMoneyMoneyAccount(accountNumber) then
+    profile.mixed=true
+  end
+  if accountNumber == "monthly" then
+    profile.periodly=true
+    profile.periodFmt="%Y-%m"
+    profile.periodContra=const.monthlyContra
+  elseif accountNumber == "yearly" then
+    profile.periodly=true
+    profile.periodFmt="%Y"
+    profile.periodContra=const.yearlyContra
+  end
+  return profile
+end
+
+--- @function detailsRescanDelaySec
+-- min, jitter for the next details fetch, based on order age.
+function detailsRescanDelaySec(age)
+  local day=const.daySeconds
+  if type(age) ~= 'number' or age < 0 then
+    age=0
+  end
+  if age < 90*day then
+    return 7*day, 7*day
+  end
+  if age < const.abaIncrementalMaxAgeSec then
+    return 21*day, 21*day
+  end
+  return 90*day, 90*day
+end
+
+--- @function scheduleNextDetailsDate
+-- Next details fetch: recent orders sooner so refunds/returns are seen; old orders stay rare.
+-- Positions already in emittedAccounts are not re-emitted; new refund/return leaves still are.
+function scheduleNextDetailsDate(order, now)
+  if type(order) ~= 'table' then
+    return
+  end
+  if type(now) ~= 'number' then
+    now=os.time()
+  end
+  local booking=order.bookingDate
+  if type(booking) ~= 'number' or booking == invalidDate then
+    booking=now
+  end
+  local minSec, jitterSec=detailsRescanDelaySec(now-booking)
+  order.detailsDate=now+math.floor(minSec+math.random()*jitterSec)
+end
+
 --- @function orderNeedsDetailsForAccount
 -- True when order details are stale and the order belongs to this MoneyMoney account.
 function orderNeedsDetailsForAccount(order, now, accountNumber)
@@ -3219,35 +3973,18 @@ function orderNeedsDetailsForAccount(order, now, accountNumber)
   return orderMatchesMoneyMoneyAccount(order, accountNumber)
 end
 
-function accountNumberIsKnown(knownAccounts, accountNumber)
-  if type(knownAccounts) ~= 'table' or accountNumber == nil then
-    return false
+--- Stable list of orders needing details for one MoneyMoney account (avoids double OrderCache scan).
+function ordersNeedingDetailsForAccount(accountNumber, now)
+  local pending={}
+  if type(LocalStorage) ~= 'table' or type(LocalStorage.OrderCache) ~= 'table' then
+    return pending
   end
-  for _,entry in pairs(knownAccounts) do
-    if entry == accountNumber then
-      return true
+  for orderCode,order in pairs(LocalStorage.OrderCache) do
+    if orderNeedsDetailsForAccount(order, now, accountNumber) then
+      pending[#pending+1]={orderCode=orderCode, order=order}
     end
-    if type(entry) == 'table' and entry.accountNumber == accountNumber then
-      return true
-    end
   end
-  return false
-end
-
---- @function markAccountNeedsInitialReload
--- Force "Please reload!" only for newly offered accounts. Do not reset getOrders
--- for accounts MoneyMoney already knows (avoids reload loop on ListAccounts).
-function markAccountNeedsInitialReload(accountNumber, knownAccounts)
-  if LocalStorage.getOrders == nil then
-    LocalStorage.getOrders={}
-  end
-  if accountNumberIsKnown(knownAccounts, accountNumber) then
-    if LocalStorage.getOrders[accountNumber] == nil then
-      LocalStorage.getOrders[accountNumber]=false
-    end
-    return
-  end
-  LocalStorage.getOrders[accountNumber]=false
+  return pending
 end
 
 function clearSubAccountScanState()
@@ -3488,141 +4225,6 @@ function scanAllAmazonSubAccounts()
   return (state and state.totalNew) or 0, nil
 end
 
-function getMessageListURL(ajaxToken,page,pageToken)
-  local fields={
-    messageType='all',
-    startDateTime=1000,
-    endDateTime=3167942400000,
-    pageSize=10,
-    pageNum=page,
-    sourcePage='inbox',
-    isMobile=0,
-    pageToken=pageToken,
-    token=ajaxToken,
-    stringDebug='',
-    isDebug=''
-  }
-  local t={}
-  for k,v in pairs(fields) do
-    if v ~= nil then
-      table.insert(t,k..'='..MM.urlencode(v))
-    end
-  end
-  return '/gp/message/ajax/message-list.html?'..table.concat(t,"&")
-end
-
-function getMessageURL(ajaxToken,messageId,threadId,messageDateTime)
-  local fields={
-    messageId=messageId,
-    threadId=threadId,
-    messageType='all',
-    sourcePage='inbox',
-    messageDateTime=messageDateTime,
-    isMobile=0,
-    token=ajaxToken,
-    stringDebug='',
-    isDebug=''
-  }
-  local t={}
-  for k,v in pairs(fields) do
-    if v ~= nil then
-      table.insert(t,k..'='..MM.urlencode(v))
-    end
-  end
-  return '/gp/message/ajax/message-content.html?'..table.concat(t,"&")
-end
-
-
-function getMessageList(since)
-  since=since*1000 -- in milliseconds
-  local orderIds={}
-  local html=connectShop("GET","/gp/message")
-  -- After account switching Amazon sometimes serves the sign-in page here.
-  local title=html:xpath('//title'):text()
-  if switchAuthBlockReason(html) ~= nil
-      or (type(title) == 'string' and (title:find("Anmelden") or title:find("Sign[- ]?[Ii]n"))) then
-    print("message center requires login, skipping Amazon message center check")
-    return orderIds
-  end
-  local ajaxToken=html:xpath('//script[contains(@type,"a-state")]'):text()
-  ajaxToken=string.match(ajaxToken,'{"token":"([A-Za-z0-9]+)"}')
-  print("ajaxToken",ajaxToken)
-  if ajaxToken == nil or ajaxToken == "" then
-    -- new page layout no longer exposes the a-state token; skip the
-    -- message-center check rather than guess at a broken request URL
-    print("no ajaxToken found, skipping Amazon message center check")
-    return orderIds
-  end
-  local page=1
-  local messages={}
-  local nextPageToken
-  repeat
-    MM.printStatus("Get page",page,"from Amazon message center.")
-    local html
-    local noNextPage=true
-    local json=connectShopJson("GET",getMessageListURL(ajaxToken,page,nextPageToken))
-    if json.html ~= nil then
-      html=HTML("<html><body>"..json['html'].."</html></body>")
-      json.html = nil
-    end
-    if json.nextPageToken~= nil then
-      nextPageToken=json.nextPageToken
-      noNextPage=true
-    end
-    --debugBuffer.flush()
-
-    local newMessages=false
-    html:xpath('//td'):each(function(index,td)
-      local message={}
-      for _,k in pairs({'messageSentTime','message-sent-time-in-ms','messageId','message-id','threadId','thread-id'}) do
-        message[k]=td:attr(k:lower())
-      end
-      if message['message-sent-time-in-ms'] ~= '' then
-        message.messageSentTime=message['message-sent-time-in-ms']
-        message.threadId=message['threadId']
-        message.messageId=message['message-id']
-      end
-      if tonumber(message.messageSentTime) > since then
-        messages[message.messageId]=message
-        newMessages=true
-      end
-      debugBuffer.print(message)
-    end)
-    --debugBuffer.print(page,json)
-    if not newMessages then
-      noNextPage=true
-    end
-    page=page+1
-  until noNextPage
-  local numAll=0
-  local num=0
-  for _,v in pairs(messages) do
-    numAll=numAll+1
-  end
-  for _,v in pairs(messages) do
-    num=num+1
-    MM.printStatus("Get Amazon message",num,"of",numAll)
-    local html
-    local json=connectShopJson("GET",getMessageURL(ajaxToken,v.messageId,v.threadId,v.messageSentTime))
-    if json.html ~= nil then
-      html=HTML("<html><body>"..json['html'].."</html></body>")
-    else
-      html=''
-    end
-    for orderId in html:html():gmatch(const.regexOrderCodeNew) do
-      orderIds[orderId]=tonumber(v.messageSentTime)/1000 -- in milliseconds
-    end
-  end
-  local numOrders=0
-  for k,v in pairs(orderIds) do
-    numOrders=numOrders+1
-  end
-  print(numOrders,"orders from messages")
-  --debugBuffer.print(orderIds)
-  --debugBuffer.flush()
-  return orderIds
-end
-
 function getLastDayOfPeriod(period)
   local year=string.match(period,"(%d%d%d%d)")
   local month=string.match(period,"-(%d%d)")
@@ -3697,14 +4299,12 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
   end
 
   if step==1 then
-    if LocalStorage.getOrders == nil then
-      LocalStorage.getOrders={}
-    end
     rememberShopCredentials(credentials[1], credentials[2])
     captcha1run=true
     mfa1run=true
     aName=nil
     clearSubAccountScanState()
+    clearAccountSetupState()
 
     if LocalStorage.loginCounter == nil then
       LocalStorage.loginCounter=0
@@ -3723,7 +4323,6 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
           print("clean LocalStorage")
           LocalStorage.OrderCache={}
           clearOrderFilterCaches()
-          LocalStorage.newestMessage=0
           LocalStorage.balancesByPeriod={}
         end
       end
@@ -3834,37 +4433,8 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       html=connectShop(authSelect:submit())
     end
 
-    -- new captcha?
-    -- ('//form[@action="/errors/validateCaptcha"]')
-    -- ('//form[@action="/errors/validateCaptcha"]//img')
-    -- ('//input[@id="captchacharacters"]')
-
-    -- local captcha=html:xpath('//form[@action="/errors/validateCaptcha"]')
-    -- if captcha:text() ~= "" then
-    --     leaveLoginLoop=false
-    --   -- untested...
-    --   print("untested ****************************")
-    --   if config.debug then print("login new captcha") end
-    --   if captcha1run then
-    --     local pic=connectShopRaw("GET",captcha:xpath('.//img'):attr('src'))
-    --     captcha1run=false
-    --     return {
-    --       title=captcha:xpath('.//label'):text(),
-    --       challenge=pic,
-    --       label=captcha:xpath('.//form//h4'):text()
-    --     }
-    --   else
-    --     captcha:xpath('.//input[@id="captchacharacters"]'):attr("value",credentials[1])
-    --     html=connectShop(captcha:submit())
-    --     captcha1run=true
-    --   end
-    -- end
-    --
-
     -- Captcha
-    --
     local captcha=html:xpath('//img[@id="auth-captcha-image"]'):attr('src')
-    --div id="image-captcha-section"
     if captcha ~= "" then
       print("captcha")
       leaveLoginLoop=false
@@ -4019,7 +4589,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
   return nil
 end
 
-function ListAccounts (knownAccounts)
+function resolveListAccountsDisplayName()
   local name=aName
   if name == nil or name == "" then
     name=secUsername
@@ -4027,42 +4597,59 @@ function ListAccounts (knownAccounts)
   if name == nil or name == "" then
     name="Orders"
   end
-  if LocalStorage.getOrders == nil then
-    LocalStorage.getOrders={}
-  end
-  local accounts={}
-  -- Shared Amazon account always offered. Dedicated subs only when discovery
-  -- found more than one Amazon identity — user picks mix and/or subs in MM.
-  table.insert(accounts, {
-    name="Amazon "..name,
-    owner=secUsername or name,
-    accountNumber="mix",
+  return name
+end
+
+function makeListAccountEntry(labelSuffix, owner, accountNumber)
+  return {
+    name="Amazon "..labelSuffix,
+    owner=owner,
+    accountNumber=accountNumber,
     type=AccountTypeOther,
-  })
-  markAccountNeedsInitialReload("mix", knownAccounts)
+  }
+end
+
+function loadBlackListFromConfig()
+  local list={}
+  for order in string.gmatch(config.blackListOrders, "[D0-9-]+") do
+    print("blacklist order=",order)
+    list[order]=true
+  end
+  return list
+end
+
+function ListAccounts (knownAccounts)
+  -- MoneyMoney "Bankzugang einrichten" / "Nach neuen Konten suchen": ListAccounts
+  -- precedes RefreshAccount in the same session. Skip harvest and emit until EndSession.
+  local knownCount=0
+  if type(knownAccounts) == 'table' then
+    knownCount=#knownAccounts
+  end
+  -- First import: empty knownAccounts, or never harvested (e.g. after resetCache).
+  -- Also triggers on "Nach neuen Konten suchen" when lastHarvestSince was cleared.
+  local enableInitialSync=knownCount == 0 or type(LocalStorage.lastHarvestSince) ~= 'number'
+  beginAccountSetupSession(enableInitialSync)
+  local name=resolveListAccountsDisplayName()
+  local owner=secUsername or name
+  local accounts={makeListAccountEntry(name, owner, "mix")}
 
   local discovered=LocalStorage.discoveredSubAccounts
   if type(discovered) == 'table' and #discovered > 1 then
     for _,sub in ipairs(discovered) do
-      table.insert(accounts, {
-        name="Amazon "..sub.label,
-        owner=secUsername or name,
-        accountNumber=sub.accountNumber,
-        type=AccountTypeOther,
-      })
-      markAccountNeedsInitialReload(sub.accountNumber, knownAccounts)
+      table.insert(accounts, makeListAccountEntry(sub.label, owner, sub.accountNumber))
     end
   end
   return accounts
 end
 
 function RefreshAccount (account, since)
-  local mixed=false
-  local periodly=false
   local now=os.time()
 
   webCacheState='RefreshAccount'
 
+  applyImportSchemaUpgrade()
+
+  config.keepStorno=false
   if type(account.attributes) == 'table' then
     LocalStorage.patcher={}
     for k,v in pairs(account.attributes) do
@@ -4070,368 +4657,139 @@ function RefreshAccount (account, since)
       LocalStorage.patcher[k]=v
       applyAccountAttribute(k, v, true)
       if k == 'resetCache' and v ~= LocalStorage.resetCache then
-        LocalStorage.OrderCache={}
-        clearOrderFilterCaches()
-        LocalStorage.invalidCache={}
+        resetImportState(false)
         LocalStorage.resetCache=v
-        return {balance=0, transactions={[1]=
-          {
-            name="Cache reset, please reload!",
-            amount = 0,
-            bookingDate = now,
-            purpose = "... and drink a coffee :)",
-            booked = false,
-          }
-        }}
+        MM.printStatus("Amazon: Cache zurückgesetzt – Bestellungen werden neu geladen…")
       end
     end
   end
 
-  blackListOrders={}
-  for order in string.gmatch(config.blackListOrders, "[D0-9-]+") do
-    print("blacklist order=",order)
-    blackListOrders[order]=true
+  local blocked=refreshAccountBlockedResult()
+  if blocked ~= nil then
+    return blocked
   end
 
-  local divisor=-100
-  if account.accountNumber == "inverse" then
-    divisor=100
-  end
+  ensureOrderCache()
+  blackListOrders=loadBlackListFromConfig()
 
-  -- Shared Amazon (mix) and dedicated sub-accounts use the mixed ledger.
-  -- Legacy "normal"/"inverse" stay non-mixed for existing MoneyMoney accounts.
-  if account.accountNumber == "mix"
-      or account.accountNumber == "monthly"
-      or account.accountNumber == "yearly"
-      or not isCombinedMoneyMoneyAccount(account.accountNumber) then
-    mixed=true
-  end
-
-  local periodFmt
-  local periodContra
-  if account.accountNumber == "monthly" then
-    mixed=true
-    periodly=true
-    periodFmt="%Y-%m"
-    periodContra=const.monthlyContra
-  end
-  if account.accountNumber == "yearly" then
-    mixed=true
-    periodly=true
-    periodFmt="%Y"
-    periodContra=const.yearlyContra
-  end
+  local ledger=refreshAccountLedgerProfile(account.accountNumber)
+  local mixed=ledger.mixed
+  local periodly=ledger.periodly
+  local periodFmt=ledger.periodFmt
+  local periodContra=ledger.periodContra
+  local divisor=ledger.divisor
 
   print("Refresh",account.accountNumber)
 
-  if LocalStorage.txLayoutNotice then
-    MM.printStatus("Amazon: name/purpose=Artikel, Referenz=Bestellnr, Umsatzart=Lieferadresse; bereits geladene Bestellungen werden nicht erneut importiert")
-    LocalStorage.txLayoutNotice=false
-  end
-
-  if LocalStorage.getOrders[account.accountNumber] == false or LocalStorage.getOrders[account.accountNumber] == nil then
-    LocalStorage.getOrders[account.accountNumber]=true
-
-    return {balance=0, transactions={[1]=
-      {
-        name="Please reload!",
-        amount = 0,
-        bookingDate = now,
-        purpose = "... and drink a coffee :)",
-        booked = false,
-      }
-    }}
-  end
-
   local transactions={}
 
-  if shouldRunAccountHarvest(since, now) then
+  local refreshSince=effectiveRefreshSince(since)
+  if isPendingInitialSync() and not isAccountSetupSession() then
+    MM.printStatus("Amazon: Erstimport – gesamte Bestellhistorie wird geladen…")
+  end
+  LocalStorage.refreshSince=refreshSince
+  local harvest=shouldRunAccountHarvest(refreshSince, now)
+  local scanErr=nil
+  local scanComplete=false
 
-    LocalStorage.refreshSince=since
-    logMoneyMoneyRefreshMode(since, now)
+  if harvest then
+    logMoneyMoneyRefreshMode(refreshSince, now)
 
     html=connectShop("GET",baseurl)
 
-    ensureOrderCache()
     ensureOrderFilterCacheRoot()
-    if LocalStorage.invalidCache == nil then
-      LocalStorage.invalidCache={}
-    end
+    ensureInvalidCache()
 
-    local _, scanErr=scanAllAmazonSubAccounts()
+    local _, harvestScanErr=scanAllAmazonSubAccounts()
+    scanErr=harvestScanErr
+    scanComplete=isSubAccountScanComplete()
     if scanErr ~= nil then
-      return scanErr
-    end
-
-    -- modified orders? read messages
-    if LocalStorage.newestMessage == nil then
-      LocalStorage.newestMessage = now-(24*60*60)
-    end
-
-    local newestMessage=LocalStorage.newestMessage
-
-    for orderCode,messageTime in pairs(getMessageList(LocalStorage.newestMessage)) do
-
-      if newestMessage<messageTime then
-        newestMessage=messageTime
+      MM.printStatus("Amazon: "..tostring(scanErr))
+    elseif scanComplete then
+      LocalStorage.lastLoginCounter = LocalStorage.loginCounter
+      LocalStorage.lastHarvestSince=refreshSince
+      if isPendingInitialSync() then
+        markInitialSyncHarvestDone()
       end
-      if LocalStorage.OrderCache[orderCode] ~= nil then
-        LocalStorage.OrderCache[orderCode].detailsDate=1
-      end
+    elseif isPendingInitialSync() then
+      MM.printStatus("Amazon: Erstimport – Unterkonto-Scan unvollständig, Fortsetzung beim nächsten Abruf")
     end
-    LocalStorage.newestMessage = newestMessage
-
-    if LocalStorage.OrderCache[config.rescanOrder] ~= nil then
-      LocalStorage.OrderCache[config.rescanOrder].detailsDate=1
-      print("rescan order="..config.rescanOrder)
-    end
-
-    -- count order details to get (only for this MoneyMoney account)
-
-    local ordersCounter=0
-    local ordersTotal=0
-
-    for orderCode,order in pairs(LocalStorage.OrderCache) do
-      if orderNeedsDetailsForAccount(order, now, account.accountNumber) then
-        ordersTotal=ordersTotal+1
-      end
-    end
-
-    if ordersTotal>config.limitOrders then
-      ordersTotal=config.limitOrders
-      table.insert(transactions,{
-        name="There are still more orders left...",
-        amount = 0,
-        bookingDate = now,
-        purpose = "Please reload...",
-        booked = false,
-      })
-    end
-
-    -- get order details from order details page
-
-    for orderCode,order in pairs(LocalStorage.OrderCache) do
-      if orderNeedsDetailsForAccount(order, now, account.accountNumber) and ordersCounter<config.limitOrders then
-        ordersCounter=ordersCounter+1
-        if not blackListOrders[orderCode] then
-          MM.printStatus(ordersCounter.."/"..ordersTotal,"Get details for order",orderCode)
-          getOrderDetails(order)
-        else
-          MM.printStatus(ordersCounter.."/"..ordersTotal,"Black listed order",orderCode)
-          -- Defer so blacklisted stubs are not re-queued every refresh.
-          -- Removing the order from blackListOrders + rescanOrder re-enables fetch.
-          order.detailsDate=now+math.floor((math.random()*90+90)*24*60*60)
-        end
-      end
-    end
-
-    LocalStorage.lastLoginCounter = LocalStorage.loginCounter
-    LocalStorage.lastHarvestSince=since
   else
     print("skip account scan")
   end
 
-  local balance=0
-  local balancesByPeriod={}
+  local refundWatch=scheduleIncrementalRefundWatch(account.accountNumber, refreshSince, now)
+  if refundWatch > 0 then
+    print("incremental refund watch: re-queued details for", refundWatch, "orders")
+  end
+
+  if LocalStorage.OrderCache[config.rescanOrder] ~= nil then
+    LocalStorage.OrderCache[config.rescanOrder].detailsDate=1
+    clearOrderEmittedFlags(LocalStorage.OrderCache[config.rescanOrder])
+    print("rescan order="..config.rescanOrder)
+  end
+
+  local pendingDetails=ordersNeedingDetailsForAccount(account.accountNumber, now)
+  if #pendingDetails > 0 and (harvest or refundWatch > 0) then
+    if html == nil then
+      html=connectShop("GET",baseurl)
+    end
+
+    local ordersTotal=#pendingDetails
+    local ordersCounter=0
+
+    if ordersTotal>config.limitOrders then
+      MM.printStatus("Amazon: noch "..tostring(ordersTotal-config.limitOrders)
+        .." Bestelldetails offen – Fortsetzung beim nächsten Abruf")
+      ordersTotal=config.limitOrders
+    end
+
+    for i=1,#pendingDetails do
+      if ordersCounter>=config.limitOrders then
+        break
+      end
+      ordersCounter=ordersCounter+1
+      local entry=pendingDetails[i]
+      local orderCode=entry.orderCode
+      local order=entry.order
+      if not blackListOrders[orderCode] then
+        MM.printStatus(ordersCounter.."/"..ordersTotal,"Get details for order",orderCode)
+        getOrderDetails(order)
+      else
+        MM.printStatus(ordersCounter.."/"..ordersTotal,"Black listed order",orderCode)
+        scheduleNextDetailsDate(order, now)
+      end
+    end
+  end
+
+  if shouldRecordInitialSyncAccountRefresh(harvest, scanErr, scanComplete) then
+    recordInitialSyncAccountRefresh(account.accountNumber)
+  end
+  tryCompleteInitialSync(now)
+
+  local ctx={
+    transactions=transactions,
+    accountNumber=account.accountNumber,
+    mixed=mixed,
+    periodly=periodly,
+    periodFmt=periodFmt,
+    divisor=divisor,
+    now=now,
+    balancesByPeriod={},
+    balance=0,
+  }
   for orderCode,order in pairs(LocalStorage.OrderCache) do
-    if not blackListOrders[orderCode] and orderMatchesMoneyMoneyAccount(order, account.accountNumber) then
-
-      -- orderPositions,{purpose=purpose,amount=amount,qty=qty})
-      if not mixed then
-        balance=balance+order.orderTotal
-      end
-      if order.since == nil then
-        order.since=now
-      end
-
-      local report=order.since >= since
-
-      if periodly then
-        local period=os.date(periodFmt,order.bookingDate)
-        if balancesByPeriod[period] == nil then
-          balancesByPeriod[period] = {report=true,balance=order.orderTotal}
-        else
-          balancesByPeriod[period].balance=balancesByPeriod[period].balance+order.orderTotal
-        end
-        if not report then
-          balancesByPeriod[period].report=false
-        end
-      end
-
-
-      if report then
-        if type(order.orderPositions) == 'table' then
-          for index,position in pairs(order.orderPositions) do
-            table.insert(transactions, makeAccountTransaction(
-              order,
-              orderCode,
-              position.purpose,
-              position.amount/divisor*position.qty,
-              order.bookingDate+1
-            ))
-          end
-        end
-
-        if order.orderSum ~= order.orderTotal then
-          table.insert(transactions, makeAccountTransaction(
-            order,
-            orderCode,
-            const.differenceText,
-            (order.orderTotal-order.orderSum)/divisor,
-            order.bookingDate
-          ))
-        end
-
-        if mixed and order.orderTotal ~= 0 and not periodly then
-          if order.since >= since then
-            table.insert(transactions, makeAccountTransaction(
-              order,
-              orderCode,
-              const.contra..orderCode,
-              order.orderTotal/divisor*-1,
-              order.bookingDate
-            ))
-          end
-        end
-      end
-
-      -- makeBranch(order,{'refundTransactions',bookingDate,amount})
-      if order.refundTransactions ~= nil then
-        for bookingDate,v in pairs(order.refundTransactions) do
-
-          local period=os.date(periodFmt,bookingDate)
-          if balancesByPeriod[period] == nil then
-            balancesByPeriod[period] = {report=true,balance=0}
-          end
-          for amount,v in pairs(v) do
-
-            if not mixed then
-              balance=balance-amount
-            end
-
-            if v.since== nil then
-              v.since=now
-            end
-
-            if shouldSuppressFullRefundReimport(order, amount, since, mixed) then
-              print("skip full-refund reimport (already booked with contra)", orderCode, amount)
-              v.since=0
-            end
-
-            local report=v.since >= since
-
-            if periodly then
-              balancesByPeriod[period].balance=balancesByPeriod[period].balance-amount
-              if not report then
-                balancesByPeriod[period].report=false
-              end
-            end
-
-            if report then
-              table.insert(transactions, makeAccountTransaction(
-                order,
-                orderCode,
-                const.refundTransaction..orderCode,
-                amount/divisor*-1,
-                bookingDate
-              ))
-              if mixed and not periodly then
-                table.insert(transactions, makeAccountTransaction(
-                  order,
-                  orderCode,
-                  const.refundTransactionContra..orderCode,
-                  amount/divisor,
-                  bookingDate
-                ))
-              end
-            end
-          end
-        end
-      end
-    end
-
-    -- makeBranch(order,{'returns',bookingDate,amount,purpose})
-    if order.returns ~= nil then
-      for bookingDate,v in pairs(order.returns) do
-        for amount,v in pairs(v) do
-          for purpose,v in pairs(v) do
-            -- if not mixed then
-            --   balance=balance-amount
-            -- end
-            if v.since== nil then
-              v.since=now
-            end
-            if v.since >= since then
-              table.insert(transactions, makeAccountTransaction(
-                order,
-                orderCode,
-                const.returnText..purpose,
-                amount/divisor*-1,
-                bookingDate
-              ))
-              table.insert(transactions, makeAccountTransaction(
-                order,
-                orderCode,
-                const.returnTextContra..purpose,
-                amount/divisor,
-                bookingDate
-              ))
-            end
-          end
-        end
-      end
+    if not blackListOrders[orderCode] and orderMatchesMoneyMoneyAccount(order, ctx.accountNumber) then
+      appendOrderToRefresh(ctx, order, orderCode)
     end
   end
 
-  if periodly then
-    if LocalStorage.balancesByPeriod == nil then
-      LocalStorage.balancesByPeriod={}
-    end
-    local lastPeriod=""
-
-    for k,v in pairs(balancesByPeriod) do
-      if lastPeriod<k then
-        lastPeriod=k
-      end
-      -- debugBuffer.print(k)
-    end
-
-    -- debugBuffer.print("lastPeriod=",lastPeriod)
-
-    for k,v in pairs(balancesByPeriod) do
-      if v.report then
-        if k == lastPeriod then
-          LocalStorage.balancesByPeriod[k]={v.balance}
-        else
-          if LocalStorage.balancesByPeriod[k] == nil then
-            LocalStorage.balancesByPeriod[k]={}
-          end
-          local sum=0
-          for _,v in  ipairs(LocalStorage.balancesByPeriod[k]) do
-            sum=sum+v
-          end
-          if sum ~= v.balance then
-            table.insert(LocalStorage.balancesByPeriod[k],v.balance-sum)
-          end
-        end
-        for _,v in  ipairs(LocalStorage.balancesByPeriod[k]) do
-          table.insert(transactions,{
-            name=k,
-            amount = v/divisor*-1,
-            bookingDate = getLastDayOfPeriod(k),
-            purpose = periodContra,
-            booked= k~=lastPeriod,
-          })
-          if k == lastPeriod then
-            balance=v
-          end
-          -- debugBuffer.print(k,v,getLastDayOfPeriod(k))
-        end
-      end
-    end
+  if mixed and not periodly then
+    addMixFloatingBalance(transactions, ctx.accountNumber, refreshSince, now, divisor)
   end
 
-  --print(balance)
+  appendPeriodContras(ctx, periodContra)
+
   if config.debug then
     RegressionTest.run(transactions,account.accountNumber)
     if LocalStorage.OrderCache[config.rescanOrder] ~= nil then
@@ -4452,13 +4810,13 @@ function RefreshAccount (account, since)
     end
   end
 
-  -- Return balance and array of transactions.
-  return {balance=balance/divisor, transactions=transactions}
+  return {balance=ctx.balance/divisor, transactions=transactions}
 end
 
 function EndSession ()
+  clearAccountSetupState()
   -- Logout.
-  if config.reallyLogout then
+  if config.reallyLogout and html ~= nil then
     local logoutElement=html:xpath('//a[contains(@id,"nav-item-signout") or contains(@href,"sign-out")]')
     if logoutElement ~= nil then
       print("Logout")

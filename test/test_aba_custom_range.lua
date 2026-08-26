@@ -37,7 +37,8 @@ local fromParts = env.unixToAbaDateParts(since)
 local toParts = env.unixToAbaDateParts(now)
 assert(fromParts ~= nil and toParts ~= nil)
 
-local csv = env.harvestAbaReportContent("items_report_1", "CUSTOM_RANGE", landingHtml, fromParts, toParts)
+local csv = env.tryHarvestAbaCsvFromHtmlPage(
+  landingHtml, "items_report_1", "CUSTOM_RANGE", landingHtml, "test", fromParts, toParts)
 assert(csv ~= nil, "expected CUSTOM_RANGE rollup harvest")
 assert(csv:find("303-8888888-7777777", 1, true), csv)
 assert(rollupPosts == 1, "expected one rollupTable POST, got " .. tostring(rollupPosts))

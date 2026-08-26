@@ -32,13 +32,15 @@ end
 
 local function eur(cents) return string.format("%.2f", cents / 100) end
 local function dump(order)
-  print(string.format("  -> code=%s date=%s total=%s sum=%s positions=%d",
-    order.orderCode, os.date("%Y-%m-%d", order.bookingDate),
+  print(string.format("  -> date=%s total=%s sum=%s positions=%d",
+    os.date("%Y-%m-%d", order.bookingDate),
     eur(order.orderTotal), eur(order.orderSum), #order.orderPositions))
   for i, p in ipairs(order.orderPositions) do
-    print(string.format("     [%d] qty=%s amount=%s  %s", i, tostring(p.qty), eur(p.amount), (p.purpose or ""):sub(1, 60)))
+    print(string.format("     [%d] qty=%s amount=%s", i, tostring(p.qty), eur(p.amount)))
   end
-  if order.shippingAddress then print("     addr: " .. order.shippingAddress) end
+  if order.shippingAddress and order.shippingAddress ~= "" then
+    print("     addr: captured")
+  end
 end
 
 ------------------------------------------------------------------ LIST
@@ -59,7 +61,7 @@ end
 ------------------------------------------------------------------ SINGLE
 print("== details-single.html ==")
 do
-  local o = parseDetail("details-single.html", "304-1959277-6233165")
+  local o = parseDetail("details-single.html", "304-0000001-0000001")
   dump(o)
   check(os.date("%Y-%m-%d", o.bookingDate) == "2025-12-20", "order date 2025-12-20")
   check(o.orderTotal == 16998, "orderTotal 169,98")
@@ -67,13 +69,13 @@ do
   check(o.orderPositions[1] and o.orderPositions[1].amount == 16998, "position amount 169,98")
   check(o.orderPositions[1] and o.orderPositions[1].qty == 1, "position qty 1")
   check(o.orderSum == 16998, "orderSum 169,98")
-  check(o.shippingAddress and o.shippingAddress:find("Chattenweg") ~= nil, "address captured")
+  check(o.shippingAddress and o.shippingAddress ~= "", "address captured")
 end
 
 ------------------------------------------------------------------ MULTI
 print("== details-multi.html ==")
 do
-  local o = parseDetail("details-multi.html", "304-6060868-3893966")
+  local o = parseDetail("details-multi.html", "304-0000002-0000002")
   dump(o)
   check(#o.orderPositions == 3, "3 positions")
   check(o.orderSum == 3397, "orderSum 33,97 (10,99+7,99+14,99)")
@@ -120,7 +122,7 @@ end
 ------------------------------------------------------------------ QTY > 1
 print("== details-quantity-other-than-1.html ==")
 do
-  local o = parseDetail("details-quantity-other-than-1.html", "304-2173771-7757910")
+  local o = parseDetail("details-quantity-other-than-1.html", "304-0000003-0000003")
   dump(o)
   check(#o.orderPositions == 1, "1 position")
   check(o.orderPositions[1] and o.orderPositions[1].qty == 2, "quantity 2 (from badge)")

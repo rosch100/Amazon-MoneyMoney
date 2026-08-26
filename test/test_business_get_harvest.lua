@@ -14,17 +14,21 @@ local spa = mm.HTML(spaHtml)
 assert(env.isAmazonBusinessOrdersSpa(spa) == true)
 assert(env.orderListPageReady(spa) == false)
 
-local cssUrl = env.buildCssOrderHistoryUrl("year-2025")
+local cssUrl = env.buildOrderHistoryUrl("css", "year-2025")
 assert(cssUrl:find("/gp/css/order-history", 1, true))
 assert(cssUrl:find("ref_=nav_orders_first", 1, true))
 assert(cssUrl:find("timeFilter=year-2025", 1, true))
 
-local url = env.buildYourOrdersTimeFilterUrl("year-2025")
+local url = env.buildOrderHistoryUrl("yourOrders", "year-2025")
 assert(url:find("timeFilter=year-2025", 1, true))
 assert(url:find("ref_=ppx_yo2ov_dt_b_filter_all", 1, true))
 
-local classic = env.buildClassicOrderFilterUrl("months-3")
+local classic = env.buildOrderHistoryUrl("classic", "months-3")
 assert(classic:find("orderFilter=months-3", 1, true))
+
+assert(env.buildCssOrderHistoryUrl == nil)
+assert(env.buildYourOrdersTimeFilterUrl == nil)
+assert(env.buildClassicOrderFilterUrl == nil)
 
 local filters = env.enumerateYourOrdersGetFilters()
 assert(#filters >= 3)
@@ -54,7 +58,7 @@ end
 env.HTML = mm.HTML
 env.isAkamaiInterstitial = function() return false end
 
-local n = env.collectOrdersViaYourOrdersGet("Altanis GmbH", "business")
+local n = env.collectOrdersViaYourOrdersGet("Example GmbH", "business")
 assert(n >= 1, "expected GET harvest new orders, got " .. tostring(n))
 assert(#posts == 0, "must not POST orderHistory, posts=" .. tostring(#posts))
 assert(#gets >= 1, "expected at least one GET timeFilter")

@@ -60,7 +60,7 @@ assert(env.isAmazonSignInPageHtml(abaLandingHtml) == false,
   "nav sign-in link must not count as login page")
 assert(env.isAbaLandingReady(abaLandingHtml) == true)
 
-local n = env.collectBusinessSpaOrders("Altanis GmbH", "business")
+local n = env.collectBusinessSpaOrders("Example GmbH", "business")
 assert(type(n) == "number", "expected count, got " .. tostring(n))
 assert(n == 2, "expected ABA harvest new=2, got " .. tostring(n))
 assert(#posts == 0, "must not POST orderHistory, posts=" .. tostring(#posts))

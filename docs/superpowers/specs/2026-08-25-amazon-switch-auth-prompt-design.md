@@ -4,7 +4,7 @@ Datum: 2026-08-25
 
 ## Problem
 
-Wechsel zu Business (`Altanis GmbH`) liefert oft
+Wechsel zu Business (`Example GmbH`) liefert oft
 `redirectUrl` → `/ap/signin?...&switch_account=auth_prompt` mit Passwort-Form
 (kein OTP). Plugin brach mit `switch landed on interactive login` ab.
 

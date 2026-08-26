@@ -114,7 +114,7 @@ repeat runs stay fast. detailsUrl built via const.orderDetailsUrl + code.
   (no special URL); gift cards have no shippingAddress, which is fine.
 - STILL PENDING: business account (poNumber/orderedMerchant not wired) needs a
   sample; per-item partial refund detail; refund date approximated by order date.
-- Minor: address `<br>` between street and city yields "Chattenweg 4Hünfeld"
+- Minor: address `<br>` between street and city yields "Beispielweg 1Musterstadt"
   (no space). Cosmetic (endToEndReference only).
 - FIXED (2026-07, from a user-reported MoneyMoney log): `getMessageList()`
   (~L1086, checks Amazon's message center to flag orders needing a rescan)

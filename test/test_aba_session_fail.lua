@@ -20,7 +20,7 @@ env.HTML = mm.HTML
 env.isAkamaiInterstitial = function() return false end
 env.businessGetHarvestBlockedBySpaShell = function() return false end
 
-local n, err = env.collectBusinessSpaOrders("Altanis GmbH", "business", 0)
+local n, err = env.collectBusinessSpaOrders("Example GmbH", "business", 0)
 assert(n == nil, "expected nil count on ABA session fail")
 assert(type(err) == "string" and err ~= "", "expected error string, got " .. tostring(err))
 
