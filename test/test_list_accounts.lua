@@ -23,6 +23,7 @@ assert(onlyShared[1].attributes.resetCache == "")
 assert(onlyShared[1].attributes.blacklistOrders == "")
 assert(onlyShared[1].attributes.rescanOrder == "")
 assert(onlyShared[1].attributes.keepStorno == "false", "ListAccounts must pre-fill default values for MM note UI")
+assert(onlyShared[1].attributes.nameMaxLength == "0", "title line is untruncated by default")
 
 env.rememberDiscoveredSubAccounts({
   { kind = "personal", label = "Persönliches Konto" },
