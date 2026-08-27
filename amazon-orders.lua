@@ -62,6 +62,7 @@ local config={
   rescanOrder='',
   blacklistOrders='',
   keepStorno=false,
+  nameMaxLength=0,
 }
 
 local daySeconds=24*60*60
@@ -75,7 +76,6 @@ local const={
   -- order details page; the order code is appended. The legacy /gp/css/... paths
   -- 301-redirect here. Overridable via the orderDetailsUrl account-setting.
   orderDetailsUrl="/your-orders/order-details?orderID=",
-  nameMaxLength=70,
   recentMonthsFilter="months-3",
   str2date = {
     Januar=1,
@@ -172,6 +172,7 @@ local accountOptionKeys={
   'blacklistOrders',
   'rescanOrder',
   'keepStorno',
+  'nameMaxLength',
 }
 
 -- Supported in notes but not pre-filled in ListAccounts.
@@ -1403,7 +1404,7 @@ end
 
 --- @function makeAccountTransaction
 -- Maps plugin fields onto MoneyMoney transaction fields:
--- name = Artikelbezeichnung truncated to const.nameMaxLength,
+-- name = Artikelbezeichnung (optional config.nameMaxLength UTF-8 chars),
 -- purpose = full Artikelbezeichnung,
 -- endToEndReference = Bestellnummer (MoneyMoney UI "Referenz"),
 -- bookingText = Lieferadresse (MoneyMoney UI "Umsatzart", visible in list line),
@@ -2057,7 +2058,7 @@ end
 
 function makeAccountTransaction(order, orderCode, name, amount, bookingDate, purpose)
   local fullName=name or ""
-  local shortName=truncateUtf8(fullName, const.nameMaxLength)
+  local shortName=truncateUtf8(fullName, config.nameMaxLength)
   local purposeText=firstNonEmpty(purpose, fullName)
   local tx={
     name=encodeFormText(shortName),
@@ -6077,6 +6078,7 @@ function RefreshAccount (account, since)
   applyImportSchemaUpgrade()
 
   config.keepStorno=false
+  config.nameMaxLength=0
   if type(account.attributes) == 'table' then
     LocalStorage.patcher={}
     for k,v in pairs(account.attributes) do

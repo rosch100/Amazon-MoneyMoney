@@ -82,14 +82,24 @@ assert(not src:find("const%.formEncoding", 1),
 
 local longTitle = string.rep("A", 80) .. " END"
 local txLong = env.makeAccountTransaction(order, "304-1111111-1111111", longTitle, -1, 1669593600)
-assert(#txLong.name == 70, "name must be truncated to 70 chars, got " .. #txLong.name)
-assert(txLong.name == string.rep("A", 70), "name prefix must be first 70 chars")
+assert(txLong.name == longTitle, "default nameMaxLength=0 keeps full title, got " .. tostring(txLong.name))
 assert(txLong.purpose == longTitle, "purpose must keep full title")
 assert(txLong.bookingText == order.shippingAddress)
 assert(txLong.batchReference == order.shippingAddress)
 assert(txLong.endToEndReference == "304-1111111-1111111")
 
--- UTF-8: 70 characters, not bytes (umlaut is 2 bytes)
+local umlautFull = string.rep("ä", 75)
+local txUmlFull = env.makeAccountTransaction(order, "304-uml", umlautFull, -1, 1)
+assert(txUmlFull.name == umlautFull, "default keeps full UTF-8 title")
+assert(txUmlFull.purpose == umlautFull)
+
+env.applyAccountAttribute("nameMaxLength", "70", true)
+local txCapped = env.makeAccountTransaction(order, "304-1111111-1111111", longTitle, -1, 1669593600)
+assert(#txCapped.name == 70, "nameMaxLength=70 must truncate, got " .. #txCapped.name)
+assert(txCapped.name == string.rep("A", 70), "name prefix must be first 70 chars")
+assert(txCapped.purpose == longTitle, "purpose must keep full title when name is truncated")
+
+-- UTF-8: nameMaxLength counts characters, not bytes (umlaut is 2 bytes)
 local umlautTitle = string.rep("ä", 75)
 local txUml = env.makeAccountTransaction(order, "304-1", umlautTitle, -1, 1)
 assert(env.utf8Len(txUml.name) == 70, "name must be 70 UTF-8 chars")
@@ -106,6 +116,7 @@ assert(txBad.purpose == bad)
 assert(txBad.endToEndReference == "304-2")
 assert(txBad.bookingText == order.shippingAddress)
 assert(txBad.batchReference == order.shippingAddress)
+env.applyAccountAttribute("nameMaxLength", "0", true)
 
 local tx2 = env.makeAccountTransaction(
   order,

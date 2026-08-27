@@ -1,64 +1,84 @@
-# Amazon Plugin for MoneyMoney
+# Amazon-Plugin für MoneyMoney
+
+Bestellungen von amazon.de als Umsätze in MoneyMoney.
 
 Repository: https://github.com/rosch100/Amazon-MoneyMoney
 
 ## Installation
-You can get the signed version from https://moneymoney-app.com/extensions/amazon-orders.lua. The unsigned [latest](https://raw.githubusercontent.com/rosch100/Amazon-MoneyMoney/master/amazon-orders.lua) version is available from this repository.
 
-To activate the extension, copy the file into `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application\ Support/MoneyMoney/Extensions`. If you have cloned this repository you can use the `link_ext.sh` script in a shell. A restart is not required, it will load automatically. You can verify installation using *Window → Log*.
+Signierte Version: https://moneymoney-app.com/extensions/amazon-orders.lua
 
-**Look out:** MoneyMoney only runs unsigned plugins in the **beta version** and you need to **disable signature check** in the extentsion settings.
+Aktuelle unsignierte Version aus diesem Repository: [amazon-orders.lua](https://raw.githubusercontent.com/rosch100/Amazon-MoneyMoney/master/amazon-orders.lua)
 
-## Usage
-After installation go to *Add new account* → *Others* → *Amazon Orders*. There are a few different account types:
-* **Normal**: List your spendings like a normal bank account: Purchases are negative, refunds and bonuses are positive.
-* **Inverted**: Like a normal account, but inverted: Purchases are positive, refunds and bonuses are negative.
-* **Mix**: Purchases, refunds and returns as real bookings. One pending **Amazon Ausgleich** (month-end date, `booked=false`) keeps the account at zero. Reported `balance` is 0. MoneyMoney lists these as **Sonstige** accounts excluded from sidebar total wealth (`withTotalSum=false`), overview bar chart (`showDailyBalance=false`), and evaluation diagrams (`showInDiagrams=false`).
+Datei nach `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney/Extensions` kopieren. Bei einem Klon des Repositories reicht `link_ext.sh`. MoneyMoney lädt die Erweiterung ohne Neustart; Prüfung über *Fenster → Log*.
 
-### Upgrade from older plugin versions
+Unsignierte Plugins laufen nur in der **Beta** von MoneyMoney, und die Signaturprüfung muss in den Erweiterungseinstellungen ausgeschaltet sein.
 
-This version does **not** migrate existing MoneyMoney bookings. After updating the extension:
+## Konten anlegen
 
-1. In MoneyMoney: delete **all** transactions on every Amazon account (mix and sub-accounts).
-2. Right-click each Amazon account → settings → notes → set `resetCache` to a new value (e.g. today's date).
-3. Refresh the account once. The status line explains if a full reimport is still required.
+*Konto hinzufügen* → *Andere* → *Amazon Orders*. Kontotypen:
 
-Until step 2–3 are done, the plugin blocks new imports to avoid duplicate or inconsistent bookings.
+- **Normal:** Käufe negativ, Erstattungen und Gutschriften positiv.
+- **Invertiert:** umgekehrt.
+- **Mix:** Käufe, Erstattungen und Rückgaben als echte Buchungen. Eine offene Buchung **Amazon Ausgleich** hält den Saldo bei 0. Das Konto erscheint als *Sonstige*, zählt nicht zur Gesamtsumme in der Seitenleiste und nicht in Diagrammen. Die Umsatzliste öffnet als Liste, nicht als Balkendiagramm.
+- **Monatlich / Jährlich:** Käufe negativ, dazu eine Gegenbuchung, die das Konto auf 0 bringt.
 
-**Sidebar total wealth (Gesamtsumme) and default transaction view:** New and re-discovered accounts get `withTotalSum=false`, `showInDiagrams=false`, `showDailyBalance=false`, and `perspective={chart=1}` from `ListAccounts` (`chart=1` = *Ansicht → Liste*, ⌘1; `2` = Balkendiagramm, `3` = Tortendiagramm). **Existing accounts must be updated via *Bankzugang → Nach neuen Konten suchen*** so MoneyMoney picks up `perspective`, account type *Sonstige*, and the other flags. If the bar chart still opens by default, switch *Ansicht → Liste* once or disable *Balkendiagramm anzeigen* under *Konto → Einstellungen* (separate from the *Tagessaldo* toggle in the transaction list).
+Wenn persönliches und geschäftliches Amazon-Konto verbunden sind, erscheinen zusätzlich:
 
-### First import (Erstimport) and sub-accounts
+- **Amazon Alle Konten** — beide zusammen
+- **Amazon Persönlich**
+- **Amazon Geschäftlich**
 
-Unlike the [original Amazon plugin](https://github.com/Michael-Beutling/Amazon-MoneyMoney) (one shared cache, dummy *“Please reload!”* on the very first refresh only), this fork supports **personal + business** sub-accounts:
+Beim Einrichten (*Konten werden gesucht*) werden noch keine Umsätze geladen. Danach *Bankzugang → Nach neuen Konten suchen*, falls Einstellungen oder Kontotyp nicht übernommen wurden.
 
-1. **Account finder** (*Konten werden gesucht*): no bookings are loaded (`Konten einrichten: keine Umsätze laden`).
-2. **First refresh after setup** (`since=0`): full order history harvest + up to 250 order details per run.
-3. **Repeat refresh** until the status line no longer shows incomplete sub-account fetch or open order details, and until the dummy booking *“Es sind noch weitere Bestellungen offen…”* no longer appears.
-4. When you refresh **Amazon Business** (`sub:business`), that business identity is harvested **first** (ABA reports + order list), not the personal account.
+## Erstimport
 
-Business history uses Amazon Business Analytics in 12-month batches (several refreshes may be needed for orders older than 12 months).
+Den Zugang mehrfach aktualisieren, bis die Statuszeile nichts Offenes mehr meldet und die Platzhalterbuchung *„Es sind noch weitere Bestellungen offen…“* verschwindet.
 
-* **Monthly**: Negative bookings for each purchase. A monthly positive counter booking to zero out the account.
-* **Yearly**: Negative bookings for each purchase. A yearly postitive counter booking to zero out the account.
+Pro Durchgang werden höchstens 250 Bestelldetails geladen. Beim Abruf von **Amazon Geschäftlich** wird zuerst das Geschäftskonto gelesen.
 
-Normal refreshes import new Amazon orders automatically (keyed by Bestellnummer). No notes or second “reload” click are required. During incremental refreshes, already-imported orders from the last 366 days are re-checked for refunds and returns (without the old message-center scrape).
+Geschäftliche Bestellungen kommen aus den Amazon-Business-Berichten. Amazon liefert dort in der Regel die letzten zwölf Monate und das Jahr davor; ältere Geschäftsbestellungen stellt Amazon oft nicht bereit. Private Bestellungen kommen aus der Bestellübersicht (Jahresfilter).
 
-## Optional notes (account settings)
-Only needed for troubleshooting. In MoneyMoney right-click the account → settings → notes.
+## Laufende Aktualisierung
 
-`ListAccounts` registers the note fields (`resetCache`, `blacklistOrders`, `rescanOrder`, `keepStorno`) with **default values** when you add or re-discover accounts (empty strings / `keepStorno=false`). **Existing accounts** need *Bankzugang → Nach neuen Konten suchen* once so MoneyMoney picks up the defaults; a normal refresh does not change the Notes table.
+Neue Bestellungen werden automatisch übernommen (Schlüssel: Bestellnummer). Bereits importierte Bestellungen der letzten zwölf Monate werden auf Erstattungen und Rückgaben geprüft.
 
-| Attribute | Purpose |
-|-----------|---------|
-| `resetCache` | After this plugin version: required once (change the value, e.g. today's date) following a full delete of the Amazon account’s transactions. Also used later to clear the order cache and re-read history on the **same** refresh. |
-| `blacklistOrders` | Comma-separated order numbers to skip when details fail. |
-| `rescanOrder` | Single order number to force re-fetch of details. |
-| `keepStorno` | `true`: keep booking and matching Storno (full refund, full return, unbilled cancellation, partial return). Default: `false`. Already imported bookings cannot be deleted; a later full refund is still imported. |
+## Buchungen
 
-![](moneymoney_settings.png)
+- **Titelzeile:** Artikelbezeichnung, vollständig (siehe `nameMaxLength`).
+- **Verwendungszweck:** immer die volle Artikelbezeichnung.
+- **Referenz:** Bestellnummer.
+- **Umsatzart:** Lieferadresse, soweit bekannt.
 
-## Performance
-The script caches some data, but the first time it scrapes your whole order history. In facts ~10 years of shopping with about 230 orders with 340 positions takes 12 minutes in the first run! The second run needs 2 minutes. After that all data is cached so a normal run needs 20-30 seconds.
+Volle Erstattung, volle Rückgabe und stornierte (nicht berechnete) Bestellung: Buchung und Gegenbuchung (Storno) werden standardmäßig weggelassen. Teilrückgabe erscheint als **Rücksendekosten** (Anteil, der nicht erstattet wurde). Mit `keepStorno` bleiben Buchung und Gegenbuchung sichtbar.
 
-## Warranty
-Nope, no warranty! When the script orders 10 tons of dog food every day, it's your problem!
+## Einstellungen (Notizen)
+
+Konto → Einstellungen → Notizen. Die Felder werden beim Anlegen bzw. bei *Nach neuen Konten suchen* mit Standardwerten angelegt. Ein normaler Abruf ändert die Tabelle nicht.
+
+| Feld | Bedeutung |
+|------|-----------|
+| `resetCache` | Cache leeren und Bestellhistorie neu einlesen. Nach einem Update und dem Löschen aller Umsätze einmal auf ein neues Datum setzen, dann aktualisieren. |
+| `blacklistOrders` | Bestellnummern (kommagetrennt), die übersprungen werden, wenn Details fehlschlagen. |
+| `rescanOrder` | Eine Bestellnummer, deren Details beim nächsten Abruf neu geladen werden. |
+| `keepStorno` | `true`: Buchung und passendes Storno behalten. Standard: `false`. Bereits importierte Buchungen werden nicht gelöscht; eine spätere volle Erstattung wird trotzdem importiert. |
+| `nameMaxLength` | Maximale Länge der **Titelzeile** (Zeichen). `0` = ungekürzt (Standard). Der Verwendungszweck bleibt immer vollständig. Beispiel: `70`. |
+| `limitOrders` | Maximale Zahl Bestelldetails pro Abruf (Standard 250). |
+
+## Update von älteren Versionen
+
+Bestehende Umsätze werden nicht umgeschrieben.
+
+1. Alle Umsätze der Amazon-Konten in MoneyMoney löschen.
+2. In den Notizen `resetCache` auf einen neuen Wert setzen (z. B. das heutige Datum).
+3. Aktualisieren. Die Statuszeile sagt, falls der Neuimport noch aussteht.
+
+Vor Schritt 2–3 werden keine neuen Umsätze geladen, damit nichts doppelt oder unvollständig entsteht.
+
+## Laufzeit
+
+Der erste Import liest die gesamte Historie (bei vielen Jahren Dauer im Bereich von Minuten). Weitere Läufe nur neue bzw. geänderte Bestellungen; ein normaler Abruf dauert meist unter einer Minute.
+
+## Haftung
+
+Keine. Wenn das Skript täglich zehn Tonnen Hundefutter bestellt, ist das dein Problem.
