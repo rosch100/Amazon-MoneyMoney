@@ -36,7 +36,7 @@ env.connectShop = function(method, urlArg)
 end
 
 env.connectShopRaw = function(method, urlArg)
-  if method == "GET"
+  if method == "POST"
       and type(urlArg) == "string"
       and urlArg:find("/b2b/aba/ajax/v2/report/rollupTable", 1, true) then
     rollupCalls = rollupCalls + 1
@@ -55,14 +55,15 @@ env.orderListPageReady = function(htmlNode)
   return htmlNode ~= nil and htmlNode:xpath('//div[contains(@class,"order-card")]'):length() > 0
 end
 
-local jobs = env.enumerateAbaReportJobs(nil, os.time())
-assert(#jobs == 1, "full harvest must use exactly one ABA job")
+local jobs = env.enumerateAbaReportJobs(0, os.time())
+assert(#jobs >= 2, "full harvest must use PAST_12_MONTHS plus gap CUSTOM_RANGE jobs, got " .. tostring(#jobs))
 assert(jobs[1].span == "PAST_12_MONTHS")
+assert(jobs[2].span == "CUSTOM_RANGE")
 
 local n, err = env.collectBusinessSpaOrders("Example GmbH", "business", 0)
 assert(err == nil, tostring(err))
 assert(n >= 2, "expected new orders from ABA and/or GET, got " .. tostring(n))
-assert(rollupCalls == 1, "expected one rollupTable call, got " .. tostring(rollupCalls))
+assert(rollupCalls >= 2, "expected multiple rollupTable calls for ABA windows, got " .. tostring(rollupCalls))
 assert(getOrderListCalls >= 1, "full harvest must still run GET order-list for gaps, got " .. tostring(getOrderListCalls))
 
 print("test_business_full_harvest OK")

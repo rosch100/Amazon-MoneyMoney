@@ -123,7 +123,7 @@ local resultRefund = env.RefreshAccount(account, since)
 local refundLines, refundContra = 0, 0
 for _, tx in ipairs(resultRefund.transactions) do
   local name = tx.name or ""
-  if name:find("Refund for order", 1, true) then
+  if name:find("Erstattung für Bestellung", 1, true) then
     refundLines = refundLines + 1
     assert(tx.amount > 0, "refund must be a credit")
   end
@@ -183,7 +183,7 @@ local returnLines, returnPurchase, returnContra = 0, 0, 0
 for _, tx in ipairs(resultRet.transactions) do
   local name = tx.name or ""
   if tx.endToEndReference == "303-4444444-4444444" then
-    if name:find("Returned item:", 1, true) then
+    if name:find("Rückgabe:", 1, true) then
       returnLines = returnLines + 1
     else
       returnPurchase = returnPurchase + 1
@@ -211,7 +211,7 @@ account.attributes = nil
 local keepReturn, keepPurchase = 0, 0
 for _, tx in ipairs(resultKeep.transactions) do
   if tx.endToEndReference == "303-4444444-4444445" then
-    if (tx.name or ""):find("Returned item:", 1, true) then
+    if (tx.name or ""):find("Rückgabe:", 1, true) then
       keepReturn = keepReturn + 1
     else
       keepPurchase = keepPurchase + 1

@@ -85,7 +85,7 @@ do
     return tx.name == "Item 303-keep-refund"
   end)
   local refunds = countBy(txs, function(tx)
-    return (tx.name or ""):find("Refund for order", 1, true) ~= nil
+    return (tx.name or ""):find("Erstattung für Bestellung", 1, true) ~= nil
   end)
   assert(purchases == 1, "keepStorno must emit purchase, got " .. names(txs))
   assert(refunds == 1, "keepStorno must emit refund, got " .. names(txs))
@@ -100,7 +100,7 @@ do
     return tx.name == "Item 303-part-refund"
   end)
   local refunds = countBy(txs, function(tx)
-    return (tx.name or ""):find("Refund for order", 1, true) ~= nil
+    return (tx.name or ""):find("Erstattung für Bestellung", 1, true) ~= nil
   end)
   assert(purchases == 1, "partial refund must keep purchase, got " .. names(txs))
   assert(refunds == 1, "partial refund must keep credit, got " .. names(txs))
@@ -116,7 +116,7 @@ do
     return tx.name == "Item 303-later-refund"
   end)
   local refunds = countBy(txs, function(tx)
-    return (tx.name or ""):find("Refund for order", 1, true) ~= nil
+    return (tx.name or ""):find("Erstattung für Bestellung", 1, true) ~= nil
   end)
   assert(purchases == 0, "already emitted purchase must not re-import, got " .. names(txs))
   assert(refunds == 1, "later full refund must still import, got " .. names(txs))
@@ -147,7 +147,7 @@ do
   local txs = emitOrder(order)
   setKeepStorno(false)
   local returns = countBy(txs, function(tx)
-    return (tx.name or ""):find("Returned item:", 1, true) ~= nil
+    return (tx.name or ""):find("Rückgabe:", 1, true) ~= nil
   end)
   local purchases = countBy(txs, function(tx)
     return tx.name == "Item 303-keep-return"

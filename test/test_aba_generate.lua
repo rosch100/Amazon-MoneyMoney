@@ -19,10 +19,12 @@ Order ID,Title
 ]]
 
 env.connectShopRaw = function(method, urlArg, postContent, contentType, headers)
-  if method == "GET" and type(urlArg) == "string" then
+  if method == "POST" and type(urlArg) == "string" then
     if urlArg:find("/b2b/aba/ajax/v2/report/rollupTable", 1, true) then
       return '{"rows":[]}'
     end
+  end
+  if method == "GET" and type(urlArg) == "string" then
     if urlArg:find("download/generated-items.csv", 1, true) then
       return abaCsv
     end
