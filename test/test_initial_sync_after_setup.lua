@@ -1,4 +1,5 @@
--- After Konten einrichten the first RefreshAccount must full-harvest from the beginning.
+-- Picker RefreshAccount must not import. After EndSession the next RefreshAccount
+-- full-harvests (since=0).
 -- Run: test/run.sh test/test_initial_sync_after_setup.lua
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
@@ -9,11 +10,23 @@ local now = os.time()
 env.connectShop = function()
   return mm.HTML("<html><body></body></html>")
 end
+env.getOrderDetails = function()
+end
 
 env.LocalStorage = {
   loginCounter = 1,
   lastLoginCounter = 0,
-  OrderCache = {},
+  OrderCache = {
+    ["303-setup-1"] = {
+      orderCode = "303-setup-1",
+      orderPositions = { { purpose = "Setup item", amount = 1000, qty = 1 } },
+      orderSum = 1000,
+      orderTotal = 1000,
+      bookingDate = now,
+      detailsDate = now + 86400,
+      subAccountKind = "business",
+    },
+  },
 }
 
 local account = {
@@ -24,17 +37,6 @@ local account = {
 env.ListAccounts({})
 assert(env.isAccountSetupSession() == true)
 assert(env.isPendingInitialSync() == true)
-
-local setupHarvest = false
-env.scanAllAmazonSubAccounts = function()
-  setupHarvest = true
-  return 0, nil
-end
-env.RefreshAccount(account, 0)
-assert(setupHarvest == false, "setup RefreshAccount must not harvest")
-
-env.EndSession()
-assert(env.isPendingInitialSync() == true, "pending survives EndSession")
 
 local harvestSince = nil
 env.scanAllAmazonSubAccounts = function()
@@ -47,6 +49,14 @@ env.scanAllAmazonSubAccounts = function()
   return 0, nil
 end
 
+local probe = env.RefreshAccount(account, 0)
+assert(harvestSince == nil, "picker RefreshAccount must not harvest")
+assert(type(probe) == "table", "picker RefreshAccount must succeed")
+assert(#probe.transactions == 0, "picker RefreshAccount must not emit bookings")
+
+env.clearAccountSetupState()
+assert(env.isPendingInitialSync() == true, "pending survives EndSession")
+
 local harvestMarkedDone = false
 local origMark = env.markInitialSyncHarvestDone
 env.markInitialSyncHarvestDone = function()
@@ -54,13 +64,15 @@ env.markInitialSyncHarvestDone = function()
   return origMark()
 end
 
+env.LocalStorage.loginCounter = 2
 local recentSince = now - (30 * 24 * 60 * 60)
 local result = env.RefreshAccount(account, recentSince)
 assert(type(result) == "table")
-assert(harvestSince == 0, "initial sync must force since=0, got " .. tostring(harvestSince))
+assert(harvestSince == 0, "post-create RefreshAccount must force since=0, got " .. tostring(harvestSince))
+assert(#result.transactions > 0, "post-create RefreshAccount must emit bookings")
 assert(harvestMarkedDone == true, "harvest success must mark initial sync harvest done")
-assert(env.isPendingInitialSync() == false, "pending cleared when no details remain")
 assert(env.LocalStorage.lastHarvestSince == 0, "lastHarvestSince records full import")
+assert(env.isPendingInitialSync() == false, "pending cleared when no details remain")
 
 -- Pending details block clearing initial sync until resolved.
 env.LocalStorage.pendingInitialSync = true

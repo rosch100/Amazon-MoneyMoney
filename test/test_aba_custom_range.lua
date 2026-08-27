@@ -21,6 +21,8 @@ env.connectShopRaw = function(method, urlArg, postContent, contentType, headers)
     rollupPosts = rollupPosts + 1
     assert(type(postContent) == "string")
     assert(postContent:find("CUSTOM_RANGE", 1, true))
+    assert(urlArg:find("dateSpanSelection=PAST_12_MONTHS", 1, true))
+    assert(urlArg:find("dateSpanSelection=CUSTOM_RANGE", 1, true) == nil)
     assert(postContent:find('"ordId"', 1, true))
     assert(headers and headers["anti-csrftoken-a2z"] == "aba-csrf-token-test")
     return rollupResponse

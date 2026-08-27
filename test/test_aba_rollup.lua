@@ -30,15 +30,21 @@ Order ID,Title
 303-9999999-8888888,Item
 ]]
 
-local rollupGets = 0
+local rollupPosts = 0
 local schedGets = 0
 
 env.connectShopRaw = function(method, urlArg, postContent, contentType, headers)
-  if method ~= "GET" or type(urlArg) ~= "string" then
-    return ""
+  if method == "GET"
+      and type(urlArg) == "string"
+      and urlArg:find("/b2b/aba/ajax/v2/report/rollupTable", 1, true) then
+    error("rollupTable GET is fatal in MoneyMoney (HTTP 400); must POST")
   end
-  if urlArg:find("/b2b/aba/ajax/v2/report/rollupTable", 1, true) then
-    rollupGets = rollupGets + 1
+  if method == "POST"
+      and type(urlArg) == "string"
+      and urlArg:find("/b2b/aba/ajax/v2/report/rollupTable", 1, true) then
+    rollupPosts = rollupPosts + 1
+    assert(type(postContent) == "string" and postContent:find("PAST_12_MONTHS", 1, true))
+    assert(type(urlArg) == "string" and urlArg:find("dateSpanSelection=PAST_12_MONTHS", 1, true))
     assert(headers and headers["anti-csrftoken-a2z"] == "aba-csrf-token-test")
     return rollupJson
   end
@@ -67,7 +73,7 @@ local csv = env.tryHarvestAbaCsvFromHtmlPage(
   landingHtml, "items_report_1", "PAST_12_MONTHS", landingHtml, "test")
 assert(csv ~= nil, "expected rollupTable JSON harvest")
 assert(csv:find("303-5555555-6666666", 1, true), csv)
-assert(rollupGets >= 1, "expected rollupTable GET")
+assert(rollupPosts >= 1, "expected rollupTable POST")
 assert(schedGets == 0, "scheduler should not run when rollupTable succeeds")
 
 local id, ts = env.parseAbaReportStatusIds(schedJson)
@@ -84,11 +90,14 @@ assert(env.harvestAbaReportContent == nil)
 assert(env.rawTextHasHarvestableOrders == nil)
 assert(env.fetchAbaCsvFromUrl == nil)
 
-rollupGets = 0
+rollupPosts = 0
 schedGets = 0
 env.connectShopRaw = function(method, urlArg)
-  if method == "GET" and urlArg:find("/b2b/aba/ajax/v2/report/rollupTable", 1, true) then
-    rollupGets = rollupGets + 1
+  if method == "GET" and type(urlArg) == "string" and urlArg:find("/b2b/aba/ajax/v2/report/rollupTable", 1, true) then
+    error("rollupTable GET is fatal in MoneyMoney (HTTP 400); must POST")
+  end
+  if method == "POST" and type(urlArg) == "string" and urlArg:find("/b2b/aba/ajax/v2/report/rollupTable", 1, true) then
+    rollupPosts = rollupPosts + 1
     return '{"rows":[]}'
   end
   if method == "GET" and urlArg:find("/b2b/aba/report/v2/scheduler", 1, true) then
@@ -111,7 +120,7 @@ local csv2 = env.tryHarvestAbaCsvFromHtmlPage(
   landingHtml, "items_report_1", "PAST_12_MONTHS", landingHtml, "test")
 assert(csv2 ~= nil, "expected scheduler/download fallback")
 assert(csv2:find("303-9999999-8888888", 1, true), csv2)
-assert(rollupGets >= 1)
+assert(rollupPosts >= 1)
 assert(schedGets >= 1)
 
 print("test_aba_rollup OK")

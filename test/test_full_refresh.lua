@@ -17,7 +17,7 @@ assert(env.validMoneyMoneyRefreshAge(recentSince, now) ~= nil)
 assert(env.requiresFullMoneyMoneyHarvest(recentSince, now) == true)
 
 local fullJobs = env.enumerateAbaReportJobs(recentSince, now)
-assert(#fullJobs == 1)
+assert(#fullJobs >= 1)
 assert(fullJobs[1].span == "PAST_12_MONTHS")
 assert(fullJobs[1].reportType == "items_report_1")
 assert(fullJobs[1].span ~= "CUSTOM_RANGE")

@@ -65,9 +65,10 @@ assert(type(result.transactions) == "table")
 for _, tx in ipairs(result.transactions) do
   assert(tx.name ~= "Please reload!", "must not emit Please reload! dummy")
   assert(tx.name ~= "Cache reset, please reload!", "must not emit cache-reset dummy")
-  assert(tx.name ~= "There are still more orders left...", "must not emit limitOrders dummy")
   assert(not (tx.amount == 0 and tx.booked == false and type(tx.purpose) == "string"
     and tx.purpose:find("coffee", 1, true)), "must not emit coffee dummy")
+  assert(tx.name ~= "Es sind noch weitere Bestellungen offen…",
+    "complete incremental refresh must not emit incomplete-fetch dummy")
 end
 
 local refs = {}
@@ -268,7 +269,7 @@ local monthlyResult = env.RefreshAccount(monthlyAccount, since)
 local purchase, returned, contra = 0, 0, 0
 for _, tx in ipairs(monthlyResult.transactions) do
   if tx.endToEndReference == "303-month-ret" then
-    if (tx.name or ""):find("Returned item:", 1, true) then
+    if (tx.name or ""):find("Rückgabe:", 1, true) then
       returned = returned + tx.amount
     else
       purchase = purchase + tx.amount

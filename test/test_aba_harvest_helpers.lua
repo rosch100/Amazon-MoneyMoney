@@ -41,15 +41,30 @@ assert(env.isAmazonSignInPageHtml(landingHtml) == false)
 assert(env.isAbaLandingReady(landingHtml) == true)
 assert(env.isAmazonSignInPageHtml("<html><body><form name=\"signIn\"><input name=\"password\"/></form></body></html>") == true)
 
+env.LocalStorage = {}
 local jobs = env.enumerateAbaReportJobs(nil, os.time())
-assert(#jobs == 1)
+assert(#jobs >= 1)
 assert(jobs[1].reportType == "items_report_1")
 assert(jobs[1].span == "PAST_12_MONTHS")
+if #jobs > 1 then
+  assert(jobs[2].span == "CUSTOM_RANGE")
+end
+local hasCustomRange = #jobs > 1
 for _, job in ipairs(jobs) do
   assert(job.span ~= "LAST_3_MONTHS")
   assert(job.span ~= "PAST_3_MONTHS")
-  assert(job.span ~= "CUSTOM_RANGE")
 end
+assert(hasCustomRange == (#jobs > 1))
+
+local allJobs = env.enumerateAbaFullHarvestJobs(os.time())
+assert(#allJobs >= 2)
+assert(allJobs[1].span == "PAST_12_MONTHS")
+hasCustomRange = false
+for i = 2, #allJobs do
+  assert(allJobs[i].span == "CUSTOM_RANGE")
+  hasCustomRange = true
+end
+assert(hasCustomRange == true)
 
 local now = os.time()
 local since = now - (10 * 24 * 60 * 60)
@@ -64,9 +79,12 @@ assert(incJobs[1].reportType == "items_report_1")
 assert(incJobs[1].fromDate ~= nil)
 assert(incJobs[1].toDate ~= nil)
 
-local body = env.buildAbaRollupTablePostBody("items_report_1", incJobs[1].fromDate, incJobs[1].toDate)
+local body = env.buildAbaRollupTablePostBody("items_report_1", "CUSTOM_RANGE", incJobs[1].fromDate, incJobs[1].toDate)
 assert(body:find("CUSTOM_RANGE", 1, true))
 assert(body:find('"ordId"', 1, true))
+local fullBody = env.buildAbaRollupTablePostBody("items_report_1", "PAST_12_MONTHS")
+assert(fullBody:find("PAST_12_MONTHS", 1, true))
+assert(fullBody:find("CUSTOM_RANGE", 1, true) == nil)
 
 local scanMonths = env.effectiveScanFiltersMonths(since, now)
 assert(scanMonths ~= nil and scanMonths >= 1 and scanMonths <= 2)

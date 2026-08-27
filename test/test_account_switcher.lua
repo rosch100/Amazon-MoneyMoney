@@ -28,6 +28,11 @@ assert(byKind.business.csrf == "DUMMY_CSRF_BUSINESS")
 assert(string.find(byKind.personal.action, "switchaccount", 1, true))
 assert(string.find(byKind.business.action, "switchaccount", 1, true))
 
+assert(env.inferSubAccountKindFromAmazonType("Persönliches Konto") == "personal")
+assert(env.inferSubAccountKindFromAmazonType("Geschäftskonto") == "business")
+assert(env.inferSubAccountKindFromAmazonType("Personal account") == "personal")
+assert(env.inferSubAccountKindFromAmazonType("Business account") == "business")
+
 assert(env.absoluteAmazonUrl("/ap/switchaccount") == "https://www.amazon.de/ap/switchaccount")
 assert(env.absoluteAmazonUrl("https://www.amazon.de/x") == "https://www.amazon.de/x")
 assert(env.cvfVersionQueryFromText("/ap/cvf/request.embed?arb=X&CVFVersion=1.2.3&AUIVersion=4.5.6")
@@ -138,6 +143,9 @@ env.collectOrdersFromOrderList = function(label, kind)
   table.insert(calls, { label = label, kind = kind })
   return 1
 end
+env.subAccountHarvestHasMore = function()
+  return false
+end
 local nOk, errOk = env.scanAllAmazonSubAccounts()
 assert(errOk == nil, tostring(errOk))
 assert(nOk == 2, "both sub-accounts scraped, got " .. tostring(nOk))
@@ -205,7 +213,7 @@ end
 env.html = mm.HTML([[<html><body><span class="nav-shortened-name">Personal</span></body></html>]])
 env.bindActiveHtml(env.html)
 local mid = env.runSubAccountScanLoop()
-assert(type(mid) == "string" and mid:find("Account%-Switcher nicht verfügbar"), tostring(mid))
+assert(type(mid) == "string" and mid:find("Kontenwechsel nicht verfügbar"), tostring(mid))
 assert(env.LocalStorage.subAccountScan == nil)
 assert(#softCalls == 0, "must not scrape when switcher unavailable mid-plan")
 

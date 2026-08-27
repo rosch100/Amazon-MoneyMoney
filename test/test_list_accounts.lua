@@ -9,7 +9,20 @@ env.LocalStorage = {}
 local onlyShared = env.ListAccounts({})
 assert(#onlyShared == 1, "without discovery only shared account, got " .. #onlyShared)
 assert(onlyShared[1].accountNumber == "mix")
-assert(onlyShared[1].name:find("Amazon", 1, true))
+assert(onlyShared[1].name == "Amazon Alle Konten")
+assert(onlyShared[1].type == "AccountTypeOther")
+assert(onlyShared[1].portfolio == false)
+assert(onlyShared[1].currency == "EUR")
+assert(onlyShared[1].withTotalSum == false)
+assert(onlyShared[1].showInDiagrams == false)
+assert(onlyShared[1].showDailyBalance == false)
+assert(onlyShared[1].perspective ~= nil and onlyShared[1].perspective.chart == 1)
+assert(type(onlyShared[1].attributes) == 'table', "ListAccounts must return note defaults")
+assert(onlyShared[1].attributes[1] == nil, "attributes must be a pure dict, not a hybrid array")
+assert(onlyShared[1].attributes.resetCache == "")
+assert(onlyShared[1].attributes.blacklistOrders == "")
+assert(onlyShared[1].attributes.rescanOrder == "")
+assert(onlyShared[1].attributes.keepStorno == "false", "ListAccounts must pre-fill default values for MM note UI")
 
 env.rememberDiscoveredSubAccounts({
   { kind = "personal", label = "Persönliches Konto" },
@@ -22,8 +35,12 @@ assert(#listed == 3, "shared + 2 subs, got " .. #listed)
 local byNum = {}
 for _, a in ipairs(listed) do byNum[a.accountNumber] = a end
 assert(byNum["mix"] ~= nil)
-assert(byNum["sub:personal"].name == "Amazon Persönliches Konto")
-assert(byNum["sub:business"].name == "Amazon Example GmbH")
+assert(byNum["sub:personal"].name == "Amazon Persönlich")
+assert(byNum["sub:business"].name == "Amazon Geschäftlich")
+
+assert(env.listAccountDisplayLabel("mix") == "Alle Konten")
+assert(env.listAccountDisplayLabel("sub:personal") == "Persönlich")
+assert(env.listAccountDisplayLabel("sub:business") == "Geschäftlich")
 
 -- Known accounts: ListAccounts stays stable (no getOrders / reload gate)
 env.clearPendingInitialSync()
@@ -32,6 +49,14 @@ env.LocalStorage.lastHarvestSince = os.time()
 local listedKnown = env.ListAccounts({ "mix", "sub:personal" })
 assert(#listedKnown == 3)
 assert(env.isPendingInitialSync() == false, "account search must not trigger initial full import")
+
+local listedWithKnownAttrs = env.ListAccounts({
+  { accountNumber = "mix", attributes = { keepStorno = "true", resetCache = "2026-08-27" } },
+})
+assert(listedWithKnownAttrs[1].attributes.keepStorno == "true")
+assert(listedWithKnownAttrs[1].attributes.resetCache == "2026-08-27")
+assert(listedWithKnownAttrs[1].attributes[1] == nil)
+assert(listedWithKnownAttrs[1].attributes.blacklistOrders == "")
 
 assert(env.subAccountNumberForKind("personal") == "sub:personal")
 assert(env.subAccountNumberForKind("business") == "sub:business")

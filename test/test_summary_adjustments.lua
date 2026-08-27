@@ -114,18 +114,25 @@ do
 </div>
 ]])
   assert(order.orderTotal == 2252, "orderTotal 22,52, got " .. tostring(order.orderTotal))
-  assert(order.orderSum == 657, "orderSum 6,57, got " .. tostring(order.orderSum))
+  assert(order.orderSum == 657, "item stays incl. USt 6,57, got " .. tostring(order.orderSum))
   local txs = emitMix(order)
   for _, tx in ipairs(txs) do
     assert(tx.name ~= ENGLISH_DIFF, "must not use English difference name")
+    assert(not (tx.name or ""):find("MwSt", 1, true), "must not emit MwSt booking, got " .. names(txs))
+    assert(not (tx.name or ""):find("USt", 1, true), "must not emit USt booking, got " .. names(txs))
+    assert(tx.name ~= "Bestelldifferenz", "must not emit Bestelldifferenz")
   end
+  local item = nil
+  for _, tx in ipairs(txs) do
+    if type(tx.name) == "string" and tx.name:find("Reflexionstapeten", 1, true) then
+      item = tx
+    end
+  end
+  assert(item ~= nil, "must emit item incl. USt, got " .. names(txs))
+  assert(math.abs(item.amount - (-6.57)) < 0.001, "item incl. USt 6,57, got " .. tostring(item.amount))
   local ship = findByName(txs, "Verpackung & Versand")
   assert(ship ~= nil, "must emit Verpackung & Versand, got " .. names(txs))
-  -- Item 6,57 + extra must equal Gesamtsumme 22,52 (VAT folded into Versand).
-  assert(math.abs(ship.amount - (-15.95)) < 0.001,
-    "Versand covers remaining 15,95, got " .. tostring(ship.amount))
-  local residual = findByName(txs, "Bestelldifferenz")
-  assert(residual == nil, "no leftover Bestelldifferenz when Versand explains the gap")
+  assert(math.abs(ship.amount - (-13.40)) < 0.001, "Versand 13,40, got " .. tostring(ship.amount))
 end
 
 ------------------------------------------------------------------ COUPON
@@ -197,8 +204,61 @@ do
   assert(math.abs(coupon.amount - 2.32) < 0.001, "Gutschein is a 2,32 credit, got " .. tostring(coupon.amount))
 end
 
+------------------------------------------------------------------ BUSINESS GROSS ITEMS, NO VAT LINE
+print("== Business: item prices incl. USt, no MwSt or Bestelldifferenz ==")
+do
+  local order = parseHtml([[
+<div id="orderDetails">
+  <div data-component="orderDate">22. Juli 2026</div>
+  <div class="a-fixed-left-grid-inner">
+    <div data-component="purchasedItemsRightGrid">
+      <div data-component="itemTitle">Seac Extreme 50</div>
+      <div data-component="unitPrice"><span class="a-offscreen">EUR 22,49</span></div>
+    </div>
+  </div>
+  <div class="a-fixed-left-grid-inner">
+    <div data-component="purchasedItemsRightGrid">
+      <div data-component="itemTitle">Seac Extreme Glaeser</div>
+      <div data-component="unitPrice"><span class="a-offscreen">EUR 45,33</span></div>
+    </div>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Zwischensumme:</span>
+    <span class="od-line-item-row-content">EUR 56,99</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Gesamt vor USt.:</span>
+    <span class="od-line-item-row-content">EUR 56,99</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Geschätzte USt.:</span>
+    <span class="od-line-item-row-content">EUR 8,04</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label a-text-bold">Gesamtsumme:</span>
+    <span class="od-line-item-row-content a-text-bold">EUR 65,03</span>
+  </div>
+</div>
+]])
+  assert(order.orderSum == 6782, "items stay incl. USt 67,82, got " .. tostring(order.orderSum))
+  local txs = emitMix(order)
+  assert(#txs == 2, "only the two items, got " .. names(txs))
+  for _, tx in ipairs(txs) do
+    assert(not (tx.name or ""):find("USt", 1, true), "must not emit USt, got " .. names(txs))
+    assert(not (tx.name or ""):find("MwSt", 1, true), "must not emit MwSt, got " .. names(txs))
+    assert(tx.name ~= "Bestelldifferenz", "must not emit Bestelldifferenz")
+  end
+  local mask, glasses
+  for _, tx in ipairs(txs) do
+    if (tx.name or ""):find("50", 1, true) then mask = tx end
+    if (tx.name or ""):find("Glaeser", 1, true) then glasses = tx end
+  end
+  assert(mask ~= nil and math.abs(mask.amount - (-22.49)) < 0.001, "mask 22,49 incl. USt")
+  assert(glasses ~= nil and math.abs(glasses.amount - (-45.33)) < 0.001, "glasses 45,33 incl. USt")
+end
+
 ------------------------------------------------------------------ CACHE FALLBACK
-print("== cached order without extras uses Bestelldifferenz ==")
+print("== cached order without extras has no Bestelldifferenz ==")
 do
   local order = {
     orderCode = "303-0000000-0000001",
@@ -208,10 +268,10 @@ do
     bookingDate = os.time({ year = 2026, month = 6, day = 22 }),
   }
   local txs = emitMix(order)
-  assert(findByName(txs, ENGLISH_DIFF) == nil, "cached gap must not use English difference")
-  local residual = findByName(txs, "Bestelldifferenz")
-  assert(residual ~= nil, "cached gap uses Bestelldifferenz, got " .. names(txs))
-  assert(math.abs(residual.amount - (-1.20)) < 0.001, "Bestelldifferenz 1,20 expense, got " .. tostring(residual.amount))
+  assert(findByName(txs, ENGLISH_DIFF) == nil, "must not use English difference")
+  assert(findByName(txs, "Bestelldifferenz") == nil, "must not emit Bestelldifferenz")
+  assert(#txs == 1, "only the item line, got " .. names(txs))
+  assert(math.abs(txs[1].amount - (-10.00)) < 0.001, "item 10,00 incl. tax, got " .. tostring(txs[1].amount))
 end
 
 print("test_summary_adjustments OK")
