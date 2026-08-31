@@ -3,6 +3,7 @@
 Bestellungen von amazon.de als Umsätze in MoneyMoney.
 
 Repository: https://github.com/rosch100/Amazon-MoneyMoney
+
 Das ist ein fork von https://github.com/Michael-Beutling/Amazon-MoneyMoney und eine Weiterentwicklung von Michaels plugin.
 
 ## Installation
