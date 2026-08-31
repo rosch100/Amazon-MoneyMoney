@@ -31,6 +31,7 @@ local function baseCache()
       orderTotal = 1640,
       bookingDate = os.time({ year = 2026, month = 8, day = 25 }),
       detailsDate = os.time() + 86400,
+      detailsParsed = true,
       subAccountKind = "business",
     },
     ["303-2222222-2222222"] = {
@@ -42,6 +43,7 @@ local function baseCache()
       orderTotal = 3101,
       bookingDate = os.time({ year = 2026, month = 8, day = 21 }),
       detailsDate = os.time() + 86400,
+      detailsParsed = true,
       emittedAccounts = { mix = true },
       subAccountKind = "business",
     },
@@ -50,6 +52,7 @@ end
 
 -- Skip network harvest: login counters match + lastHarvestSince newer than since.
 env.LocalStorage = {
+  cacheVersion = 22,
   loginCounter = 1,
   lastLoginCounter = 1,
   lastHarvestSince = os.time(),
@@ -221,6 +224,7 @@ env.LocalStorage.OrderCache["303-ret"] = {
   orderTotal = 5000,
   bookingDate = os.time({ year = 2026, month = 7, day = 1 }),
   detailsDate = os.time() + 86400,
+  detailsParsed = true,
   emittedAccounts = { mix = true },
   subAccountKind = "business",
   returns = {
@@ -257,6 +261,7 @@ env.LocalStorage.OrderCache = {
     orderTotal = 5000,
     bookingDate = os.time({ year = 2026, month = 8, day = 1 }),
     detailsDate = os.time() + 86400,
+    detailsParsed = true,
     subAccountKind = "business",
     returns = {
       [returnDate] = {
@@ -288,6 +293,7 @@ assert(math.abs(purchase + returned + contra) < 0.001, "monthly purchase+return+
 -- Emit-only refresh (harvest skipped) still runs incremental refund watch.
 local emitOnlySince = os.time() - (3 * 24 * 60 * 60)
 env.LocalStorage = {
+  cacheVersion = 22,
   loginCounter = 1,
   lastLoginCounter = 1,
   lastHarvestSince = os.time(),
@@ -316,6 +322,7 @@ assert(fetched["303-emitonly"] == true,
 -- Scan error must not block refund watch + details fetch for due orders.
 local scanErrSince = os.time() - (3 * 24 * 60 * 60)
 env.LocalStorage = {
+  cacheVersion = 22,
   loginCounter = 2,
   lastLoginCounter = 2,
   lastHarvestSince = 0,

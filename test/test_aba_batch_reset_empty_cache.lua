@@ -42,6 +42,8 @@ env.LocalStorage.OrderCache = {
     orderCode = "303-business-1",
     subAccountKind = "business",
     detailsDate = now + 3600,
+    bookingDate = now,
+    detailsParsed = true,
     orderPositions = { { amount = 100 } },
   },
 }

@@ -4,6 +4,9 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.MM.toEncoding = function()
+  error("transaction strings must stay UTF-8")
+end
 
 local paymentHtml = mm.HTML([[
 <html><body>
@@ -73,12 +76,9 @@ assert(tx.mandateReference == "MasterCard **** 0000", "mandate must be payment m
 assert(tx.accountNumber == "Persoenliches Konto", "accountNumber must be sub-account")
 assert(tx.amount == -22.99)
 
--- const.formEncoding was undefined; MM.toEncoding(nil,…) crashes MoneyMoney (signal 11).
 local src = assert(io.open("amazon-orders.lua", "rb")):read("*all")
-assert(src:find("MM%.toEncoding%(const%.fixEncoding,", 1),
-  "encodeFormText must use const.fixEncoding")
-assert(not src:find("const%.formEncoding", 1),
-  "const.formEncoding must not appear (typo for fixEncoding)")
+assert(not src:find("MM%.toEncoding%(const%.fixEncoding,", 1),
+  "MoneyMoney transaction strings must not be converted to binary data")
 
 local longTitle = string.rep("A", 80) .. " END"
 local txLong = env.makeAccountTransaction(order, "304-1111111-1111111", longTitle, -1, 1669593600)
@@ -107,15 +107,29 @@ assert(txUml.purpose == umlautTitle, "purpose keeps full UTF-8 title")
 assert(txUml.bookingText == order.shippingAddress)
 assert(txUml.batchReference == order.shippingAddress)
 
--- Invalid byte: counted as one char, truncation still safe
+-- Invalid UTF-8 must be rejected before a malformed transaction reaches MoneyMoney.
 local bad = string.char(0x80) .. string.rep("B", 80)
 assert(env.utf8CharLen(bad, 1) == nil, "lone continuation is invalid")
-local txBad = env.makeAccountTransaction(order, "304-2", bad, -1, 1)
-assert(env.utf8Len(txBad.name) == 70)
-assert(txBad.purpose == bad)
-assert(txBad.endToEndReference == "304-2")
-assert(txBad.bookingText == order.shippingAddress)
-assert(txBad.batchReference == order.shippingAddress)
+local invalidUtf8Ok, invalidUtf8Error = pcall(
+  env.makeAccountTransaction,
+  order,
+  "304-2",
+  bad,
+  -1,
+  1)
+assert(invalidUtf8Ok == false, "invalid UTF-8 transaction text must be rejected")
+assert(tostring(invalidUtf8Error):find("UTF-8", 1, true),
+  "invalid UTF-8 must produce an explicit encoding error")
+for _, invalid in ipairs({
+  string.char(0xC0, 0x80),
+  string.char(0xE0, 0x80, 0x80),
+  string.char(0xED, 0xA0, 0x80),
+  string.char(0xF4, 0x90, 0x80, 0x80),
+  string.char(0xF0, 0x90, 0x80),
+}) do
+  assert(env.isValidUtf8(invalid) == false, "invalid UTF-8 boundary must be rejected")
+end
+assert(env.isValidUtf8("ä") == true, "valid UTF-8 must remain accepted")
 env.applyAccountAttribute("nameMaxLength", "0", true)
 
 local tx2 = env.makeAccountTransaction(
@@ -143,5 +157,19 @@ local orderOnlyAddr = { accountNumber = "X", shippingAddress = "Beispielweg 1" }
 local txOnlyAddr = env.makeAccountTransaction(orderOnlyAddr, "303-2", "Kabel", -1, 1)
 assert(txOnlyAddr.bookingText == "Beispielweg 1")
 assert(txOnlyAddr.batchReference == "Beispielweg 1")
+
+assert(type(env.sortTransactionsNewestFirst) == "function",
+  "sortTransactionsNewestFirst must be available")
+local unsorted = {
+  {bookingDate = 100, amount = 1},
+  {bookingDate = 300, amount = 2},
+  {bookingDate = 200, amount = 3},
+  {bookingDate = 300, amount = 4},
+}
+env.sortTransactionsNewestFirst(unsorted)
+assert(unsorted[1].amount == 2 and unsorted[2].amount == 4,
+  "equal newest dates must preserve their existing order")
+assert(unsorted[3].bookingDate == 200 and unsorted[4].bookingDate == 100,
+  "transactions must be sorted newest first")
 
 print("test_transaction_fields OK")

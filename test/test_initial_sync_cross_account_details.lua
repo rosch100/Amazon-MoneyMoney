@@ -18,12 +18,15 @@ local detailsFetched = {}
 env.getOrderDetails = function(order)
   detailsFetched[#detailsFetched + 1] = order.orderCode
   order.detailsDate = now + 86400
+  order.detailsParsed = true
   order.orderPositions = { { purpose = "Item", amount = 1000, qty = 1 } }
   order.orderSum = 1000
   order.orderTotal = 1000
 end
 
 env.LocalStorage = {
+
+  cacheVersion = 22,
   loginCounter = 2,
   pendingInitialSync = true,
   initialSyncHarvestDone = true,

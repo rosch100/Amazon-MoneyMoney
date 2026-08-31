@@ -31,6 +31,7 @@ local function baseOrder(code, cents, emitted)
     orderTotal = cents,
     bookingDate = os.time({ year = 2026, month = 8, day = 20 }),
     detailsDate = os.time() + 86400,
+    detailsParsed = true,
     subAccountKind = "business",
   }
   if emitted then
@@ -59,7 +60,7 @@ local function findFloating(txs)
   return found, n
 end
 
-env.LocalStorage = { OrderCache = {} }
+env.LocalStorage = { cacheVersion = 22, OrderCache = {} }
 skipHarvest()
 env.LocalStorage.OrderCache = {
   ["303-1111111-1111111"] = baseOrder("303-1111111-1111111", 1640),

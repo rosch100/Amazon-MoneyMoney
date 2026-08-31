@@ -42,7 +42,7 @@ local webCacheHit=false
 local webCacheState='start'
 local invalidPrice=1e99
 local invalidDate=1e99
-local cacheVersion=21
+local cacheVersion=22
 local debugBuffer={context=''}
 local webCacheLastId=nil
 
@@ -112,7 +112,6 @@ local const={
   incompleteHarvestRef="AMAZON-INCOMPLETE-HARVEST",
   fullReimportStatus="Amazon: Alle Umsätze dieses Kontos in MoneyMoney löschen, danach resetCache in den Notizen setzen und erneut abrufen.",
   htmlEncoding='UTF-8',
-  fixEncoding='latin1',
   residualText='Bestelldifferenz',
   partialReturnNetText='Rücksendekosten',
   stornoText='Storno',
@@ -319,6 +318,23 @@ function clearOrderFilterCaches()
   LocalStorage.orderFilterCacheByAccount={}
 end
 
+function clearAbaRollupHarvestIncomplete()
+  if LocalStorage ~= nil then
+    LocalStorage.abaRollupHarvestIncomplete=nil
+  end
+end
+
+function clearAbaFullHarvestBatch()
+  if LocalStorage == nil then
+    return
+  end
+  LocalStorage.abaFullHarvestJobs=nil
+  LocalStorage.abaFullHarvestJobIndex=nil
+  LocalStorage.abaFullHarvestHasMore=nil
+  LocalStorage.abaFullHarvestHarvestSince=nil
+  clearAbaRollupHarvestIncomplete()
+end
+
 --- @function resetImportState
 -- Drops order/import caches. requireFullReimport=true blocks emit until resetCache.
 function resetImportState(requireFullReimport)
@@ -419,13 +435,17 @@ function applyImportSchemaUpgrade()
     return false
   end
   local from=LocalStorage.cacheVersion
-  if type(from) == 'number' and from ~= cacheVersion then
+  if from ~= nil and from ~= cacheVersion then
     print("import schema", from, "->", cacheVersion, "full reimport required")
     resetImportState(true)
     LocalStorage.cacheVersion=cacheVersion
     return true
   end
-  if from == nil and (orderCacheHasLegacyEmitMarkers(LocalStorage.OrderCache)
+  local hasUnversionedOrders=from == nil
+    and type(LocalStorage.OrderCache) == 'table'
+    and next(LocalStorage.OrderCache) ~= nil
+  if from == nil and (hasUnversionedOrders
+      or orderCacheHasLegacyEmitMarkers(LocalStorage.OrderCache)
       or localStorageHasLegacyGetOrdersGate()) then
     print("legacy cache without schema version -> full reimport required")
     resetImportState(true)
@@ -813,6 +833,12 @@ function orderDetailsCompleteForEmit(order, now, accountNumber)
   if type(order.detailsDate) ~= 'number' or order.detailsDate <= 1 then
     return false
   end
+  if order.detailsParsed ~= true then
+    return false
+  end
+  if type(order.bookingDate) ~= 'number' or order.bookingDate == invalidDate then
+    return false
+  end
   return not orderNeedsDetailsForAccount(order, now, accountNumber)
 end
 
@@ -1157,7 +1183,7 @@ function RegressionTest.getKey(transaction)
     
     for _,k in ipairs(sortedKeys) do
       --key=key..k.."="..MM.base64(transaction[k].." ")
-      key=key..k.."="..MM.toEncoding(const.fixEncoding,transaction[k]).." "
+      key=key..k.."="..tostring(transaction[k]).." "
     end
   return key
 end
@@ -1367,11 +1393,11 @@ function utf8CharLen(text, i)
     return nil
   end
   local len
-  if c < 0xE0 then
+  if c >= 0xC2 and c <= 0xDF then
     len=2
-  elseif c < 0xF0 then
+  elseif c >= 0xE0 and c <= 0xEF then
     len=3
-  elseif c < 0xF8 then
+  elseif c >= 0xF0 and c <= 0xF4 then
     len=4
   else
     return nil
@@ -1384,6 +1410,13 @@ function utf8CharLen(text, i)
     if b == nil or b < 0x80 or b >= 0xC0 then
       return nil
     end
+  end
+  local second=text:byte(i+1)
+  if (c == 0xE0 and second < 0xA0)
+      or (c == 0xED and second >= 0xA0)
+      or (c == 0xF0 and second < 0x90)
+      or (c == 0xF4 and second >= 0x90) then
+    return nil
   end
   return len
 end
@@ -1431,6 +1464,21 @@ function truncateUtf8(text, maxChars)
   return text
 end
 
+function isValidUtf8(text)
+  if type(text) ~= 'string' then
+    return false
+  end
+  local i=1
+  while i <= #text do
+    local charLen=utf8CharLen(text, i)
+    if charLen == nil then
+      return false
+    end
+    i=i+charLen
+  end
+  return true
+end
+
 --- @function makeAccountTransaction
 -- Maps plugin fields onto MoneyMoney transaction fields:
 -- name = Artikelbezeichnung (optional config.nameMaxLength UTF-8 chars),
@@ -1441,9 +1489,34 @@ end
 -- mandateReference = Zahlungsart,
 -- accountNumber = Amazon-Unterkonto.
 function encodeFormText(text)
-  -- MoneyMoney expects latin1 form fields; const.fixEncoding is the SSOT
-  -- (never pass nil — MM.toEncoding(nil, …) aborts the host with signal 11).
-  return MM.toEncoding(const.fixEncoding, text)
+  if not isValidUtf8(text) then
+    error('MoneyMoney transaction text must be a UTF-8 string')
+  end
+  return text
+end
+
+function sortTransactionsNewestFirst(transactions)
+  local indexed={}
+  for index,transaction in ipairs(transactions) do
+    if type(transaction.bookingDate) ~= 'number' then
+      error('MoneyMoney transaction bookingDate must be a number')
+    end
+    table.insert(indexed, {
+      index=index,
+      transaction=transaction,
+    })
+  end
+  table.sort(indexed, function(left, right)
+    local leftDate=left.transaction.bookingDate
+    local rightDate=right.transaction.bookingDate
+    if leftDate == rightDate then
+      return left.index < right.index
+    end
+    return leftDate > rightDate
+  end)
+  for index,entry in ipairs(indexed) do
+    transactions[index]=entry.transaction
+  end
 end
 
 --- @function orderRealAmount
@@ -1858,7 +1931,7 @@ function emitPartialReturnNetLine(ctx, order, orderCode, netExpenseCents, report
   end
   local bookingDate=order.bookingDate
   if bookingDate == nil or bookingDate == invalidDate then
-    bookingDate=os.time()
+    error("Amazon: Bestelldatum für Teilrückgabe fehlt oder ist ungültig.")
   end
   table.insert(ctx.transactions, makeAccountTransaction(
     order,
@@ -2369,7 +2442,7 @@ end
 function getRefundFromDetails(orderDetails,order)
   local bookingDate=order.bookingDate
   if bookingDate == nil or bookingDate == invalidDate then
-    bookingDate=os.time()
+    error("Amazon: Bestelldatum für Erstattung fehlt oder ist ungültig.")
   end
   orderDetails:xpath('.//div[contains(@class,"od-line-item-row")][.//*[contains(@class,"od-line-item-row-label")]]'):each(function(index,row)
     local label=row:xpath('.//*[contains(@class,"od-line-item-row-label")]'):text()
@@ -2461,9 +2534,12 @@ function getOrderDetails(order)
   if orderDetails:text() ~= "" then
     local hadPositionsBeforeParse=orderHasPositions(order)
     local date=getDate(orderDetails:xpath('.//*[@data-component="orderDate"]'):text())
-    if date ~= invalidDate then
-      order.bookingDate=date
+    if date == invalidDate then
+      debugBuffer.print("getOrderDetails missing order date",order.orderCode)
+      debugBuffer.context=''
+      return false
     end
+    order.bookingDate=date
 
     if isUnbilledCancellation(orderDetails) then
       order.unbilledCancel=true
@@ -2527,7 +2603,7 @@ function getOrdersFromSummary(html)
         orderSum=0,
         orderTotal=0,
         refund=0,
-        bookingDate=os.time(),
+        bookingDate=invalidDate,
         detailsDate=0, -- force detail fetch; the list page has no per-order data
         detailsUrl=buildDetailsUrl(orderCode),
       }
@@ -2707,7 +2783,7 @@ function upsertOrderInCache(orderCache, orderCode, orderStub, subAccountLabel, k
       orderSum=0,
       orderTotal=0,
       refund=0,
-      bookingDate=os.time(),
+      bookingDate=invalidDate,
       detailsDate=0,
       detailsUrl=buildDetailsUrl(orderCode),
     }
@@ -3638,17 +3714,6 @@ function enumerateAbaFullHarvestJobs(now)
   return jobs
 end
 
-function clearAbaFullHarvestBatch()
-  if LocalStorage == nil then
-    return
-  end
-  LocalStorage.abaFullHarvestJobs=nil
-  LocalStorage.abaFullHarvestJobIndex=nil
-  LocalStorage.abaFullHarvestHasMore=nil
-  LocalStorage.abaFullHarvestHarvestSince=nil
-  clearAbaRollupHarvestIncomplete()
-end
-
 function completeAbaFullHarvestBatch(refreshSince)
   if LocalStorage == nil then
     return
@@ -3767,12 +3832,6 @@ function markAbaRollupHarvestIncomplete(reason)
     return
   end
   LocalStorage.abaRollupHarvestIncomplete=reason or true
-end
-
-function clearAbaRollupHarvestIncomplete()
-  if LocalStorage ~= nil then
-    LocalStorage.abaRollupHarvestIncomplete=nil
-  end
 end
 
 function isAbaRollupHarvestIncomplete()
@@ -5023,7 +5082,7 @@ end
 
 function listAccountDisplayLabel(accountNumber, discoveredSub)
   if accountNumber == "mix" then
-    return const.combinedAccountListName
+    return combinedAccountListLabel()
   end
   local kind=harvestPriorityKindFromAccountNumber(accountNumber)
   if kind ~= nil then
@@ -5881,6 +5940,11 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       end
     end
     html = connectShop("GET",baseurl)
+    local resolvedHtml, akamaiError = resolveAkamaiInterstitial(html)
+    if akamaiError ~= nil then
+      return "Amazon: "..akamaiError
+    end
+    html = resolvedHtml
     enterOrderList()
   end
 
@@ -6528,6 +6592,7 @@ function RefreshAccount (account, since)
   reportEmptyEmitIfMisaligned(account.accountNumber, transactions, now)
 
   appendIncompleteHarvestDummy(transactions, account.accountNumber, now, harvest, detailsFetchState)
+  sortTransactionsNewestFirst(transactions)
 
   return {balance=ctx.balance/divisor, transactions=transactions}
 end
@@ -6540,8 +6605,9 @@ function EndSession ()
     local logoutElement=html:xpath('//a[contains(@id,"nav-item-signout") or contains(@href,"sign-out")]')
     if logoutElement ~= nil then
       print("Logout")
-      if logoutElement:click() ~= nil then
-        html= connectShop(logoutElement:click())
+      local logoutResponse=logoutElement:click()
+      if logoutResponse ~= nil then
+        html=connectShop(logoutResponse)
       end
     else
       print("error: logout link not found")
