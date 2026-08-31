@@ -16,7 +16,7 @@ nicht automatisch dessen erweitertem Funktionsumfang. Die unten im Abschnitt
 beschriebenen Funktionen beziehen sich auf die unsignierte Datei aus diesem
 Repository.
 
-Datei nach `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney/Extensions` kopieren. Bei einem Klon des Repositories reicht `link_ext.sh`. MoneyMoney lädt die Erweiterung ohne Neustart; Prüfung über *Fenster → Log*.
+Datei nach `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney/Extensions` kopieren. Bei einem Klon des Repositories reicht `./link_ext.sh`; das Skript ersetzt den vorhandenen Link bzw. die vorhandene Datei durch einen Hardlink und setzt den Standard-Containerpfad voraus. MoneyMoney lädt die Erweiterung ohne Neustart; Prüfung über *Fenster → Log*.
 
 Unsignierte Plugins laufen nur in der **Beta** von MoneyMoney, und die Signaturprüfung muss in den Erweiterungseinstellungen ausgeschaltet sein.
 
@@ -58,6 +58,17 @@ Erstimport mehrere Aktualisierungen benötigen.
 Filter-Batches und die Zahl geladener Bestelldetails (Standard jeweils 250).
 Amazon-Business-Berichte werden unabhängig davon in höchstens sechs
 Berichts-Jobs pro Aktualisierung abgearbeitet.
+
+### Lokale Entwicklerwerkzeuge
+
+Die folgenden Skripte arbeiten mit dem MoneyMoney-Datenverzeichnis im
+Standard-Container und sind nur für lokale Debug-Sitzungen gedacht:
+
+- `./webCache_on.sh` aktiviert den Webcache.
+- `./webCache_off.sh` deaktiviert den Webcache.
+- `./clean_webCache.sh` leert den Webcache und legt ihn wieder an.
+- `./toogleCleanLocalStorage.sh` schaltet die Bereinigung von
+  `LocalStorage` beim nächsten Debug-Lauf um.
 
 Geschäftliche Bestellungen kommen primär aus Amazon Business Analytics:
 `PAST_12_MONTHS` und anschließend ältere `CUSTOM_RANGE`-Zeitfenster. Die
