@@ -45,6 +45,7 @@ The complete suite is organized by behavior:
 | Amazon Business Analytics | `test_aba_*.lua` |
 | Detail retrieval and incomplete-refresh marker | `test_details_rescan.lua`, `test_incomplete_refresh_dummy.lua`, `test_emit_no_dummies.lua`, `test_login_nil_page.lua` |
 | Transactions, refunds, returns and cancellations | `test_transaction_fields.lua`, `test_summary_adjustments.lua`, `test_refund_reimport.lua`, `test_storno_omit.lua`, `test_partial_return.lua`, `test_full_return_retained_shipping.lua`, `test_floating_ausgleich.lua`, `test_messagelist.lua` |
+| Conformity and schema regressions | `test_conformity_regressions.lua`, `test_schema_upgrade_load.lua` |
 
 The wildcard rows refer to every matching `test/test_*.lua` file, so the loop
 above remains the source of truth for running the whole suite.

@@ -1,2 +1,4 @@
-# Shell scripts must stay LF — CRLF breaks the shebang (`#!/bin/bash -e\r`).
+# All repository text files use LF; CRLF is not needed on macOS and breaks
+# shell shebangs (`#!/bin/bash -e\r`).
+* text=auto eol=lf
 *.sh text eol=lf

@@ -1180,7 +1180,7 @@ function RegressionTest.getKey(transaction)
     end
     table.sort(sortedKeys)
     local key=""
-    
+
     for _,k in ipairs(sortedKeys) do
       --key=key..k.."="..MM.base64(transaction[k].." ")
       key=key..k.."="..tostring(transaction[k]).." "
@@ -1191,11 +1191,11 @@ end
 function RegressionTest.makeKeys(transactions)
   local keys={}
   for _,transaction in pairs(transactions) do
-    
+
     keys[RegressionTest.getKey(transaction)]=true
-    
+
   end
-  
+
   return keys
 end
 
@@ -1204,7 +1204,7 @@ function RegressionTest.compareTransactions(now,master,differences,text)
   local keys=RegressionTest.makeKeys(now)
   for _,transaction in pairs(master) do
     local key=RegressionTest.getKey(transaction)
-    
+
     if keys[key] ~= true then
       local diff={}
       for k,v in pairs(transaction) do
@@ -1216,7 +1216,7 @@ function RegressionTest.compareTransactions(now,master,differences,text)
       table.insert(differences,diff)
     end
   end
-  
+
   return differences
 end
 
@@ -1246,7 +1246,7 @@ function RegressionTest.run(transactions,regTestPre)
 
       RegressionTest.compareTransactions(transactions,master,differences,"master")
       RegressionTest.compareTransactions(master,transactions,differences,"now")
-      
+
       local count = #transactions
       local i
       for i=0, count do transactions[i]=nil end
