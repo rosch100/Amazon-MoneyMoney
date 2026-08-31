@@ -31,7 +31,7 @@ env.LocalStorage = {
 skipHarvest()
 assert(env.applyImportSchemaUpgrade() == false)
 assert(env.LocalStorage.requireFullReimport == nil)
-assert(env.LocalStorage.cacheVersion == 20)
+assert(env.LocalStorage.cacheVersion == 21)
 assert(env.LocalStorage.OrderCache["303-1111111-1111111"] ~= nil)
 
 -- Legacy cache without schema version but with old emit markers: full reimport.
@@ -80,7 +80,7 @@ assert(env.LocalStorage.requireFullReimport == true)
 
 -- Upgrade from an older numbered schema: wipe plugin cache and block emit.
 env.LocalStorage = {
-  cacheVersion = 19,
+  cacheVersion = 20,
   OrderCache = {
     ["303-old"] = { orderCode = "303-old", orderTotal = 1 },
   },
@@ -94,7 +94,7 @@ assert(env.LocalStorage.OrderCache["303-old"] == nil)
 assert(env.LocalStorage.balancesByPeriod == nil)
 assert(env.LocalStorage.lastHarvestSince == nil)
 assert(env.LocalStorage.cookies == "keep-me", "login session must survive schema wipe")
-assert(env.LocalStorage.cacheVersion == 20)
+assert(env.LocalStorage.cacheVersion == 21)
 
 skipHarvest()
 local blocked = env.RefreshAccount(account, since)

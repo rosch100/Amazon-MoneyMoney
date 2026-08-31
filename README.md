@@ -10,74 +10,182 @@ Signierte Version: https://moneymoney-app.com/extensions/amazon-orders.lua
 
 Aktuelle unsignierte Version aus diesem Repository: [amazon-orders.lua](https://raw.githubusercontent.com/rosch100/Amazon-MoneyMoney/master/amazon-orders.lua)
 
+Die signierte Version wird außerhalb dieses Forks veröffentlicht und entspricht
+nicht automatisch dessen erweitertem Funktionsumfang. Die unten im Abschnitt
+[Änderungen gegenüber der ursprünglichen Version](#änderungen-gegenüber-der-ursprünglichen-version)
+beschriebenen Funktionen beziehen sich auf die unsignierte Datei aus diesem
+Repository.
+
 Datei nach `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney/Extensions` kopieren. Bei einem Klon des Repositories reicht `link_ext.sh`. MoneyMoney lädt die Erweiterung ohne Neustart; Prüfung über *Fenster → Log*.
 
 Unsignierte Plugins laufen nur in der **Beta** von MoneyMoney, und die Signaturprüfung muss in den Erweiterungseinstellungen ausgeschaltet sein.
 
 ## Konten anlegen
 
-*Konto hinzufügen* → *Andere* → *Amazon Orders*. Kontotypen:
+*Konto hinzufügen* → *Andere* → *Amazon Orders*.
 
-- **Normal:** Käufe negativ, Erstattungen und Gutschriften positiv.
-- **Invertiert:** umgekehrt.
-- **Mix:** Käufe, Erstattungen und Rückgaben als echte Buchungen. Eine offene Buchung **Amazon Ausgleich** hält den Saldo bei 0. Das Konto erscheint als *Sonstige*, zählt nicht zur Gesamtsumme in der Seitenleiste und nicht in Diagrammen. Die Umsatzliste öffnet als Liste, nicht als Balkendiagramm.
-- **Monatlich / Jährlich:** Käufe negativ, dazu eine Gegenbuchung, die das Konto auf 0 bringt.
+Ohne erkannte Unterkonten wird **Amazon Alle Konten** angeboten. Sind ein
+persönliches und ein geschäftliches Amazon-Konto verbunden, verwendet das
+gemeinsame Konto beide von Amazon gelieferten Namen, zum Beispiel
+**Amazon Persönliches Konto + Example GmbH**. Zusätzlich werden
+**Amazon Persönlich** und **Amazon Geschäftlich** angeboten.
 
-Wenn persönliches und geschäftliches Amazon-Konto verbunden sind, erscheinen zusätzlich:
+Technisch verwendet das Plugin dafür weiterhin die Kontonummern `mix`,
+`sub:personal` und `sub:business`; `mix` ist nicht Teil des sichtbaren Namens.
+Die beiden Unterkonten und der kombinierte Name werden nur angeboten, wenn der
+Amazon-Kontowechsler beim Login tatsächlich beide Unterkonten liefert.
 
-- **Amazon Alle Konten** — beide zusammen
-- **Amazon Persönlich**
-- **Amazon Geschäftlich**
+Alle diese Konten buchen Käufe, Erstattungen und Rückgaben als echte Umsätze. Eine offene Buchung **Amazon Ausgleich** hält den Saldo bei 0. Sie erscheinen als *Sonstige*, zählen nicht zur Gesamtsumme in der Seitenleiste und nicht in Diagrammen. Die Umsatzliste öffnet als Liste, nicht als Balkendiagramm.
 
-Beim Einrichten (*Konten werden gesucht*) werden noch keine Umsätze geladen. Danach *Bankzugang → Nach neuen Konten suchen*, falls Einstellungen oder Kontotyp nicht übernommen wurden.
+Beim Einrichten (*Konten werden gesucht*) werden noch keine Umsätze geladen.
+
+Bestehende Konten vom Typ Normal, Invertiert, Monatlich oder Jährlich bleiben gültig, werden aber nicht neu angelegt.
 
 ## Erstimport
 
-Den Zugang mehrfach aktualisieren, bis die Statuszeile nichts Offenes mehr meldet und die Platzhalterbuchung *„Es sind noch weitere Bestellungen offen…“* verschwindet.
+Den Zugang mehrfach aktualisieren, bis die Statuszeile nichts Offenes mehr
+meldet und keine offene Platzhalterbuchung mehr auf einen unvollständigen
+Abruf hinweist. Beim Einrichten sucht `ListAccounts` nur Konten; der eigentliche
+Erstimport beginnt nach dem Ende dieser Sitzung.
 
-Pro Durchgang werden höchstens 250 Bestelldetails geladen. Beim Abruf von **Amazon Geschäftlich** wird zuerst das Geschäftskonto gelesen.
+Bei **Amazon Geschäftlich** hat das Geschäftskonto Vorrang. **Amazon Alle
+Konten** arbeitet dagegen im Round-Robin-Verfahren: Pro Aktualisierung wird
+höchstens ein Batch je erkanntem Unterkonto verarbeitet und bei noch offenen
+Daten mit dem nächsten Unterkonto fortgesetzt. Dadurch kann ein vollständiger
+Erstimport mehrere Aktualisierungen benötigen.
 
-Geschäftliche Bestellungen kommen aus den Amazon-Business-Berichten. Amazon liefert dort in der Regel die letzten zwölf Monate und das Jahr davor; ältere Geschäftsbestellungen stellt Amazon oft nicht bereit. Private Bestellungen kommen aus der Bestellübersicht (Jahresfilter).
+`limitOrders` begrenzt getrennt die Zahl neu verarbeiteter Bestellungen eines
+Filter-Batches und die Zahl geladener Bestelldetails (Standard jeweils 250).
+Amazon-Business-Berichte werden unabhängig davon in höchstens sechs
+Berichts-Jobs pro Aktualisierung abgearbeitet.
+
+Geschäftliche Bestellungen kommen primär aus Amazon Business Analytics:
+`PAST_12_MONTHS` und anschließend ältere `CUSTOM_RANGE`-Zeitfenster. Die
+Rollup-Tabelle wird seitenweise gelesen (maximal 250 Seiten). Beim vollständigen
+Business-Abruf ergänzt das Plugin fehlende Jahresbereiche über die klassische
+Bestellübersicht; beim inkrementellen Abruf bleibt es beim Business-Bericht.
+Private Bestellungen kommen aus der Bestellübersicht mit Zeit-/Jahresfiltern.
+
+### Offener Abruf
+
+Die offene Buchung trägt unter **Referenz**
+`AMAZON-INCOMPLETE-HARVEST`, hat den Betrag 0 und ist nicht gebucht. Ihr
+Verwendungszweck nennt den konkreten offenen Zustand:
+
+- Unterkonten- oder Erstimport noch nicht vollständig,
+- noch offene Business-Berichts-Jobs oder unvollständige Rollup-Pagination,
+- Bestelldetails nach einer Kürzung am Abruflimit oder nach einem Abruffehler.
+
+Nur noch planmäßig zur späteren Prüfung vorgemerkte Details erzeugen für sich
+allein keinen Platzhalter. Während *Konten werden gesucht* wird ebenfalls kein
+Platzhalter ausgegeben.
 
 ## Laufende Aktualisierung
 
-Neue Bestellungen werden automatisch übernommen (Schlüssel: Bestellnummer). Bereits importierte Bestellungen der letzten zwölf Monate werden auf Erstattungen und Rückgaben geprüft.
+Neue Bestellungen werden automatisch übernommen (Schlüssel: Bestellnummer).
+Bestellungen der letzten 366 Tage werden auf Erstattungen und Rückgaben
+überwacht. Ihre Detailseiten werden abhängig vom Alter erneut eingeplant:
+nach 7–14 Tagen bei Bestellungen unter 90 Tagen, nach 21–42 Tagen bis 366 Tage
+und danach nach 90–180 Tagen. Taucht eine Bestellung erneut im Harvest auf,
+kann sie ebenfalls wieder zur Detailprüfung vorgemerkt werden.
 
 ## Buchungen
 
+Die Amazon-Bestellnummer steht **nicht** in der Titelzeile, sondern unter **Referenz**.
+
+Bei **Artikelzeilen:**
+
 - **Titelzeile:** Artikelbezeichnung, vollständig (siehe `nameMaxLength`).
-- **Verwendungszweck:** immer die volle Artikelbezeichnung.
+- **Verwendungszweck:** volle Artikelbezeichnung.
 - **Referenz:** Bestellnummer.
 - **Umsatzart:** Lieferadresse, soweit bekannt.
 
-Volle Erstattung, volle Rückgabe und stornierte (nicht berechnete) Bestellung: Buchung und Gegenbuchung (Storno) werden standardmäßig weggelassen. Teilrückgabe erscheint als **Rücksendekosten** (Anteil, der nicht erstattet wurde). Mit `keepStorno` bleiben Buchung und Gegenbuchung sichtbar.
+Außerdem können eigene Buchungen entstehen für Versand, Verpackung, Geschenkverpackung, **Bestelldifferenz**, **Erstattung**, **Rückgabe**, **Rücksendekosten**, **Amazon Ausgleich** und den Platzhalter zum erneuten Abruf.
+
+Volle Erstattung, volle Rückgabe und stornierte (nicht berechnete) Bestellung: Buchung und Gegenbuchung (Storno) werden standardmäßig weggelassen. Teilrückgabe und volle Rückgabe mit verbleibendem Versand erscheinen als **Rücksendekosten**. Mit `keepStorno` bleiben Buchung und Gegenbuchung sichtbar.
 
 ## Einstellungen (Notizen)
 
-Konto → Einstellungen → Notizen. Die Felder werden beim Anlegen bzw. bei *Nach neuen Konten suchen* mit Standardwerten angelegt. Ein normaler Abruf ändert die Tabelle nicht.
+Konto → Einstellungen → Notizen. Diese Felder legt MoneyMoney beim Anlegen bzw. bei *Bankzugang → Nach neuen Konten suchen* mit Standardwerten an. Ein normaler Abruf ändert die Tabelle nicht.
 
 | Feld | Bedeutung |
 |------|-----------|
-| `resetCache` | Cache leeren und Bestellhistorie neu einlesen. Nach einem Update und dem Löschen aller Umsätze einmal auf ein neues Datum setzen, dann aktualisieren. |
-| `blacklistOrders` | Bestellnummern (kommagetrennt), die übersprungen werden, wenn Details fehlschlagen. |
-| `rescanOrder` | Eine Bestellnummer, deren Details beim nächsten Abruf neu geladen werden. |
+| `resetCache` | Cache leeren und Bestellhistorie neu einlesen. Wert ändern (z. B. auf das heutige Datum), dann aktualisieren. |
+| `blacklistOrders` | Bestellnummern (kommagetrennt), die weder als Umsätze ausgegeben noch regulär im Detailabruf verarbeitet werden. Ihre nächste Detailprüfung wird planmäßig terminiert. Das ältere Feld `blackListOrders` gilt weiter. |
+| `rescanOrder` | Eine Bestellnummer, deren Details beim nächsten Abruf neu geladen werden. Die bereits gemerkte Ausgabezuordnung wird für diese Bestellung zurückgesetzt. |
 | `keepStorno` | `true`: Buchung und passendes Storno behalten. Standard: `false`. Bereits importierte Buchungen werden nicht gelöscht; eine spätere volle Erstattung wird trotzdem importiert. |
 | `nameMaxLength` | Maximale Länge der **Titelzeile** (Zeichen). `0` = ungekürzt (Standard). Der Verwendungszweck bleibt immer vollständig. Beispiel: `70`. |
-| `limitOrders` | Maximale Zahl Bestelldetails pro Abruf (Standard 250). |
+
+Diese Felder kann man zusätzlich eintragen (kein Standardwert in der Notiztabelle):
+
+| Feld | Bedeutung |
+|------|-----------|
+| `limitOrders` | Grenze je Bestelllisten-Filter-Batch und getrennte Grenze für Bestelldetails (interner Standard jeweils 250). Business-Berichts-Jobs haben ein eigenes Limit. |
+| `scanFiltersMonths` | Maximales Alter der gelesenen Bestellübersichtsfilter. `0` = beim vollständigen Import alle Jahre (Standard); beim inkrementellen Abruf begrenzt das Plugin das Fenster automatisch auf den aktuellen Abrufzeitraum. |
+| `cookieLanguage` | Sprachkennung der Amazon-Seite, falls die Anzeige nicht Deutsch ist. |
+| `orderDetailsUrl` | Nur nötig, wenn Amazon den Pfad zu den Bestelldetails ändert. |
 
 ## Update von älteren Versionen
 
-Bestehende Umsätze werden nicht umgeschrieben.
+Es hat sich so viel geändert (Titelzeile, Mix-Buchungen, Kontotypen, Persönlich/Geschäftlich), dass **Löschen und neu Anlegen der Amazon-Konten** empfohlen wird. Bestehende Umsätze werden nicht umgeschrieben; alte Titelzeilen mit Bestellnummer bleiben sonst stehen.
 
-1. Alle Umsätze der Amazon-Konten in MoneyMoney löschen.
-2. In den Notizen `resetCache` auf einen neuen Wert setzen (z. B. das heutige Datum).
-3. Aktualisieren. Die Statuszeile sagt, falls der Neuimport noch aussteht.
+Cache-Version 21 verwirft außerdem bewusst Bestelldaten, die mit einem falschen
+Seiten-Zeichensatz gelesen worden sein können. MoneyMoney zeigt deshalb nach
+dem Update die Aufforderung zum vollständigen Neuimport; vorhandene fehlerhafte
+Umsätze werden nicht still verändert.
 
-Vor Schritt 2–3 werden keine neuen Umsätze geladen, damit nichts doppelt oder unvollständig entsteht.
+1. Amazon-Zugang in MoneyMoney entfernen (Konten löschen).
+2. Plugin aktualisieren.
+3. Zugang und Konten neu anlegen, danach Erstimport wie oben.
+
+Nur Umsätze löschen und `resetCache` setzen reicht in der Regel nicht: Kontotyp *Sonstige*, Notizfelder und die neue Aufteilung der Konten kommen so nicht zuverlässig an.
+
+## Änderungen gegenüber der ursprünglichen Version
+
+Fork von [Michael Beutling](https://github.com/Michael-Beutling/Amazon-MoneyMoney). Gegenüber dem Original:
+
+- **Titelzeile** ist der Artikelname, nicht mehr die Bestellnummer. Die Bestellnummer steht unter **Referenz**.
+- **Persönlich und Geschäftlich** als eigene Konten, plus **Alle Konten**. Die fünf Buchungsarten Normal / Invertiert / Mix / Monatlich / Jährlich werden nicht mehr neu angeboten.
+- **Mix-Logik:** echte Käufe, Erstattungen und Rückgaben, dazu ein offener **Amazon Ausgleich** auf Saldo 0 — nicht mehr Kauf und Gegenbuchung mit der Bestellnummer als Titel.
+- Konten erscheinen als **Sonstige** und zählen nicht zur Gesamtsumme oder zu Diagrammen.
+- **Amazon Business** über die Beschaffungsanalysen (Berichte), nicht nur über die Bestellübersicht.
+- **Fortsetzbarer Erstimport:** Zustandsbehafteter Harvest über mehrere
+  Aktualisierungen, Round-Robin für *Alle Konten* und Priorität des gewählten
+  Unterkontos.
+- **Business-Batching und Pagination:** `PAST_12_MONTHS` plus ältere
+  `CUSTOM_RANGE`-Zeiträume, sechs Jobs je Aktualisierung sowie fortsetzbare
+  Rollup-Pagination mit klassischem Jahresfilter als Lückenabdeckung.
+- Erstattungen und Rückgaben aus den **Bestelldetails**, nicht mehr aus dem Nachrichten-Center.
+- **Erneute Detailprüfung:** Altersabhängige Termine und gezieltes
+  `rescanOrder`; leere oder fehlgeschlagene Detailantworten bleiben offen.
+- Volle Erstattung, volle Rückgabe und nicht berechnete Stornierung: Buchung und Storno standardmäßig **weglassen** (`keepStorno` zum Anzeigen).
+- Teilrückgabe und Rückgabe mit restlichem Versand als **Rücksendekosten**.
+- Versand, Verpackung, Geschenkverpackung und **Bestelldifferenz** als eigene Buchungen.
+- **Lieferadresse** als Umsatzart, Zahlungsart wird mitgeführt.
+- Deutsche Bezeichnungen (Erstattung, Rückgabe, Ausgleich).
+- Beim **Einrichten** keine Umsätze. Erstimport über mehrere Abrufe; ein
+  zweckspezifischer Platzhalter mit Referenz `AMAZON-INCOMPLETE-HARVEST` statt
+  „Please reload!“.
+- Titelzeile **ungekürzt** (optional `nameMaxLength`).
+- Aktuelles Amazon-Seitenlayout (Bestellkarten, Business-SPA,
+  Akamai-Zwischenseiten und Kontowechsel). Benötigt der Wechsel während eines
+  Abrufs erneut MFA, fordert das Plugin zum Ab- und erneuten Anmelden auf.
+- **Fehlerklassifikation beim Login:** Nur eine explizite Ablehnung der
+  Zugangsdaten liefert `LoginFailed` und verwirft Cookies. Fehlende oder
+  unerwartete Antwortseiten werden als vorübergehender Fehler gemeldet; die
+  gespeicherte Session bleibt erhalten.
+- **Korrekte Zeichenkodierung:** Amazon-HTML wird entsprechend Amazons
+  tatsächlicher Auslieferung als UTF-8 gelesen; veraltete oder falsche
+  Charset-Hinweise einzelner Seiten erzeugen dadurch kein Mojibake wie
+  `FrÃ¼her`.
 
 ## Laufzeit
 
-Der erste Import liest die gesamte Historie (bei vielen Jahren Dauer im Bereich von Minuten). Weitere Läufe nur neue bzw. geänderte Bestellungen; ein normaler Abruf dauert meist unter einer Minute.
+Der erste Import liest die erreichbare Historie in fortsetzbaren Batches.
+Weitere Läufe lesen neue oder geänderte Bestellungen und die jeweils fälligen
+Detailprüfungen. Die Dauer hängt von Zahl und Alter der Bestellungen, den
+erkannten Unterkonten, Business-Berichts-Jobs, Pagination und Amazon-Antworten
+ab; das Plugin garantiert keine feste Laufzeit pro Aktualisierung.
 
 ## Haftung
 

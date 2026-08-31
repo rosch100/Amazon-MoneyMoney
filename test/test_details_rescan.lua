@@ -33,4 +33,43 @@ env.scheduleNextDetailsDate(nodate, now)
 assert(nodate.detailsDate >= now + 7 * day)
 assert(nodate.detailsDate < now + 14 * day)
 
+-- Empty details HTML must stay due so the next refresh retries (not 7–90 days later).
+env.connectShopWithCheck = function()
+  return mm.HTML("<html><body></body></html>")
+end
+local emptyPage = {
+  orderCode = "303-empty-details",
+  detailsDate = 0,
+  bookingDate = now - day,
+}
+---@diagnostic disable-next-line: redundant-parameter -- Sandbox function is dynamically replaced below.
+env.getOrderDetails(emptyPage)
+assert(emptyPage.detailsDate == 0, "empty details page must not schedule a rescan delay")
+assert(emptyPage.detailsParsed ~= true, "empty details page must not count as parsed")
+
+env.connectShop = function()
+  return mm.HTML("<html><body></body></html>")
+end
+env.orderBlacklist = {}
+env.getOrderDetails = function()
+  return false
+end
+local fetchState = env.fetchOrderDetailsBatch(
+  {{ orderCode = "303-failed-details", order = {}}},
+  now,
+  250,
+  { counter = 0, pendingAtStart = 1, failed = 0 })
+assert(fetchState.counter == 1 and fetchState.failed == 1,
+  "failed detail fetch must be counted in caller-owned state")
+
+local sessionSwitches = 0
+env.LocalStorage = { OrderCache = {} }
+env.ensureAmazonSubAccountSession = function()
+  sessionSwitches = sessionSwitches + 1
+  return nil
+end
+env.fetchPendingOrderDetails("sub:business", now)
+assert(sessionSwitches == 0,
+  "empty details queue must not switch Amazon sub-account sessions")
+
 print("test_details_rescan OK")

@@ -1,5 +1,6 @@
 -- Incomplete harvest/details emit upstream-style dummy booking.
 -- Run: test/run.sh test/test_incomplete_refresh_dummy.lua
+---@diagnostic disable: duplicate-set-field -- Test cases intentionally replace sandbox mocks.
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
@@ -34,6 +35,29 @@ local function hasIncompleteDummy(transactions)
     end
   end
   return nil
+end
+
+local function doneScan(harvestSince, incomplete, totalNew)
+  return {
+    phase = "done",
+    incomplete = incomplete,
+    totalNew = totalNew,
+    harvestSince = harvestSince,
+    loginCounter = 1,
+  }
+end
+
+local function completedInitialSyncStorage(orderCache, scan)
+  return {
+    loginCounter = 1,
+    lastLoginCounter = 1,
+    lastHarvestSince = since,
+    pendingInitialSync = true,
+    initialSyncHarvestDone = true,
+    initialSyncRefreshedAccounts = { mix = "mix" },
+    OrderCache = orderCache,
+    subAccountScan = scan,
+  }
 end
 
 -- Paused sub-account scan
@@ -71,16 +95,13 @@ assert(d1.endToEndReference == "AMAZON-INCOMPLETE-HARVEST",
 assert(type(d1.purpose) == "string" and d1.purpose:find("Abruf der Unterkonten", 1, true),
   "purpose must mention incomplete scan, got: "..tostring(d1.purpose))
 
--- Pending details only (scan complete) — details fetch must not clear dummy in same run
+-- Pending details beyond this run's limit — dummy only while another refresh will continue
 env.getOrderDetails = function(_order)
 end
-env.LocalStorage = {
-  loginCounter = 1,
-  lastLoginCounter = 1,
-  lastHarvestSince = since,
-  OrderCache = {
-    ["303-open"] = {
-      orderCode = "303-open",
+env.applyAccountAttribute("limitOrders", 1, false)
+env.LocalStorage = completedInitialSyncStorage({
+  ["303-open-a"] = {
+      orderCode = "303-open-a",
       orderPositions = {},
       orderSum = 0,
       orderTotal = 0,
@@ -88,8 +109,89 @@ env.LocalStorage = {
       detailsDate = 0,
       subAccountKind = "personal",
     },
-    ["303-done"] = {
-      orderCode = "303-done",
+    ["303-open-b"] = {
+      orderCode = "303-open-b",
+      orderPositions = {},
+      orderSum = 0,
+      orderTotal = 0,
+      bookingDate = now - 10,
+      detailsDate = 0,
+      subAccountKind = "personal",
+    },
+  }, doneScan(since, false, 0))
+local r2 = env.RefreshAccount(account, since)
+local d2 = hasIncompleteDummy(r2.transactions)
+assert(d2 ~= nil, "truncated details batch must emit incomplete dummy")
+assert(d2.purpose:find("Bestelldetails", 1, true), "purpose must mention open details")
+env.applyAccountAttribute("limitOrders", 250, false)
+
+-- Failed details remain visible even when the attempt count stays under the limit
+env.getOrderDetails = function(_order)
+end
+env.LocalStorage = completedInitialSyncStorage({
+  ["303-fail-details"] = {
+      orderCode = "303-fail-details",
+      orderPositions = {},
+      orderSum = 0,
+      orderTotal = 0,
+      bookingDate = now,
+      detailsDate = 0,
+      subAccountKind = "personal",
+    },
+  }, doneScan(since, false, 0))
+local rFail = env.RefreshAccount(account, since)
+local dFail = hasIncompleteDummy(rFail.transactions)
+assert(dFail ~= nil, "failed details must keep AMAZON-INCOMPLETE-HARVEST")
+assert(dFail.purpose:find("Bestelldetails", 1, true),
+  "failed details purpose must mention open details")
+
+-- Due details from an older failed attempt must be retried even without a new harvest/refund watch
+local detailsCalls = 0
+env.getOrderDetails = function(_order)
+  detailsCalls = detailsCalls + 1
+  return false
+end
+local recentSince = now - 7 * 86400
+env.LocalStorage = {
+  loginCounter = 1,
+  lastLoginCounter = 1,
+  lastHarvestSince = recentSince,
+  OrderCache = {
+    ["303-old-open-details"] = {
+      orderCode = "303-old-open-details",
+      orderPositions = {},
+      orderSum = 0,
+      orderTotal = 0,
+      bookingDate = now - 400 * 86400,
+      detailsDate = 0,
+      subAccountKind = "personal",
+    },
+  },
+  subAccountScan = doneScan(recentSince, false, 0),
+}
+local rOldDetails = env.RefreshAccount(account, recentSince)
+assert(detailsCalls == 1, "due details must be retried without a new harvest")
+assert(hasIncompleteDummy(rOldDetails.transactions) ~= nil,
+  "failed due-details retry must keep AMAZON-INCOMPLETE-HARVEST")
+
+-- Erstimport harvest already done, scan state gone after login: no dummy
+env.getOrderDetails = function(order)
+  if type(order) == "table" then
+    order.detailsDate = now + 86400
+    order.detailsParsed = true
+  end
+  return true
+end
+env.LocalStorage = {
+  loginCounter = 2,
+  lastLoginCounter = 2,
+  lastHarvestSince = since,
+  pendingInitialSync = true,
+  initialSyncHarvestDone = true,
+  initialSyncRefreshedAccounts = { mix = "mix" },
+  OrderCache = {
+    ["303-done-login"] = {
+      orderCode = "303-done-login",
       orderPositions = { { purpose = "Done", amount = 500, qty = 1 } },
       orderSum = 500,
       orderTotal = 500,
@@ -100,18 +202,74 @@ env.LocalStorage = {
       subAccountKind = "personal",
     },
   },
-  subAccountScan = {
-    phase = "done",
-    incomplete = false,
-    totalNew = 0,
-    harvestSince = since,
-    loginCounter = 1,
-  },
 }
-local r2 = env.RefreshAccount(account, since)
-local d2 = hasIncompleteDummy(r2.transactions)
-assert(d2 ~= nil, "open details must emit incomplete dummy")
-assert(d2.purpose:find("Bestelldetails", 1, true), "purpose must mention open details")
+assert(env.LocalStorage.subAccountScan == nil)
+local rLogin = env.RefreshAccount(account, since)
+assert(hasIncompleteDummy(rLogin.transactions) == nil,
+  "harvest-done Erstimport without scan state must not emit dummy")
+
+-- phase=done + incomplete=true (e.g. no-switcher hasMore pause) must still dummy
+env.LocalStorage = completedInitialSyncStorage({
+  ["303-done-pause"] = {
+      orderCode = "303-done-pause",
+      orderPositions = { { purpose = "Done", amount = 500, qty = 1 } },
+      orderSum = 500,
+      orderTotal = 500,
+      bookingDate = now,
+      detailsDate = now + 86400,
+      detailsParsed = true,
+      emittedAccounts = { mix = true },
+      subAccountKind = "personal",
+    },
+  }, doneScan(since, true, 10))
+local rDoneIncomplete = env.RefreshAccount(account, since)
+local dDoneIncomplete = hasIncompleteDummy(rDoneIncomplete.transactions)
+assert(dDoneIncomplete ~= nil, "phase=done incomplete scan must emit dummy")
+assert(dDoneIncomplete.purpose:find("Abruf der Unterkonten", 1, true),
+  "purpose must mention incomplete scan, got: "..tostring(dDoneIncomplete.purpose))
+
+-- ABA pagination incomplete: harvest must continue and dummy must stay until the batch succeeds
+local incSince = now - 7 * 86400
+env.LocalStorage = {
+  loginCounter = 1,
+  lastLoginCounter = 1,
+  lastHarvestSince = incSince,
+  refreshSince = incSince,
+  abaRollupHarvestIncomplete = "pagination",
+  abaFullHarvestHasMore = false,
+  OrderCache = {
+    ["303-aba"] = {
+      orderCode = "303-aba",
+      orderPositions = { { purpose = "Done", amount = 500, qty = 1 } },
+      orderSum = 500,
+      orderTotal = 500,
+      bookingDate = now,
+      detailsDate = now + 86400,
+      detailsParsed = true,
+      emittedAccounts = { mix = true },
+      subAccountKind = "business",
+    },
+  },
+  subAccountScan = doneScan(incSince, false, 0),
+}
+assert(env.resolveSubAccountScanCache() == nil,
+  "ABA pagination incomplete must invalidate a cached completed sub-account scan")
+assert(env.LocalStorage.subAccountScan == nil,
+  "ABA pagination retry must restart the sub-account scan")
+assert(env.isFullAccountHarvestComplete() == false,
+  "ABA pagination incomplete must not count as full harvest complete")
+assert(env.shouldRunAccountHarvest(incSince, now) == true,
+  "ABA pagination incomplete must keep harvesting")
+local rAba = env.RefreshAccount(account, incSince)
+local dAba = hasIncompleteDummy(rAba.transactions)
+assert(dAba ~= nil, "ABA incomplete must emit dummy while harvest retries")
+assert(dAba.purpose:find("Pagination", 1, true),
+  "purpose must mention ABA pagination, got: "..tostring(dAba.purpose))
+
+env.LocalStorage.abaRollupHarvestIncomplete = "pagination"
+env.clearAbaFullHarvestBatch()
+assert(env.isAbaRollupHarvestIncomplete() == false,
+  "clearing the ABA batch must also clear the sticky incomplete flag")
 
 -- Complete refresh: no dummy
 env.LocalStorage = {
@@ -131,13 +289,7 @@ env.LocalStorage = {
       subAccountKind = "personal",
     },
   },
-  subAccountScan = {
-    phase = "done",
-    incomplete = false,
-    totalNew = 0,
-    harvestSince = since,
-    loginCounter = 1,
-  },
+  subAccountScan = doneScan(since, false, 0),
 }
 local r3 = env.RefreshAccount(account, since)
 assert(hasIncompleteDummy(r3.transactions) == nil, "complete refresh must not emit dummy")

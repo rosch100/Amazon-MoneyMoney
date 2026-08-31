@@ -1,0 +1,14 @@
+{
+  "runtime.version": "LuaJIT",
+  "diagnostics.globals": [
+    "AccountTypeOther",
+    "Connection",
+    "HTML",
+    "JSON",
+    "LocalStorage",
+    "LoginFailed",
+    "MM",
+    "ProtocolWebBanking",
+    "WebBanking"
+  ]
+}

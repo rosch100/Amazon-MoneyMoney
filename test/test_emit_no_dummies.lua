@@ -1,5 +1,6 @@
 -- RefreshAccount: no dummies; per-account emittedAccounts; subs independent of mix.
 -- Run: test/run.sh test/test_emit_no_dummies.lua
+---@diagnostic disable: duplicate-set-field -- Test cases intentionally replace sandbox mocks.
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 

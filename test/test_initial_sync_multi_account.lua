@@ -51,7 +51,12 @@ env.LocalStorage.initialSyncRefreshedAccounts = nil
 
 local business = { accountNumber = "sub:business", owner = "test@example.com" }
 env.RefreshAccount(business, 0)
+assert(env.isPendingInitialSync() == true,
+  "business-only refresh must keep Erstimport pending while personal is missing")
+
+local personal = { accountNumber = "sub:personal", owner = "test@example.com" }
+env.RefreshAccount(personal, 0)
 assert(env.isPendingInitialSync() == false,
-  "a later refresh of another enabled account also completes Erstimport")
+  "refreshing both enabled sub-accounts completes Erstimport")
 
 print("test_initial_sync_multi_account OK")

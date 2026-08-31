@@ -1,5 +1,6 @@
 -- Akamai interstitial after Amazon account switch + AB orderHistory headers.
 -- Run: test/run.sh test/test_akamai_interstitial.lua
+---@diagnostic disable: duplicate-set-field -- Test cases intentionally replace sandbox mocks.
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
