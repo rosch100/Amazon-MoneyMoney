@@ -14,25 +14,15 @@ end
 local account = { accountNumber = "mix", owner = "test@example.com" }
 local since = os.time() - (7 * 24 * 60 * 60)
 
--- Fresh storage (no prior version): keep cache, do not block emit.
+-- Fresh storage (no prior version and no imported orders): initialize schema.
 env.LocalStorage = {
-  OrderCache = {
-    ["303-1111111-1111111"] = {
-      orderCode = "303-1111111-1111111",
-      orderPositions = { { purpose = "Item", amount = 1640, qty = 1 } },
-      orderSum = 1640,
-      orderTotal = 1640,
-      bookingDate = os.time({ year = 2026, month = 8, day = 20 }),
-      detailsDate = os.time() + 86400,
-      subAccountKind = "business",
-    },
-  },
+  OrderCache = {},
 }
 skipHarvest()
 assert(env.applyImportSchemaUpgrade() == false)
 assert(env.LocalStorage.requireFullReimport == nil)
-assert(env.LocalStorage.cacheVersion == 21)
-assert(env.LocalStorage.OrderCache["303-1111111-1111111"] ~= nil)
+assert(env.LocalStorage.cacheVersion == 22)
+assert(next(env.LocalStorage.OrderCache) == nil)
 
 -- Legacy cache without schema version but with old emit markers: full reimport.
 env.LocalStorage = {
@@ -48,16 +38,16 @@ assert(env.applyImportSchemaUpgrade() == true)
 assert(env.LocalStorage.requireFullReimport == true)
 assert(env.LocalStorage.OrderCache["303-legacy"] == nil)
 
--- Empty getOrders table must not force reimport.
+-- Any unversioned non-empty order cache must be rebuilt for the current schema.
 env.LocalStorage = {
   OrderCache = {
     ["303-fresh"] = { orderCode = "303-fresh", orderTotal = 1 },
   },
   getOrders = {},
 }
-assert(env.applyImportSchemaUpgrade() == false)
-assert(env.LocalStorage.requireFullReimport == nil)
-assert(env.LocalStorage.OrderCache["303-fresh"] ~= nil)
+assert(env.applyImportSchemaUpgrade() == true)
+assert(env.LocalStorage.requireFullReimport == true)
+assert(env.LocalStorage.OrderCache["303-fresh"] == nil)
 
 -- Return-only legacy marker (with empty refundTransactions) still requires reimport.
 env.LocalStorage = {
@@ -94,7 +84,7 @@ assert(env.LocalStorage.OrderCache["303-old"] == nil)
 assert(env.LocalStorage.balancesByPeriod == nil)
 assert(env.LocalStorage.lastHarvestSince == nil)
 assert(env.LocalStorage.cookies == "keep-me", "login session must survive schema wipe")
-assert(env.LocalStorage.cacheVersion == 21)
+assert(env.LocalStorage.cacheVersion == 22)
 
 skipHarvest()
 local blocked = env.RefreshAccount(account, since)
@@ -115,6 +105,7 @@ env.LocalStorage.OrderCache = {
     orderTotal = 1640,
     bookingDate = os.time({ year = 2026, month = 8, day = 20 }),
     detailsDate = os.time() + 86400,
+    detailsParsed = true,
     subAccountKind = "business",
   },
 }

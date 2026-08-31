@@ -28,6 +28,7 @@ local function purchaseOrder(code, cents)
     orderTotal = cents,
     bookingDate = bookingDate,
     detailsDate = now,
+    detailsParsed = true,
     subAccountKind = "business",
   }
 end
@@ -194,6 +195,7 @@ do
   local order = purchaseOrder("303-notes-storno", 670)
   env.registerRefundTransaction(order, bookingDate + 86400, 670)
   env.LocalStorage = {
+    cacheVersion = 22,
     loginCounter = 1,
     lastLoginCounter = 1,
     lastHarvestSince = os.time(),

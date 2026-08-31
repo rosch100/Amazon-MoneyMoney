@@ -14,6 +14,8 @@ env.getOrderDetails = function()
 end
 
 env.LocalStorage = {
+
+  cacheVersion = 22,
   loginCounter = 1,
   lastLoginCounter = 0,
   OrderCache = {
@@ -24,6 +26,7 @@ env.LocalStorage = {
       orderTotal = 1000,
       bookingDate = now,
       detailsDate = now + 86400,
+      detailsParsed = true,
       subAccountKind = "business",
     },
   },
@@ -90,6 +93,7 @@ env.LocalStorage.OrderCache["303-open-details"] = {
 env.RefreshAccount(account, recentSince)
 assert(env.isPendingInitialSync() == true, "pending stays while details are open")
 env.LocalStorage.OrderCache["303-open-details"].detailsDate = now + 86400
+env.LocalStorage.OrderCache["303-open-details"].detailsParsed = true
 env.RefreshAccount(account, recentSince)
 assert(env.isPendingInitialSync() == false, "pending clears after details are done")
 

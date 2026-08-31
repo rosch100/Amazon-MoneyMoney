@@ -48,7 +48,7 @@ local reverseListed = env.ListAccounts({})
 assert(reverseListed[1].accountNumber == "mix")
 assert(reverseListed[1].name == "Amazon Persönliches Konto + Example GmbH")
 
-assert(env.listAccountDisplayLabel("mix") == "Alle Konten")
+assert(env.listAccountDisplayLabel("mix") == "Persönliches Konto + Example GmbH")
 assert(env.listAccountDisplayLabel("sub:personal") == "Persönlich")
 assert(env.listAccountDisplayLabel("sub:business") == "Geschäftlich")
 

@@ -15,6 +15,8 @@ env.getOrderDetails = function()
 end
 
 env.LocalStorage = {
+
+  cacheVersion = 22,
   loginCounter = 2,
   lastLoginCounter = 1,
   OrderCache = {},
@@ -52,6 +54,7 @@ env.LocalStorage.OrderCache = {
     orderTotal = 1000,
     bookingDate = now,
     detailsDate = now + 86400,
+    detailsParsed = true,
     subAccountKind = "business",
   },
 }

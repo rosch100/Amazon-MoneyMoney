@@ -48,6 +48,7 @@ end
 local function refreshBusiness(pendingInitialSync)
   statusMessages = {}
   env.LocalStorage = {
+    cacheVersion = 22,
     loginCounter = 1,
     lastLoginCounter = 0,
     lastHarvestSince = 0,
@@ -62,6 +63,7 @@ end
 
 -- Direct unit: reportEmptyEmitIfMisaligned during Erstimport
 env.LocalStorage = {
+  cacheVersion = 22,
   pendingInitialSync = true,
   OrderCache = personalOnlyCache,
 }
@@ -112,6 +114,7 @@ assert(not hasMisalignedWarning(),
 -- Business orders ready: no misaligned warning
 statusMessages = {}
 env.LocalStorage = {
+  cacheVersion = 22,
   pendingInitialSync = true,
   OrderCache = {
     ["303-biz-1111111-1111111"] = {

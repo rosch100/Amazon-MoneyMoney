@@ -132,7 +132,7 @@ end
 -- Sandbox: load amazon-orders.lua with host globals stubbed, return its env
 -- so tests can call its global functions (getOrdersFromSummary, etc.).
 ----------------------------------------------------------------------
-function M.loadPlugin(path)
+function M.loadPlugin(path, localStorage)
   local env = {}
 
   local MM = {
@@ -178,7 +178,7 @@ function M.loadPlugin(path)
     HTML = M.HTML,
     MM = MM,
     JSON = JSON,
-    LocalStorage = nil,             -- nil => top-level cache block is skipped
+    LocalStorage = localStorage,    -- optional storage enables load-time migration tests
     Connection = function() error("Connection() not available offline") end,
     WebBanking = function() end,
     ProtocolWebBanking = "ProtocolWebBanking",
