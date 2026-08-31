@@ -1,5 +1,6 @@
 -- ABA v2 ajax: rollupTable, scheduler/status polling, HTML order harvest.
 -- Run: test/run.sh test/test_aba_rollup.lua
+---@diagnostic disable: duplicate-set-field -- Test cases intentionally replace sandbox mocks.
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 

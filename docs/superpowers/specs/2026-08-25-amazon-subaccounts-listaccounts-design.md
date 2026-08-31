@@ -2,9 +2,14 @@
 
 Datum: 2026-08-25
 
+Status: **Implementiert.** Historisches Design; verifiziert durch
+`test/test_list_accounts.lua`, `test/test_account_setup_no_harvest.lua` und die
+`test/test_initial_sync_*.lua`-Tests.
+
 ## Ziel
 
-- „Nach neuen Konten suchen“: **nur** Konten ermitteln, **keine** Umsätze laden.
+- Beim Login Unterkonten entdecken; „Nach neuen Konten suchen“ listet diese
+  anschließend, lädt aber **keine** Umsätze.
 - Standard-Angebot: gemeinsames „Amazon …“ (`accountNumber=mix`).
 - Wenn der CVF-Switcher **mehrere** Amazon-Unterkonten findet: zusätzlich
   `sub:personal` / `sub:business` zur Auswahl.
@@ -22,4 +27,7 @@ Datum: 2026-08-25
 - Keys: `sub:personal`, `sub:business`.
 - `ListAccounts`: `mix` immer; bei `#discovered > 1` zusätzlich die Subs.
 - Orders: `subAccountKind` beim Harvest in Refresh; Filter nach Konto.
-- MFA/`auth_prompt` beim Wechsel nur im Refresh-/Harvest-Pfad.
+- Wechsel-Authentifizierung liegt nur im Refresh-/Harvest-Pfad:
+  `auth_prompt` wird mit den vorhandenen Zugangsdaten einmal direkt beantwortet;
+  verlangt Amazon beim normalen Refresh erneut MFA, bricht der Scan mit der
+  Aufforderung zum Ab- und erneuten Anmelden ab.

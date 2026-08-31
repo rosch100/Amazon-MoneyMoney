@@ -24,18 +24,37 @@ the right module paths for you.
 
 ```sh
 ./test/run.sh test/selftest.lua     # sanity check: shim works (synthetic page)
-./test/run.sh test/test_parse.lua   # real tests against pages in test/pages/
+./test/run.sh test/test_parse.lua   # deterministic parser regression tests
+for test_file in test/test_*.lua; do ./test/run.sh "$test_file"; done
 ```
 
 `test/run.sh <script.lua>` just sets `PATH` + the luarocks 5.1 module paths and
 runs the script under `luajit`. You can point it at any Lua script.
 
-## Providing test pages
+### Test catalog
 
-`test/test_parse.lua` reads HTML files from `test/pages/` (gitignored — they
-contain personal data and are never committed). The expected files are named per
-scenario, e.g. `list.html`, `details-single.html`, `details-multi.html`,
-`details-multi-with-refund.html`, `details-digital.html`, `details-giftcard.html`.
+The complete suite is organized by behavior:
+
+| Area | Tests |
+|------|-------|
+| Host shim and HTML parser | `selftest.lua`, `test_parse.lua`, `test_html_encoding.lua`, `test_akamai_interstitial.lua` |
+| Account discovery, attributes and migration | `test_list_accounts.lua`, `test_account_attributes.lua`, `test_account_switcher.lua`, `test_migrate_legacy_emit.lua` |
+| Account setup and initial sync | `test_account_setup_no_harvest.lua`, `test_initial_sync_*.lua`, `test_full_refresh.lua`, `test_full_reimport.lua`, `test_empty_emit_misaligned.lua` |
+| Sub-account scheduling | `test_sub_account_scan_refresh.lua`, `test_mix_scan_round_robin.lua`, `test_realign_scan_priority.lua`, `test_preserve_incomplete_scan_login.lua` |
+| Order-list and Business harvest | `test_order_filter_scan.lua`, `test_scan_filters_months.lua`, `test_business_*.lua`, `test_ab_order_history.lua` |
+| Amazon Business Analytics | `test_aba_*.lua` |
+| Detail retrieval and incomplete-refresh marker | `test_details_rescan.lua`, `test_incomplete_refresh_dummy.lua`, `test_emit_no_dummies.lua`, `test_login_nil_page.lua` |
+| Transactions, refunds, returns and cancellations | `test_transaction_fields.lua`, `test_summary_adjustments.lua`, `test_refund_reimport.lua`, `test_storno_omit.lua`, `test_partial_return.lua`, `test_full_return_retained_shipping.lua`, `test_floating_ausgleich.lua`, `test_messagelist.lua` |
+
+The wildcard rows refer to every matching `test/test_*.lua` file, so the loop
+above remains the source of truth for running the whole suite.
+
+## Inspecting captured pages
+
+Automated parser tests use synthetic, anonymized HTML directly in the test files,
+so they run in every clean checkout. Real Amazon pages may be stored locally in
+`test/pages/` for selector analysis; that directory is gitignored because those
+pages contain personal data and must never be committed.
 
 To capture a page the way the plugin actually receives it, save the **raw server
 HTML**, not the browser's post-JavaScript DOM:
@@ -57,7 +76,7 @@ scripts, Amazon is rendering it client-side and the plugin can't parse it as-is
   `:length/:get/:children`). `loadPlugin(path)` loads `amazon-orders.lua` into a
   sandbox (stubbing `MM`/`JSON`/`LocalStorage`/`Connection`/`WebBanking`; `io=nil`
   so it behaves like the signed build) and returns its environment table.
-- `test_parse.lua` — the actual assertions over `test/pages/`.
+- `test_parse.lua` — deterministic parser assertions over synthetic HTML.
 - `selftest.lua` — validates the shim against a synthetic page (no real data).
 - `skeleton.py` — stdlib-only HTML structure explorer; prints an indented tree of
   tags/classes/text, skipping `<script>`/`<style>` noise. Handy for
@@ -78,8 +97,16 @@ scripts, Amazon is rendering it client-side and the plugin can't parse it as-is
   `od-line-item-row` totals incl. `Gesamtsumme`, `shippingAddress`,
   `Summe der Erstattung` for refunds). Prefer `data-component` anchors over CSS
   classes — they have been the most stable.
+- **Amazon Business SPA**: the shell exposes
+  `ab-your-orders-anticsrf-token`; order data can come from the Business API
+  response rather than server-rendered cards.
+- **Business Analytics reports** (`/b2b/aba/`): tests cover report scheduling,
+  status/download responses, rollup JSON pagination, `PAST_12_MONTHS`,
+  `CUSTOM_RANGE`, batching and the classic GET year-filter gap path. Synthetic
+  fixtures for these surfaces live in `test/fixtures/`.
 
-See `../CLAUDE.md` for the full layout/architecture write-up.
+See `../CLAUDE.md` for the full layout/architecture write-up and
+`../docs/superpowers/specs/` for the sub-account and switch-auth designs.
 
 ## Constraint
 

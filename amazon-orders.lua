@@ -42,7 +42,7 @@ local webCacheHit=false
 local webCacheState='start'
 local invalidPrice=1e99
 local invalidDate=1e99
-local cacheVersion=20
+local cacheVersion=21
 local debugBuffer={context=''}
 local webCacheLastId=nil
 
@@ -111,6 +111,7 @@ local const={
   incompleteHarvestPurposePrefix="Bitte erneut abrufen",
   incompleteHarvestRef="AMAZON-INCOMPLETE-HARVEST",
   fullReimportStatus="Amazon: Alle Umsätze dieses Kontos in MoneyMoney löschen, danach resetCache in den Notizen setzen und erneut abrufen.",
+  htmlEncoding='UTF-8',
   fixEncoding='latin1',
   residualText='Bestelldifferenz',
   partialReturnNetText='Rücksendekosten',
@@ -679,6 +680,11 @@ function initialSyncSubAccountsNotYetRefreshed()
   if type(refreshed) ~= 'table' then
     return discovered
   end
+  -- The combined MoneyMoney account harvests every discovered sub-account.
+  -- It therefore satisfies the initial-sync requirement on its own.
+  if refreshed[emitAccountKey("mix")] ~= nil then
+    return {}
+  end
   local missing={}
   for _,sub in ipairs(discovered) do
     if type(sub) == 'table' and type(sub.accountNumber) == 'string' then
@@ -901,9 +907,12 @@ end
 
 if configDirty and io ~= nil and io.open ~= nil then
   print('write config...')
-  configFile=io.open(configFileName,"wb")
+  local configFile, configError=io.open(configFileName,"wb")
+  if configFile == nil then
+    error("cannot write config file: "..tostring(configError))
+  end
   configFile:write(JSON():set(config):json())
-  io.close(configFile)
+  configFile:close()
 end
 
 print(((io == nil or io.open == nil) and 'signed ' or '')  .. const.services[1],"plugin loaded...")
@@ -989,11 +998,15 @@ function removeWebCacheLastItem()
   end
 end
 
+function parseAmazonHtml(content)
+  return HTML(content, const.htmlEncoding)
+end
+
 function connectShop(method, url, postContent, postContentType, headers)
   if method == nil then
     return nil
   end
-  return HTML(connectShopRaw(method, url, postContent, postContentType, headers))
+  return parseAmazonHtml(connectShopRaw(method, url, postContent, postContentType, headers))
 end
 
 function connectShopRaw(method, url, postContent, postContentType, headers)
@@ -1071,7 +1084,11 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
     end
     content, charset, mimeType, filename, headers = connection:request(method, url, postContent, postContentType, headers)
     if writeCache then
-      local webFile=io.open(webCacheFolder..'/'..webCacheLastId..'.json',"wb")
+      local metadataPath=webCacheFolder..'/'..webCacheLastId..'.json'
+      local webFile, metadataError=io.open(metadataPath,"wb")
+      if webFile == nil then
+        error("cannot write web cache metadata: "..tostring(metadataError))
+      end
       webFile:write(JSON():set({
         charset=charset,
         mimeType=mimeType,
@@ -1087,14 +1104,21 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
         webCacheState=webCacheState,
       }):json())
       webFile:close()
-      webFile=io.open(webCacheFolder..'/'..webCacheLastId..'.html',"wb")
+      local contentPath=webCacheFolder..'/'..webCacheLastId..'.html'
+      local contentError
+      webFile, contentError=io.open(contentPath,"wb")
+      if webFile == nil then
+        error("cannot write web cache content: "..tostring(contentError))
+      end
       webFile:write(content)
       webFile:close()
       print("webCache id="..webCacheLastId.." written.")
     end
   end
 
-  if not cached and baseurl == connection:getBaseURL():lower():sub(1,#baseurl)  then
+  if content ~= nil
+      and not cached
+      and baseurl == connection:getBaseURL():lower():sub(1,#baseurl) then
     -- work around for deleted cookies, prevent captcha
     connection:setCookie('a-ogbcbff=; Domain='..const.domain..'; Expires=Thu, 01-Jan-1970 00:00:10 GMT; Path=/')
     connection:setCookie('ap-fid=; Domain='..const.domain..'; Expires=Thu, 01-Jan-1970 00:00:10 GMT; Path=/ap/; Secure')
@@ -1178,14 +1202,19 @@ function RegressionTest.run(transactions,regTestPre)
       debugBuffer.print("run regression test")
 
       local master=JSON(transFile:read('*all')):dictionary()
-      transFile.close()
+      transFile:close()
 
       for _,v in pairs(transactions) do
         v.amount=tostring(v.amount)
       end
-      local transFile=io.open(regTestPre.."_transactions.json","wb")
+      local outputPath=regTestPre.."_transactions.json"
+      local outputError
+      transFile, outputError=io.open(outputPath,"wb")
+      if transFile == nil then
+        error("cannot write regression transactions: "..tostring(outputError))
+      end
       transFile:write(JSON():set(transactions):json())
-      transFile.close()
+      transFile:close()
 
       local differences={}
 
@@ -1226,7 +1255,7 @@ function connectShopWithCheck(method, url, postContent, postContentType, headers
   if method == nil then
     return nil
   end
-  local html=HTML(connectShopRaw(method, url, postContent, postContentType, headers))
+  local html=parseAmazonHtml(connectShopRaw(method, url, postContent, postContentType, headers))
   local xpform='//form[@name="signIn"]'
   if html:xpath(xpform):attr("name") ~= '' then
     removeWebCacheLastItem()
@@ -1304,25 +1333,25 @@ function getOrderCode(text)
   return orderCode
 end
 
---- @type orderPosition
--- @field purpose
--- @field amount
--- @field qty
+---@class orderPosition
+---@field purpose string
+---@field amount number
+---@field qty number
 
---- @type order
--- @field #string orderCode
--- @field #number totalSum
--- @field #number orderTotal   total from header
--- @field #number bookingDate  date of order
--- @field #string detailsUrl
--- @field #list<#orderPosition> orderPositions
--- @field #boolean invalidArticles
--- @field #number detailsDate
--- @field #string accountNumber  Amazon-Unterkonto (persönlich / Firma)
--- @field #string shippingAddress  Lieferadresse (auch in purpose)
--- @field #string mandateReference  payment method (Zahlungsart)
--- @field #boolean unbilledCancel  storniert und nicht berechnet
--- @field #list summaryExtras  named Bestellübersicht extras (signed cents)
+---@class order
+---@field orderCode string
+---@field totalSum number?
+---@field orderTotal number
+---@field bookingDate number
+---@field detailsUrl string?
+---@field orderPositions orderPosition[]
+---@field invalidArticles boolean?
+---@field detailsDate number
+---@field accountNumber string?
+---@field shippingAddress string?
+---@field mandateReference string?
+---@field unbilledCancel boolean?
+---@field summaryExtras table[]?
 
 --- @function utf8CharLen
 -- Length in bytes of the UTF-8 character starting at index i, or nil if invalid.
@@ -1543,8 +1572,14 @@ function makeFloatingBalanceTransaction(amount, since, now, accountNumber)
   }
 end
 
+function isCombinedInitialSyncDetailsFetch(accountNumber)
+  return isCombinedMoneyMoneyAccount(accountNumber)
+    and isPendingInitialSync()
+    and not isAccountSetupSession()
+end
+
 function pendingDetailsCountForRefresh(accountNumber, now)
-  if isPendingInitialSync() and not isAccountSetupSession() and isCombinedMoneyMoneyAccount(accountNumber) then
+  if isCombinedInitialSyncDetailsFetch(accountNumber) then
     return #ordersNeedingDetailsInCache(now)
   end
   return #ordersNeedingDetailsForAccount(accountNumber, now)
@@ -1558,13 +1593,23 @@ function hasActiveIncompleteSubAccountScan()
   if state.incomplete == true then
     return true
   end
-  if state.phase == 'running' or state.phase == 'await_mfa' then
-    return true
-  end
-  return false
+  return state.phase == 'running' or state.phase == 'await_mfa'
 end
 
-function incompleteRefreshNoticePurpose(accountNumber, now)
+function detailsFetchWasTruncated(fetchState)
+  return type(fetchState) == 'table'
+    and type(fetchState.pendingAtStart) == 'number'
+    and type(fetchState.counter) == 'number'
+    and fetchState.pendingAtStart > fetchState.counter
+end
+
+function detailsFetchFailed(fetchState)
+  return type(fetchState) == 'table'
+    and type(fetchState.failed) == 'number'
+    and fetchState.failed > 0
+end
+
+function incompleteRefreshNoticePurpose(accountNumber, now, harvest, fetchState)
   local parts={}
   local function note(condition, text)
     if condition then
@@ -1573,13 +1618,19 @@ function incompleteRefreshNoticePurpose(accountNumber, now)
   end
   if hasActiveIncompleteSubAccountScan() then
     note(true, "Abruf der Unterkonten unvollständig")
-  elseif isPendingInitialSync() and not isAccountSetupSession() and not isSubAccountScanComplete() then
+  elseif isPendingInitialSync() and not isAccountSetupSession()
+      and not isInitialSyncHarvestDone()
+      and not isSubAccountScanComplete() then
     note(true, "Erstimport: Bestellhistorie noch nicht vollständig abgerufen")
   end
-  note(abaFullHarvestBatchHasMore(), "Business-Berichte noch nicht vollständig")
-  note(isAbaRollupHarvestIncomplete(), "Business-Bericht Pagination unvollständig")
+  if harvest then
+    note(abaFullHarvestBatchHasMore(), "Business-Berichte noch nicht vollständig")
+    note(isAbaRollupHarvestIncomplete(), "Business-Bericht Pagination unvollständig")
+  end
   local pendingDetails=pendingDetailsCountForRefresh(accountNumber, now)
-  note(pendingDetails > 0, tostring(pendingDetails).." Bestelldetails offen")
+  note(pendingDetails > 0
+      and (detailsFetchWasTruncated(fetchState) or detailsFetchFailed(fetchState)),
+    tostring(pendingDetails).." Bestelldetails offen")
   if #parts == 0 then
     return nil
   end
@@ -1599,11 +1650,11 @@ function makeIncompleteHarvestDummy(now, purpose)
   }
 end
 
-function appendIncompleteHarvestDummy(transactions, accountNumber, now)
+function appendIncompleteHarvestDummy(transactions, accountNumber, now, harvest, fetchState)
   if isAccountSetupSession() then
     return false
   end
-  local purpose=incompleteRefreshNoticePurpose(accountNumber, now)
+  local purpose=incompleteRefreshNoticePurpose(accountNumber, now, harvest, fetchState)
   if purpose == nil then
     return false
   end
@@ -1695,19 +1746,10 @@ function orderDetailsHasReturnActivity(orderDetails)
   ):length() > 0 then
     return true
   end
-  -- Post-return layout: priced items remain but grand total is zero and a credit row exists.
-  local total=getTotalsFromDetails(orderDetails)
-  if total == 0
-      and orderDetails:xpath('.//*[@data-component="unitPrice"]'):length() > 0
-      and orderDetails:xpath(
-        './/div[contains(@class,"od-line-item-row")][.//*[contains(@class,"od-line-item-row-label")][contains(.,"Gutschein")]]'
-      ):length() > 0 then
-    return true
-  end
   return false
 end
 
---- Post-return layout without returnedPositions: total zero and credit row imply full gross return.
+--- Explicit full-return layout without returnedPositions: total zero implies full gross return.
 function orderImpliesFullReturnGross(order)
   if type(order) ~= 'table' or order.returnActivity ~= true then
     return false
@@ -1720,7 +1762,8 @@ function orderImpliesFullReturnGross(order)
     return false
   end
   local total=tonumber(order.orderTotal)
-  return total == 0 and adjustmentCreditCents(order) > 0
+  -- The credit is inferred after this check from retained return costs.
+  return total == 0
 end
 
 --- Gross value of returned goods (returnedPositions, else purchase lines on full-return layout only).
@@ -2404,10 +2447,16 @@ end
 --
 function getOrderDetails(order)
   debugBuffer.context=order.orderCode
+  local parsed=false
   if order.detailsUrl == nil or order.detailsUrl == "" then
     order.detailsUrl=buildDetailsUrl(order.orderCode)
   end
   local html=connectShopWithCheck("GET",order.detailsUrl)
+  if html == nil then
+    debugBuffer.print("getOrderDetails request failed",order.orderCode)
+    debugBuffer.context=''
+    return false
+  end
   local orderDetails=html:xpath('//div[contains(@id,"orderDetails")]')
   if orderDetails:text() ~= "" then
     local hadPositionsBeforeParse=orderHasPositions(order)
@@ -2449,10 +2498,12 @@ function getOrderDetails(order)
     order.mandateReference=getPaymentMethod(orderDetails)
     order.detailsParsed=true
     scheduleNextDetailsDate(order, os.time())
+    parsed=true
   else
     debugBuffer.print("getOrderDetails no details",order.orderCode)
   end
   debugBuffer.context=''
+  return parsed
 end
 
 --- @function getOrdersFromSummary
@@ -2704,19 +2755,40 @@ function markOrderFilterCacheIfComplete(orderFilterCache, orderFilterVal, foundN
   return true
 end
 
+function setOrderListHarvestIncomplete(subAccountLabel, incomplete)
+  if LocalStorage == nil or type(subAccountLabel) ~= 'string' or subAccountLabel == '' then
+    return
+  end
+  if type(LocalStorage.orderListHarvestIncompleteByAccount) ~= 'table' then
+    LocalStorage.orderListHarvestIncompleteByAccount={}
+  end
+  if incomplete then
+    LocalStorage.orderListHarvestIncompleteByAccount[subAccountLabel]=true
+  else
+    LocalStorage.orderListHarvestIncompleteByAccount[subAccountLabel]=nil
+  end
+end
+
+function isOrderListHarvestIncomplete(subAccountLabel)
+  local states=LocalStorage and LocalStorage.orderListHarvestIncompleteByAccount
+  return type(states) == 'table' and states[subAccountLabel] == true
+end
+
 --- @function scanOrderFilterPages
 -- Walks the current order-list page and its "next" links (no filter submit).
 -- Mutates global html when paginating. May mark orderFilterCache[filterVal].
--- @return foundOrders, foundNewOrders, newCount
+-- @return foundOrders, foundNewOrders, newCount, paginationComplete
 function scanOrderFilterPages(orderFilterVal, orderCache, orderFilterCache, subAccountLabel, kind)
   local foundOrders=false
   local foundNewOrders=false
   local newCountTotal=0
   if html == nil then
     print("scanOrderFilterPages: html is nil, skip filter", tostring(orderFilterVal))
-    return foundOrders, foundNewOrders, newCountTotal
+    setOrderListHarvestIncomplete(subAccountLabel, true)
+    return foundOrders, foundNewOrders, newCountTotal, false
   end
   local foundEnd=false
+  local paginationComplete=true
   repeat
     local pageFoundOrders, pageFoundNewOrders, newCount=mergeOrdersFromPage(html, orderCache, subAccountLabel, kind)
     if pageFoundOrders then
@@ -2731,6 +2803,8 @@ function scanOrderFilterPages(orderFilterVal, orderCache, orderFilterCache, subA
       local nextHtml=connectShop(nextPage:click())
       if nextHtml == nil then
         print("scanOrderFilterPages: next page nil, stop pagination")
+        setOrderListHarvestIncomplete(subAccountLabel, true)
+        paginationComplete=false
         foundEnd=true
       else
         html=nextHtml
@@ -2739,8 +2813,10 @@ function scanOrderFilterPages(orderFilterVal, orderCache, orderFilterCache, subA
       foundEnd=true
     end
   until foundEnd
-  markOrderFilterCacheIfComplete(orderFilterCache, orderFilterVal, foundNewOrders)
-  return foundOrders, foundNewOrders, newCountTotal
+  if paginationComplete then
+    markOrderFilterCacheIfComplete(orderFilterCache, orderFilterVal, foundNewOrders)
+  end
+  return foundOrders, foundNewOrders, newCountTotal, paginationComplete
 end
 
 function absoluteAmazonUrl(url)
@@ -2939,6 +3015,10 @@ function openAccountSwitcherEmbed()
     print("account switcher link not in DOM, using OpenID picker URL")
   end
   local signin=connectShop("GET", absoluteAmazonUrl(switchHref))
+  if signin == nil then
+    print("account switcher sign-in page unavailable")
+    return nil
+  end
   if signin:xpath('//form[contains(@class,"cvf-widget-form-account-switcher")]'):length() > 0 then
     return signin
   end
@@ -2997,12 +3077,22 @@ function switchAmazonSubAccount(option)
   return finishAccountSwitchLanding(html, {switchKind=option.kind})
 end
 
+function isAmazonMfaPage(htmlNode)
+  return htmlNode ~= nil
+    and (htmlNode:xpath('//form[@id="auth-mfa-form"]'):length() > 0
+      or htmlNode:xpath('//*[@name="otpCode"]'):length() > 0)
+end
+
+function isAmazonPasswordSignInPage(htmlNode)
+  return htmlNode ~= nil
+    and htmlNode:xpath('//form[contains(@name,"signIn")]//*[@name="password"]'):length() > 0
+end
+
 function mfaChallengeFromHtml(htmlNode)
   if htmlNode == nil then
     return nil
   end
-  if htmlNode:xpath('//form[@id="auth-mfa-form"]'):length() == 0
-      and htmlNode:xpath('//*[@name="otpCode"]'):length() == 0 then
+  if not isAmazonMfaPage(htmlNode) then
     return nil
   end
   local mfatext=htmlNode:xpath('//form[@id="auth-mfa-form"]//p'):text()
@@ -3101,14 +3191,10 @@ function finishAccountSwitchLanding(htmlNode, opts)
 end
 
 function switchAuthBlockReason(htmlNode)
-  if htmlNode == nil then
-    return nil
-  end
-  if htmlNode:xpath('//form[@id="auth-mfa-form"]'):length() > 0
-      or htmlNode:xpath('//*[@name="otpCode"]'):length() > 0 then
+  if isAmazonMfaPage(htmlNode) then
     return "MFA"
   end
-  if htmlNode:xpath('//form[contains(@name,"signIn")]//*[@name="password"]'):length() > 0 then
+  if isAmazonPasswordSignInPage(htmlNode) then
     return "interactive login"
   end
   return nil
@@ -3560,6 +3646,7 @@ function clearAbaFullHarvestBatch()
   LocalStorage.abaFullHarvestJobIndex=nil
   LocalStorage.abaFullHarvestHasMore=nil
   LocalStorage.abaFullHarvestHarvestSince=nil
+  clearAbaRollupHarvestIncomplete()
 end
 
 function completeAbaFullHarvestBatch(refreshSince)
@@ -3624,8 +3711,12 @@ function abaFullHarvestBatchHasMore()
   return LocalStorage ~= nil and LocalStorage.abaFullHarvestHasMore == true
 end
 
+function abaHarvestStillOpen()
+  return abaFullHarvestBatchHasMore() or isAbaRollupHarvestIncomplete()
+end
+
 function isFullAccountHarvestComplete()
-  return isSubAccountScanComplete() and not abaFullHarvestBatchHasMore()
+  return isSubAccountScanComplete() and not abaHarvestStillOpen()
 end
 
 function countBusinessOrdersWhere(predicate, now)
@@ -3730,8 +3821,13 @@ function ensureAbaFullHarvestBatch(refreshSince, now)
     return
   end
   ensureAbaRollupPaginationUpgrade()
-  if isIncrementalMoneyMoneyRefresh(refreshSince, now) then
+  if isIncrementalMoneyMoneyRefresh(refreshSince, now) and not abaHarvestStillOpen() then
     clearAbaFullHarvestBatch()
+    return
+  end
+  if abaHarvestStillOpen()
+      and type(LocalStorage.abaFullHarvestJobs) == 'table'
+      and type(LocalStorage.abaFullHarvestHarvestSince) == 'number' then
     return
   end
   if type(LocalStorage.abaFullHarvestHarvestSince) ~= 'number'
@@ -3824,9 +3920,13 @@ end
 
 function hasMoreOrderListFiltersToHarvest(subAccountLabel, refreshSince, now)
   now=now or os.time()
+  if isOrderListHarvestIncomplete(subAccountLabel) then
+    return true
+  end
   local orderFilterCache=filterCacheForSubAccount(subAccountLabel)
   for _,item in ipairs(enumerateYourOrdersGetFilters(refreshSince, now)) do
-    if shouldHarvestOrderFilter(item.val, orderFilterCache, 0, refreshSince, now) then
+    if not isRecentOrderFilter(item.val)
+        and shouldHarvestOrderFilter(item.val, orderFilterCache, 0, refreshSince, now) then
       return true
     end
   end
@@ -3849,7 +3949,8 @@ end
 
 function subAccountHarvestHasMore(label, kind, refreshSince, now)
   if kind == 'business' then
-    return hasMoreBusinessOrdersToHarvest(label, refreshSince, now)
+    return isOrderListHarvestIncomplete(label)
+      or hasMoreBusinessOrdersToHarvest(label, refreshSince, now)
   end
   return hasMoreOrderListFiltersToHarvest(label, refreshSince, now)
 end
@@ -3862,6 +3963,9 @@ function shouldRunAccountHarvest(refreshSince, now)
     return false
   end
   if isPendingInitialSync() and not isInitialSyncHarvestDone() then
+    return true
+  end
+  if abaHarvestStillOpen() then
     return true
   end
   if isPendingInitialSync() then
@@ -4246,7 +4350,8 @@ function isAmazonSignInPageHtml(raw)
   if type(raw) ~= 'string' or raw == '' then
     return false
   end
-  return switchAuthBlockReason(HTML(raw)) ~= nil
+  local page=parseAmazonHtml(raw)
+  return isAmazonMfaPage(page) or isAmazonPasswordSignInPage(page)
 end
 
 function isAbaLandingReady(raw)
@@ -4716,17 +4821,14 @@ function runOrderFilterHarvest(orderFilterVal, statusLabel, orderFilterCache, su
     local page=opts.loadPage(orderFilterVal)
     if page == nil then
       print(opts.failLog or "filter load failed", orderFilterVal)
+      setOrderListHarvestIncomplete(subAccountLabel, true)
       return 0
     end
     html=page
   end
   if opts.requireReady and not orderListPageReady(html) then
     print(opts.notReadyLog or "filter not ready", orderFilterVal)
-    if opts.markIncompleteOnNotReady
-        and not isRecentOrderFilter(orderFilterVal)
-        and not isAmazonBusinessOrdersSpa(html) then
-      markOrderFilterCacheIfComplete(orderFilterCache, orderFilterVal, false)
-    end
+    setOrderListHarvestIncomplete(subAccountLabel, true)
     return 0
   end
   local orderCache=ensureOrderCache()
@@ -4735,18 +4837,6 @@ function runOrderFilterHarvest(orderFilterVal, statusLabel, orderFilterCache, su
     print("harvested "..newCount.." new order(s) from filter "..orderFilterVal)
   end
   return newCount
-end
-
-function markRemainingOrderFilters(orderFilterCache, filters, fromIndex)
-  if type(orderFilterCache) ~= 'table' or type(filters) ~= 'table' then
-    return
-  end
-  for i=fromIndex, #filters do
-    local item=filters[i]
-    if type(item) == 'table' and type(item.val) == 'string' then
-      markOrderFilterCacheIfComplete(orderFilterCache, item.val, false)
-    end
-  end
 end
 
 --- @function collectOrdersViaYourOrdersGet
@@ -4773,7 +4863,6 @@ function collectOrdersViaYourOrdersGet(subAccountLabel, kind, refreshSince, opts
   local getHarvestOpts={
     loadPage=loadYourOrdersFilterPage,
     requireReady=true,
-    markIncompleteOnNotReady=true,
     failLog="GET timeFilter failed",
     notReadyLog="GET timeFilter not ready",
   }
@@ -4786,10 +4875,8 @@ function collectOrdersViaYourOrdersGet(subAccountLabel, kind, refreshSince, opts
         unreadyStreak=0
       else
         unreadyStreak=unreadyStreak+1
-        markOrderFilterCacheIfComplete(orderFilterCache, item.val, false)
         if unreadyStreak >= const.getFilterUnreadyHorizon then
           print("GET timeFilter unready horizon; skip remaining year filters")
-          markRemainingOrderFilters(orderFilterCache, filters, i+1)
           break
         end
       end
@@ -4807,9 +4894,11 @@ end
 -- Scrapes order-history filters for the currently active Amazon sub-account.
 -- @return newCount, errString
 function collectOrdersFromOrderList(subAccountLabel, kind, refreshSince)
+  setOrderListHarvestIncomplete(subAccountLabel, false)
   enterOrderList()
   if html == nil then
     print("collectOrdersFromOrderList: no order list html for", tostring(subAccountLabel))
+    setOrderListHarvestIncomplete(subAccountLabel, true)
     return 0, nil
   end
   if isAmazonBusinessOrdersSpa(html) and not orderListPageReady(html) then
@@ -4914,6 +5003,22 @@ function subAccountKindDisplayLabel(kind)
     return kind
   end
   return 'Unterkonto'
+end
+
+function combinedAccountListLabel()
+  local discovered=LocalStorage and LocalStorage.discoveredSubAccounts
+  if type(discovered) ~= 'table' then
+    return const.combinedAccountListName
+  end
+  local personal=findSubAccountByKind(discovered, 'personal')
+  local business=findSubAccountByKind(discovered, 'business')
+  if type(personal) ~= 'table' or type(personal.label) ~= 'string'
+      or personal.label == ''
+      or type(business) ~= 'table' or type(business.label) ~= 'string'
+      or business.label == '' then
+    return const.combinedAccountListName
+  end
+  return personal.label.." + "..business.label
 end
 
 function listAccountDisplayLabel(accountNumber, discoveredSub)
@@ -5096,32 +5201,34 @@ function sortPendingOrdersForDetails(pending)
   return pending
 end
 
-function ordersNeedingDetailsInCache(now)
+function collectOrdersNeedingDetails(predicate)
   local pending={}
+  if type(predicate) ~= 'function' then
+    error("collectOrdersNeedingDetails requires a predicate")
+  end
   if type(LocalStorage) ~= 'table' or type(LocalStorage.OrderCache) ~= 'table' then
     return pending
   end
   for orderCode,order in pairs(LocalStorage.OrderCache) do
-    if type(order) == 'table'
-        and type(order.detailsDate) == 'number'
-        and order.detailsDate < now then
+    if predicate(order) then
       pending[#pending+1]={orderCode=orderCode, order=order}
     end
   end
   return sortPendingOrdersForDetails(pending)
 end
 
+function ordersNeedingDetailsInCache(now)
+  return collectOrdersNeedingDetails(function(order)
+    return type(order) == 'table'
+      and type(order.detailsDate) == 'number'
+      and order.detailsDate < now
+  end)
+end
+
 function ordersNeedingDetailsForAccount(accountNumber, now)
-  local pending={}
-  if type(LocalStorage) ~= 'table' or type(LocalStorage.OrderCache) ~= 'table' then
-    return pending
-  end
-  for orderCode,order in pairs(LocalStorage.OrderCache) do
-    if orderNeedsDetailsForAccount(order, now, accountNumber) then
-      pending[#pending+1]={orderCode=orderCode, order=order}
-    end
-  end
-  return sortPendingOrdersForDetails(pending)
+  return collectOrdersNeedingDetails(function(order)
+    return orderNeedsDetailsForAccount(order, now, accountNumber)
+  end)
 end
 
 function clearSubAccountScanState()
@@ -5196,8 +5303,8 @@ function resolveSubAccountScanCache()
     LocalStorage.subAccountScan=nil
     return nil
   end
-  if abaFullHarvestBatchHasMore() then
-    print("sub-account scan done; ABA batch continues on next refresh")
+  if abaHarvestStillOpen() then
+    print("sub-account scan done; ABA harvest continues on next refresh")
     LocalStorage.subAccountScan=nil
     return nil
   end
@@ -5247,17 +5354,21 @@ function continueMfaSubAccountSwitch(state, otpCode)
     return "Amazon Kontowechsel nach 2FA fehlgeschlagen: "..land.error
   end
   MM.printStatus("Amazon: Unterkonto \""..want.label.."\"")
-  local harvestErr=addHarvestedOrders(state, want.label, want.kind)
+  local advance, harvestErr=harvestAndAdvanceSubAccountScan(state, want.label, want.kind)
   if harvestErr ~= nil then
     return harvestErr
   end
-  if state.harvestHasMore then
+  if advance == 'pause' then
     state.incomplete=true
     state.phase='running'
     print("sub-account harvest batch paused after MFA; more orders for", tostring(want.label))
     return nil
   end
-  state.index=state.index+1
+  if advance == 'done' then
+    completeSubAccountScan(state, false)
+    print("sub-account scan done, new orders=", state.totalNew)
+    return nil
+  end
   state.phase='running'
   return runSubAccountScanLoop()
 end
@@ -5351,12 +5462,105 @@ function beginSubAccountScanPlan(options, priorityKind)
     totalNew=0,
     incomplete=false,
     loginCounter=LocalStorage.loginCounter,
+    harvestedPlanThisRefresh={},
   }
+end
+
+function isSubAccountPlanEntryDone(entry)
+  return type(entry) == 'table' and entry.done == true
+end
+
+function firstOpenSubAccountPlanIndex(state)
+  if type(state) ~= 'table' or type(state.plan) ~= 'table' then
+    return 1
+  end
+  for i, entry in ipairs(state.plan) do
+    if not isSubAccountPlanEntryDone(entry) then
+      return i
+    end
+  end
+  return #state.plan + 1
+end
+
+function shouldRoundRobinSubAccountBatches()
+  return LocalStorage ~= nil and LocalStorage.harvestPriorityKind == nil
+end
+
+function nextRoundRobinPlanIndex(state, harvestedThisRefresh)
+  if not shouldRoundRobinSubAccountBatches() then
+    return nil
+  end
+  if type(state) ~= 'table' or type(state.plan) ~= 'table' or #state.plan < 2 then
+    return nil
+  end
+  if type(harvestedThisRefresh) ~= 'table' then
+    harvestedThisRefresh={}
+  end
+  local n=#state.plan
+  local idx=state.index
+  if type(idx) ~= 'number' or idx < 1 then
+    idx=1
+  end
+  for step=1, n-1 do
+    local i=((idx - 1 + step) % n) + 1
+    if not isSubAccountPlanEntryDone(state.plan[i]) and harvestedThisRefresh[i] ~= true then
+      return i
+    end
+  end
+  return nil
+end
+
+--- After one harvest batch: continue another sub-account, pause, or finish the plan.
+function advanceSubAccountScanAfterBatch(state, harvestedThisRefresh)
+  if type(state) ~= 'table' then
+    return 'pause'
+  end
+  if type(harvestedThisRefresh) ~= 'table' then
+    harvestedThisRefresh={}
+  end
+  if type(state.index) == 'number' then
+    harvestedThisRefresh[state.index]=true
+  end
+  if state.harvestHasMore then
+    state.incomplete=true
+    local nextIndex=nextRoundRobinPlanIndex(state, harvestedThisRefresh)
+    if nextIndex == nil then
+      state.index=firstOpenSubAccountPlanIndex(state)
+      return 'pause'
+    end
+    state.index=nextIndex
+    return 'continue'
+  end
+  local current=state.plan and state.plan[state.index]
+  if type(current) == 'table' then
+    current.done=true
+  end
+  state.index=firstOpenSubAccountPlanIndex(state)
+  if type(state.plan) ~= 'table' or state.index > #state.plan then
+    return 'done'
+  end
+  if harvestedThisRefresh[state.index] == true then
+    state.incomplete=true
+    return 'pause'
+  end
+  return 'continue'
+end
+
+function harvestAndAdvanceSubAccountScan(state, label, kind)
+  local harvestErr=addHarvestedOrders(state, label, kind)
+  if harvestErr ~= nil then
+    return nil, harvestErr
+  end
+  if type(state.harvestedPlanThisRefresh) ~= 'table' then
+    state.harvestedPlanThisRefresh={}
+  end
+  return advanceSubAccountScanAfterBatch(state, state.harvestedPlanThisRefresh), nil
 end
 
 --- @function runSubAccountScanLoop
 -- Switches+scrapes remaining plan entries. May return an MFA challenge table.
 -- Hard switch / ABA failures return an error string (no silent skip).
+-- Mix (no harvestPriorityKind): one batch per sub-account per refresh, then pause.
 function runSubAccountScanLoop()
   local state=LocalStorage.subAccountScan
   if state == nil then
@@ -5387,16 +5591,23 @@ function runSubAccountScanLoop()
       return "Amazon Kontowechsel fehlgeschlagen ("..tostring(match.label).."): "..result.error
     end
     MM.printStatus("Amazon: Unterkonto \""..match.label.."\"")
-    local harvestErr=addHarvestedOrders(state, match.label, match.kind)
+    local advance, harvestErr=harvestAndAdvanceSubAccountScan(
+      state, match.label, match.kind)
     if harvestErr ~= nil then
       return harvestErr
     end
-    if state.harvestHasMore then
-      state.incomplete=true
-      print("sub-account harvest batch paused; more orders for", tostring(match.label))
+    if advance == 'pause' then
+      local open=state.plan[state.index]
+      local openLabel=(type(open) == 'table' and open.label) or match.label
+      print("sub-account harvest batch paused; more orders for", tostring(openLabel))
       return nil
     end
-    state.index=state.index+1
+    if advance == 'continue' and state.harvestHasMore then
+      print("sub-account harvest batch paused; more orders for", tostring(match.label),
+        "; continuing other sub-accounts")
+    elseif advance == 'done' then
+      break
+    end
   end
   completeSubAccountScan(state, false)
   print("sub-account scan done, new orders=", state.totalNew)
@@ -5503,6 +5714,10 @@ function scanAllAmazonSubAccounts()
   if cachedTotal ~= nil then
     return cachedTotal, nil
   end
+  local existing=LocalStorage and LocalStorage.subAccountScan
+  if type(existing) == 'table' then
+    existing.harvestedPlanThisRefresh={}
+  end
   local r=continueSubAccountScan(nil)
   if type(r) == 'table' and r.title ~= nil then
     clearSubAccountScanState()
@@ -5524,7 +5739,13 @@ function getLastDayOfPeriod(period)
   end
   year=tonumber(year)
   month=tonumber(month)
+  if year == nil or month == nil then
+    error("invalid period: "..tostring(period))
+  end
   local day=const.daysByMonth[month]
+  if day == nil then
+    error("invalid period month: "..tostring(period))
+  end
   if month == 2 and (year%4) == 0 and ((year%400)==0 or (year%100)~=0) then
     day=29
   end
@@ -5570,6 +5791,40 @@ function applyAccountAttribute(k, v, allowConfigStrings)
     print("const k=",v)
     const[canonical]=v
   end
+end
+
+function failMissingLoginPage(stage)
+  local message="Amazon: Anmeldung ohne Antwortseite"
+  if type(stage) == 'string' and stage ~= '' then
+    message=message.." ("..stage..")"
+  end
+  MM.printStatus(message)
+  print(message)
+  return message
+end
+
+function isCredentialRejectionMessage(message)
+  if type(message) ~= 'string' then
+    return false
+  end
+  local lower=message:lower()
+  local markers={
+    "incorrect password",
+    "password is incorrect",
+    "invalid user id or password",
+    "invalid username or password",
+    "wrong password",
+    "falsches passwort",
+    "passwort ist falsch",
+    "ungültige anmeldedaten",
+    "ungueltige anmeldedaten",
+  }
+  for _,marker in ipairs(markers) do
+    if lower:find(marker,1,true) then
+      return true
+    end
+  end
+  return false
 end
 
 function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
@@ -5636,14 +5891,21 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     webCacheState="login"..loginLoops
     print("login "..loginLoops..". try")
 
+    if html == nil then
+      return failMissingLoginPage("Start")
+    end
+
     -- $x('//div[@id="auth-error-message-box"]')
     local authError=html:xpath('//div[@id="auth-error-message-box"]'):text()
 
     if authError ~= '' then
       MM.printStatus(authError)
-      print('login failed, clean cookies text')
-      LocalStorage.cookies=nil
-      return LoginFailed
+      if isCredentialRejectionMessage(authError) then
+        print('login failed, clean cookies text')
+        LocalStorage.cookies=nil
+        return LoginFailed
+      end
+      return "Amazon: "..authError
     end
 
 
@@ -5665,7 +5927,11 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         MM.printStatus("Warte auf Anmeldebestätigung, noch "
           ..tostring(math.floor(waitUntil-os.time())).." Sekunden")
         MM.sleep(3)
-        poll=connectShop(authLink:submit()):xpath('//input[@name="transactionApprovalStatus"]'):attr('value')
+        local pollPage=connectShop(authLink:submit())
+        if pollPage == nil then
+          return failMissingLoginPage("Anmeldebestätigung")
+        end
+        poll=pollPage:xpath('//input[@name="transactionApprovalStatus"]'):attr('value')
         print("poll="..poll)
       until( poll == 'TransactionCompleted' or waitUntil<os.time())
       enterOrderList()
@@ -5685,12 +5951,18 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       print('Account selector arbToken='..arbToken)
       local embed=accountSwitcherEmbedUrl(arbToken, cvfEmbedVersionQuery(html))
       html=connectShop('GET', absoluteAmazonUrl(embed))
+      if html == nil then
+        return failMissingLoginPage("Kontowahl")
+      end
       leaveLoginLoop=false
       -- work-a-round simple add new login
       local signInLink=html:xpath('//a[@id="cvf-account-switcher-add-accounts-link"]'):attr('href')
       print('signInLink='..signInLink)
       if signInLink ~= '' then
         html=connectShop('GET',signInLink)
+        if html == nil then
+          return failMissingLoginPage("Zusätzliches Konto")
+        end
       end
     end
 
@@ -5730,6 +6002,9 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         end
       end)
       html=connectShop(authSelect:submit())
+      if html == nil then
+        return failMissingLoginPage("Authentifizierungsmethode")
+      end
     end
 
     -- Captcha
@@ -5779,6 +6054,9 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       if number == 0 then
         -- no selectable options
         html= connectShop(html:xpath('//form[@name="claimspicker"]'):submit())
+        if html == nil then
+          return failMissingLoginPage("Bestätigungscode")
+        end
         if html:xpath('//form[@action="verify"]'):text() ~= '' then
           return {
             title=html:xpath('//form[@action="verify"]//div[1]//div[1]'):text(),
@@ -5797,6 +6075,9 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
           }
         else
           html= connectShop(html:xpath('//form[@name="claimspicker"]'):submit())
+          if html == nil then
+            return failMissingLoginPage("Bestätigungsmethode")
+          end
           if html:xpath('//form[@action="verify"]'):text() ~= '' then
             return {
               title=html:xpath('//form[@action="verify"]//div[1]//div[1]'):text(),
@@ -5815,6 +6096,9 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       if config.debug then print("passcode 2. part") end
       html:xpath('//*[@name="code"]'):attr("value",credentials[1])
       html= connectShop(html:xpath('//form[@action="verify"]'):submit())
+      if html == nil then
+        return failMissingLoginPage("Bestätigungscode")
+      end
     end
 
     -- 2.FA
@@ -5836,6 +6120,9 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         -- checkbox
         html:xpath('//*[@name="rememberDevice"]'):attr('checked','checked')
         html= connectShop(html:xpath('//*[@id="auth-mfa-form"]'):submit())
+        if html == nil then
+          return failMissingLoginPage("Zwei-Faktor-Authentifizierung")
+        end
         mfa1run=true
       end
     end
@@ -5853,6 +6140,9 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       end
       html:xpath('//*[@name="password"]'):attr("value",secPassword)
       html= connectShop(html:xpath(xpform):submit())
+      if html == nil then
+        return failMissingLoginPage("Benutzername und Passwort")
+      end
     end
 
     if html:xpath('//a[@id="ap-account-fixup-phone-skip-link"]'):attr('id') ~= '' then
@@ -5877,9 +6167,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       print("name="..aName)
     end
   else
-    print('login failed, clean cookies')
-    LocalStorage.cookies=nil
-    return LoginFailed
+    return failMissingLoginPage("Unerwartete Antwort")
   end
 
   -- Account search: discover sub-accounts only (no order harvest / no Umsätze).
@@ -5965,7 +6253,7 @@ function ListAccounts (knownAccounts)
   local enableInitialSync=type(LocalStorage.lastHarvestSince) ~= 'number'
   beginAccountSetupSession(enableInitialSync)
   local owner=secUsername or resolveListAccountsDisplayName()
-  local accounts={makeListAccountEntry(const.combinedAccountListName, owner, "mix", knownAccounts)}
+  local accounts={makeListAccountEntry(combinedAccountListLabel(), owner, "mix", knownAccounts)}
 
   local discovered=LocalStorage.discoveredSubAccounts
   if type(discovered) == 'table' and #discovered > 1 then
@@ -5977,16 +6265,12 @@ function ListAccounts (knownAccounts)
   return accounts
 end
 
-function shouldFetchOrderDetails(harvest, refundWatch)
-  return harvest or refundWatch > 0 or isPendingInitialSync()
-end
-
 function fetchOrderDetailsBatch(pendingDetails, now, detailsLimit, fetchState)
+  if type(fetchState) ~= 'table' then
+    error("fetchOrderDetailsBatch requires fetchState")
+  end
   if type(pendingDetails) ~= 'table' or #pendingDetails == 0 then
     return fetchState
-  end
-  if type(fetchState) ~= 'table' then
-    fetchState={counter=0}
   end
   if html == nil then
     html=connectShop("GET",baseurl)
@@ -6011,63 +6295,79 @@ function fetchOrderDetailsBatch(pendingDetails, now, detailsLimit, fetchState)
     local orderCode=entry.orderCode
     local order=entry.order
     if not orderBlacklist[orderCode] then
-      MM.printStatus(fetchState.counter.."/"..detailsLimit, "Bestelldetails für", orderCode)
-      getOrderDetails(order)
+      MM.printStatus(fetchState.counter.."/"..detailsLimit
+        .." Bestelldetails für "..tostring(orderCode))
+      if getOrderDetails(order) ~= true then
+        fetchState.failed=fetchState.failed+1
+      end
     else
-      MM.printStatus(fetchState.counter.."/"..detailsLimit, "Bestellung gesperrt:", orderCode)
+      MM.printStatus(fetchState.counter.."/"..detailsLimit
+        .." Bestellung gesperrt: "..tostring(orderCode))
       scheduleNextDetailsDate(order, now)
     end
   end
   return fetchState
 end
 
-function fetchPendingOrderDetails(accountNumber, now, harvest, refundWatch)
-  if not shouldFetchOrderDetails(harvest, refundWatch) then
-    return
-  end
-  local detailsLimit=config.limitOrders
-  local fetchState={counter=0}
-
-  if isCombinedMoneyMoneyAccount(accountNumber) and isPendingInitialSync() and not isAccountSetupSession() then
-    local discovered=LocalStorage and LocalStorage.discoveredSubAccounts
-    if type(discovered) == 'table' and #discovered > 0 then
-      for _, sub in ipairs(discovered) do
-        if type(sub) == 'table' and type(sub.kind) == 'string' and sub.kind ~= '' then
-          local sessionErr=ensureAmazonSubAccountSession(sub.kind)
-          if sessionErr ~= nil then
-            MM.printStatus("Amazon: "..sessionErr)
-            return
-          end
-          local subAccountNumber=subAccountNumberForKind(sub.kind)
-          fetchOrderDetailsBatch(
-            ordersNeedingDetailsForAccount(subAccountNumber, now),
-            now,
-            detailsLimit,
-            fetchState)
-          if fetchState.counter >= detailsLimit then
-            return
-          end
-        end
-      end
-      return
-    end
-    fetchOrderDetailsBatch(ordersNeedingDetailsInCache(now), now, detailsLimit, fetchState)
-    return
-  end
-
-  local wantKind=harvestPriorityKindFromAccountNumber(accountNumber)
-  if wantKind ~= nil then
-    local sessionErr=ensureAmazonSubAccountSession(wantKind)
-    if sessionErr ~= nil then
-      MM.printStatus("Amazon: "..sessionErr)
-      return
-    end
+function fetchDetailsInSubAccountSession(kind, accountNumber, now, detailsLimit, fetchState)
+  local sessionErr=ensureAmazonSubAccountSession(kind)
+  if sessionErr ~= nil then
+    MM.printStatus("Amazon: "..sessionErr)
+    return sessionErr
   end
   fetchOrderDetailsBatch(
     ordersNeedingDetailsForAccount(accountNumber, now),
     now,
     detailsLimit,
     fetchState)
+  return nil
+end
+
+function fetchPendingOrderDetails(accountNumber, now)
+  local fetchState={counter=0, pendingAtStart=0, failed=0}
+  fetchState.pendingAtStart=pendingDetailsCountForRefresh(accountNumber, now)
+  if fetchState.pendingAtStart == 0 then
+    return fetchState
+  end
+  local detailsLimit=config.limitOrders
+
+  if isCombinedInitialSyncDetailsFetch(accountNumber) then
+    local discovered=LocalStorage and LocalStorage.discoveredSubAccounts
+    if type(discovered) == 'table' and #discovered > 0 then
+      for _, sub in ipairs(discovered) do
+        if type(sub) == 'table' and type(sub.kind) == 'string' and sub.kind ~= '' then
+          local subAccountNumber=subAccountNumberForKind(sub.kind)
+          local sessionErr=fetchDetailsInSubAccountSession(
+            sub.kind, subAccountNumber, now, detailsLimit, fetchState)
+          if sessionErr ~= nil then
+            return fetchState
+          end
+          if fetchState.counter >= detailsLimit then
+            return fetchState
+          end
+        end
+      end
+      return fetchState
+    end
+    fetchOrderDetailsBatch(ordersNeedingDetailsInCache(now), now, detailsLimit, fetchState)
+    return fetchState
+  end
+
+  local wantKind=harvestPriorityKindFromAccountNumber(accountNumber)
+  if wantKind ~= nil then
+    local sessionErr=fetchDetailsInSubAccountSession(
+      wantKind, accountNumber, now, detailsLimit, fetchState)
+    if sessionErr ~= nil then
+      return fetchState
+    end
+    return fetchState
+  end
+  fetchOrderDetailsBatch(
+    ordersNeedingDetailsForAccount(accountNumber, now),
+    now,
+    detailsLimit,
+    fetchState)
+  return fetchState
 end
 
 function RefreshAccount (account, since)
@@ -6125,12 +6425,13 @@ function RefreshAccount (account, since)
   local harvest=shouldRunAccountHarvest(refreshSince, now)
   local scanErr=nil
   local scanComplete=false
+  local detailsFetchState={counter=0}
 
   local prefetchInitialSyncDetails=isPendingInitialSync()
     and not isAccountSetupSession()
     and not harvest
   if prefetchInitialSyncDetails then
-    fetchPendingOrderDetails(account.accountNumber, now, false, 0)
+    detailsFetchState=fetchPendingOrderDetails(account.accountNumber, now)
   end
 
   if harvest then
@@ -6173,7 +6474,7 @@ function RefreshAccount (account, since)
   end
 
   if harvest or not prefetchInitialSyncDetails then
-    fetchPendingOrderDetails(account.accountNumber, now, harvest, refundWatch)
+    detailsFetchState=fetchPendingOrderDetails(account.accountNumber, now)
   end
 
   if shouldRecordInitialSyncAccountRefresh(harvest, scanErr, scanComplete) then
@@ -6226,7 +6527,7 @@ function RefreshAccount (account, since)
 
   reportEmptyEmitIfMisaligned(account.accountNumber, transactions, now)
 
-  appendIncompleteHarvestDummy(transactions, account.accountNumber, now)
+  appendIncompleteHarvestDummy(transactions, account.accountNumber, now, harvest, detailsFetchState)
 
   return {balance=ctx.balance/divisor, transactions=transactions}
 end

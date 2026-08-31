@@ -6,16 +6,21 @@ Amazon.de order history and exposes it as bank-account transactions. It must
 stay a **single, self-contained Lua file** to be recognized by MoneyMoney.
 API docs: https://moneymoney.app/api/webbanking/
 
-## Current task (2026-06)
-Amazon changed the order-history page layout; the scraper's selectors no longer
-match reliably. Goal: update parsing/scraping to the new layout without breaking
-the MoneyMoney plugin contract.
+## Current state
+The 2024+ order-history layout migration is implemented and covered by the
+offline tests. This fork additionally supports Amazon sub-accounts, Amazon
+Business Analytics reports, resumable initial sync, round-robin harvesting,
+detail rescans and explicit incomplete-refresh transactions.
 
 ## How MoneyMoney runs the plugin (important constraints)
 - `HTML(content)` parses with **libxml2's HTML parser + XPath** — no JavaScript
   is executed. So we must target the **raw server HTML** (View Source), NOT the
   browser's post-JS DOM. If a page is client-side rendered, the data won't be in
   the raw HTML and we must find the underlying data/endpoint instead.
+- Amazon serves the response bytes as UTF-8 even when an individual page has a
+  stale legacy charset hint. All Amazon HTML therefore goes through
+  `parseAmazonHtml(content)`, which explicitly selects UTF-8 before XPath
+  extraction.
 - HTML node-set API used by the plugin: `:xpath(q)`, `:text()`, `:attr(name)`,
   `:attr(name,val)` (setter), `:each(fn(index,el))` (1-based), `:length()`,
   `:get(n)` (1-based), `:children()`, `:select(val)`, `:submit()`, `:click()`.
@@ -23,22 +28,28 @@ the MoneyMoney plugin contract.
   is guarded on `io ~= nil`.
 
 ## Scraper architecture (where the layout-specific selectors live)
-- `enterOrderList()` (~L1094) — navigate to order history.
+- `enterOrderList()` — navigate to the classic or retail order history.
 - Time/year filter: `const.xpathOrderMonthForm` / `xpathOrderMonthSelect`
-  (`<select name="orderFilter|timeFilter">`) (~L91-92, L1574-1609).
-- Pagination: `//li[contains(@class,"a-last")]/a[@href]` (~L1596).
-- `getOrdersFromSummary(html)` (~L894) — order-list page → order boxes
-  (`#ordersContainer`/`.orders-content-container` → `.order` → `.order-info`).
-- `getOrderInfosFromSummaryHeader()` (~L600) — header values read from
-  `span.a-color-secondary.value` (3/4/5 = customer/business account shapes).
-- `getArticleFromShipment()` (~L716) — item rows `.a-fixed-left-grid-inner`,
-  qty `span.item-view-qty`.
-- `getOrderDetails(order)` (~L860) — detail page `#orderDetails`, subtotals
-  `#od-subtotals`, shipments `.a-box.shipment`, returns `#od-returns-panel`,
-  refund rows `.a-color-success`.
+  (`<select name="orderFilter|timeFilter">`).
+- `scanOrderFilterPages()` / `collectOrdersFromOrderList()` — filter and
+  pagination orchestration. Pagination uses
+  `//li[contains(@class,"a-last")]/a[@href]`.
+- `getOrdersFromSummary(html)` — enumerate order codes from
+  `div.order-card` / `data-csa-c-slot-id`; encrypted card bodies are not parsed.
+- `getOrderDetails(order)` — parse the plaintext `#orderDetails` page via
+  `data-component` anchors (`orderDate`, `purchasedItemsRightGrid`,
+  `shippingAddress`) plus `getPositionsFromDetails`, `getTotalsFromDetails` and
+  `getRefundFromDetails`.
+- `collectBusinessSpaOrders()` — Business-SPA/ABA route with classic GET
+  year-filter coverage for full-harvest gaps.
+- `fetchAbaRollupTable()` / `takeAbaFullHarvestJobBatch()` — paginated,
+  resumable Amazon Business Analytics report harvesting.
 - Price/date/qty/orderCode helpers: `getPrice`/`getDate`/`getQty`/`getOrderCode`
-  (~L530-586). Order-code regex: `[D%d]%d%d-%d%d%d%d%d%d%d-%d%d%d%d%d%d%d`.
+  Order-code regex: `[D%d]%d%d-%d%d%d%d%d%d%d-%d%d%d%d%d%d%d`.
   Prices: new `€(%d+),(%d%d)`, old `EUR (%d+),(%d%d)`.
+
+The former summary-header/shipment parsers and message-center scraper are not
+part of the current architecture.
 
 ## Offline test harness (built, working)
 - Runtime: LuaJIT 2.1 + xmlua (libxml2 binding), installed via Homebrew +
@@ -98,7 +109,7 @@ plaintext details page and fills date/total/items/address. Caching unchanged, so
 repeat runs stay fast. detailsUrl built via const.orderDetailsUrl + code.
 
 ## Status / TODO
-- DONE & tested (test/test_parse.lua, 5 pages, all pass): list enumeration,
+- DONE & tested (`test/test_parse.lua`, seven parser scenarios): list enumeration,
   single/multi-item detail parsing, totals incl. coupon difference, address,
   price format + nbsp, REFUND, DIGITAL order, GIFT CARD.
 - CONFIRMED: order-details URL = `/your-orders/order-details?orderID=<code>`
@@ -112,19 +123,28 @@ repeat runs stay fast. detailsUrl built via const.orderDetailsUrl + code.
   (od-returns-panel / a-color-success) are no longer called.
 - Digital orders (D01-) and gift cards parse via the same generic detail path
   (no special URL); gift cards have no shippingAddress, which is fine.
-- STILL PENDING: business account (poNumber/orderedMerchant not wired) needs a
-  sample; per-item partial refund detail; refund date approximated by order date.
+- Business harvesting through ABA, Business SPA and classic GET gap coverage is
+  implemented. `poNumber` / `orderedMerchant` are not mapped to transactions.
+  Per-item partial refund detail remains unavailable; the aggregate refund date
+  is approximated by the order date because Amazon does not expose it here.
 - Minor: address `<br>` between street and city yields "Beispielweg 1Musterstadt"
   (no space). Cosmetic (endToEndReference only).
-- FIXED (2026-07, from a user-reported MoneyMoney log): `getMessageList()`
-  (~L1086, checks Amazon's message center to flag orders needing a rescan)
-  crashed the whole run. New `/gp/message` layout no longer has the
-  `script[@type contains "a-state"]` it read the ajaxToken from, so
-  `ajaxToken` came back `nil` — but the old `if ajaxToken ~= "" then` check
-  let it fall through anyway into a hardcoded fallback URL that literally sent
-  `token=stateData.token` (a JS placeholder, never a real token) to
-  `/gp/msg/cntr/message-list/`. That 404'd, which the MoneyMoney host turns
-  into a fatal, run-aborting error. Fix: bail out and return no orders when
-  ajaxToken is missing, and removed the dead stateData.token fallback in
-  `getMessageListURL`/`getMessageURL`/`getMessageList` (it never worked).
-  Covered by `test/test_messagelist.lua`.
+- The message-center scraper (`getMessageList` and related URL helpers) was
+  removed. Refund/return rescans are now queued from harvest/ABA reappearance
+  and `scheduleIncrementalRefundWatch`; `test/test_messagelist.lua` asserts
+  that the obsolete API remains absent.
+
+## Fork orchestration
+- `InitializeSession2` discovers available personal/business sub-accounts.
+  `ListAccounts` always emits the internal account `mix`; when both kinds were
+  discovered, its visible name combines the unchanged Amazon labels in
+  personal/business order. `sub:personal` / `sub:business` are then added
+  without harvesting transactions.
+- Initial sync starts after the account-setup session and persists progress in
+  `LocalStorage`. The combined account advances sub-account batches round-robin.
+- Full Business history uses `PAST_12_MONTHS` plus `CUSTOM_RANGE` jobs in
+  batches of six per refresh. Rollup pagination is resumable.
+- `AMAZON-INCOMPLETE-HARVEST` is emitted only for an incomplete scan/report or
+  truncated/failed due-detail batch, never during account setup.
+- Login response failures are transient unless Amazon explicitly rejects the
+  credentials; transient errors preserve persisted cookies.

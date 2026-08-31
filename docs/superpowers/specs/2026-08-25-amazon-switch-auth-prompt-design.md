@@ -2,7 +2,12 @@
 
 Datum: 2026-08-25
 
-## Problem
+Status: **Implementiert.** Historisches Design für
+`finishAccountSwitchLanding` / `submitSwitchAuthPrompt`; verifiziert durch
+`test/test_account_switcher.lua` und
+`test/fixtures/switch_auth_prompt.html`.
+
+## Ursprünglicher Fehlerzustand
 
 Wechsel zu Business (`Example GmbH`) liefert oft
 `redirectUrl` → `/ap/signin?...&switch_account=auth_prompt` mit Passwort-Form

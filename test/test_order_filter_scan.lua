@@ -1,6 +1,7 @@
 -- Tests recent-filter / merge helpers used to keep order lists updating when
 -- Amazon's last30 view is empty but months-3 still shows cards.
 -- Run: luajit test/test_order_filter_scan.lua
+---@diagnostic disable: duplicate-set-field -- Test cases intentionally replace sandbox mocks.
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
@@ -85,5 +86,67 @@ assert(env.markOrderFilterCacheIfComplete(filterCache, "year-1996", true) == fal
 assert(filterCache["year-1996"] == nil, "years with new orders stay uncached for rescan")
 assert(env.markOrderFilterCacheIfComplete(nil, "year-1997", false) == false)
 assert(env.markOrderFilterCacheIfComplete({}, "", false) == false)
+
+-- Recent filters are deliberately scanned on every independent refresh, but
+-- they are not unfinished batch work after the current refresh scanned them.
+env.LocalStorage = { orderFilterCacheByAccount = {} }
+env.enumerateYourOrdersGetFilters = function()
+  return {
+    { val = "last30", label = "den letzten 30 Tagen" },
+    { val = "months-3", label = "den letzten 3 Monaten" },
+  }
+end
+assert(env.hasMoreOrderListFiltersToHarvest("Persönliches Konto", 0, os.time()) == false,
+  "recent filters alone must not keep the sub-account scan incomplete")
+
+env.setOrderListHarvestIncomplete("Persönliches Konto", false)
+env.runOrderFilterHarvest(
+  "last30", "den letzten 30 Tagen", {}, "Persönliches Konto", "personal", {
+    loadPage = function()
+      return nil
+    end,
+  })
+assert(env.hasMoreOrderListFiltersToHarvest("Persönliches Konto", 0, os.time()) == true,
+  "failed recent-filter page load must keep the sub-account scan incomplete")
+
+-- A recent filter is only complete when its pagination reached the natural end.
+env.setOrderListHarvestIncomplete("Persönliches Konto", false)
+env.html = mm.HTML([[
+<html><body>
+<div class="order-card" data-csa-c-slot-id="amzn1.yourorders.order-card.303-0000000-0000001"></div>
+<li class="a-last"><a href="/your-orders/orders?pageNumber=2">Weiter</a></li>
+</body></html>]])
+env.connectShop = function()
+  return nil
+end
+local _, _, _, paginationComplete = env.scanOrderFilterPages(
+  "last30", {}, {}, "Persönliches Konto", "personal")
+assert(paginationComplete == false, "failed recent-filter pagination must be incomplete")
+assert(env.hasMoreOrderListFiltersToHarvest("Persönliches Konto", 0, os.time()) == true,
+  "failed recent-filter pagination must keep the sub-account scan incomplete")
+
+env.setOrderListHarvestIncomplete("Geschäftliches Konto", true)
+env.enumerateYourOrdersGetFiltersForAbaGap = function()
+  return {}
+end
+assert(env.subAccountHarvestHasMore(
+    "Geschäftliches Konto", "business", os.time() - 86400, os.time()) == true,
+  "failed business order-list harvest must keep the sub-account scan incomplete")
+
+env.LocalStorage = { orderFilterCacheByAccount = {} }
+env.enumerateYourOrdersGetFilters = function()
+  return {
+    { val = "year-2024", label = "2024" },
+    { val = "year-2023", label = "2023" },
+    { val = "year-2022", label = "2022" },
+  }
+end
+env.loadYourOrdersFilterPage = function()
+  return mm.HTML("<html><body><div>temporarily unavailable</div></body></html>")
+end
+env.collectOrdersViaYourOrdersGet("Geschäftliches Konto", "business", 0, {})
+local failedFilterCache = env.filterCacheForSubAccount("Geschäftliches Konto")
+assert(next(failedFilterCache) == nil,
+  "unready filters and skipped horizon filters must remain retryable")
 
 print("test_order_filter_scan OK")

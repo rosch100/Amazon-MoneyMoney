@@ -36,8 +36,17 @@ assert(#listed == 3, "shared + 2 subs, got " .. #listed)
 local byNum = {}
 for _, a in ipairs(listed) do byNum[a.accountNumber] = a end
 assert(byNum["mix"] ~= nil)
+assert(byNum["mix"].name == "Amazon Persönliches Konto + Example GmbH")
 assert(byNum["sub:personal"].name == "Amazon Persönlich")
 assert(byNum["sub:business"].name == "Amazon Geschäftlich")
+
+env.rememberDiscoveredSubAccounts({
+  { kind = "business", label = "Example GmbH" },
+  { kind = "personal", label = "Persönliches Konto" },
+})
+local reverseListed = env.ListAccounts({})
+assert(reverseListed[1].accountNumber == "mix")
+assert(reverseListed[1].name == "Amazon Persönliches Konto + Example GmbH")
 
 assert(env.listAccountDisplayLabel("mix") == "Alle Konten")
 assert(env.listAccountDisplayLabel("sub:personal") == "Persönlich")

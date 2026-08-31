@@ -94,4 +94,21 @@ local urls = env.extractAbaDownloadUrls(
 assert(#urls == 1)
 assert(urls[1]:find("download/abc.csv", 1, true))
 
+-- Incremental refresh must not discard an unfinished full ABA harvest.
+env.LocalStorage = {
+  OrderCache = { ["303-1111111-0000001"] = { orderTotal = 1 } },
+  abaRollupPaginationVersion = 3,
+  abaRollupHarvestIncomplete = "pagination",
+  abaFullHarvestHasMore = true,
+  abaFullHarvestJobs = { { span = "PAST_12_MONTHS" }, { span = "CUSTOM_RANGE" } },
+  abaFullHarvestJobIndex = 2,
+  abaFullHarvestHarvestSince = 0,
+}
+env.ensureAbaFullHarvestBatch(since, now)
+assert(env.isAbaRollupHarvestIncomplete() == true,
+  "incremental ensure must keep ABA incomplete flag while the full batch is open")
+assert(type(env.LocalStorage.abaFullHarvestJobs) == "table"
+    and #env.LocalStorage.abaFullHarvestJobs == 2,
+  "incremental ensure must keep persisted full-harvest jobs")
+
 print("test_aba_harvest_helpers OK")

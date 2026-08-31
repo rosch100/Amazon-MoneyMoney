@@ -89,7 +89,7 @@ do
   end
 end
 
-print("== full return without return link still nets via Gutschein credit ==")
+print("== zero-total voucher order without return marker stays a purchase ==")
 do
   env.applyAccountAttribute("keepStorno", "false")
   local htmlNoLink = fixtureHtml:gsub('<a href="/gp/returns/status/foo">.-</a>', "")
@@ -105,10 +105,10 @@ do
   }
   env.getOrderDetails(order)
   assert(#order.orderPositions == 1, "item stays in purchase list without link")
-  assert(env.effectiveReturnedCents(order) == 22294, "effective returned from purchase lines")
-  assert(env.compactPartialReturnCents(order).netExpenseCents == 193, "net 1,93")
-  local txs = emitOrder(order)
-  assert(#txs == 1 and txs[1].name == NET_TEXT, "only Rücksendekosten, got " .. names(txs))
+  assert(order.returnActivity == false, "voucher and zero total are not proof of a return")
+  assert(env.effectiveReturnedCents(order) == 0, "purchase lines must not be inferred as returned")
+  assert(env.orderHasKeptPurchaseItems(order) == true, "purchase must remain emit-ready")
+  assert(env.compactPartialReturnCents(order) == nil, "no return costs without return evidence")
 end
 
 print("test_full_return_retained_shipping OK")

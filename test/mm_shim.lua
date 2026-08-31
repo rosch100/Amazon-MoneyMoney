@@ -115,8 +115,12 @@ NodeSet.click  = navStub("click")
 ----------------------------------------------------------------------
 -- HTML(content) host function
 ----------------------------------------------------------------------
-function M.HTML(content)
-  local doc = xmlua.HTML.parse(content or "")
+function M.HTML(content, charset)
+  local options = nil
+  if charset ~= nil then
+    options = { encoding = charset }
+  end
+  local doc = xmlua.HTML.parse(content or "", options)
   local root = doc:root()
   if root == nil then
     return wrap({}, doc)

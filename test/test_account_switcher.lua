@@ -1,5 +1,6 @@
 -- Parses Amazon CVF account switcher (personal + business).
 -- Run: luajit test/test_account_switcher.lua
+---@diagnostic disable: duplicate-set-field -- Test cases intentionally replace sandbox mocks.
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
