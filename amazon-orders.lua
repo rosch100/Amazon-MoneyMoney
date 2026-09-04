@@ -5121,16 +5121,35 @@ function combinedAccountListLabel()
   return personal.label.." + "..business.label
 end
 
+function discoveredSubAccountDisplayName(discoveredSub)
+  if type(discoveredSub) ~= 'table' then
+    return ''
+  end
+  if discoveredSub.kind == "personal" then
+    return trim(firstNonEmpty(discoveredSub.customerName, discoveredSub.label))
+  end
+  if discoveredSub.kind == "business" then
+    return trim(firstNonEmpty(discoveredSub.businessName, discoveredSub.label))
+  end
+  return ''
+end
+
+function isCompleteDiscoveredSubAccount(discoveredSub)
+  return type(discoveredSub) == 'table'
+    and (discoveredSub.kind == "personal" or discoveredSub.kind == "business")
+    and type(discoveredSub.accountNumber) == 'string'
+    and trim(discoveredSub.accountNumber) ~= ''
+    and discoveredSubAccountDisplayName(discoveredSub) ~= ''
+end
+
 function listAccountDisplayLabel(accountNumber, discoveredSub)
   if accountNumber == "mix" then
     return combinedAccountListLabel()
   end
   if type(discoveredSub) == 'table' then
-    if discoveredSub.kind == "personal" then
-      return discoveredSub.customerName
-    end
-    if discoveredSub.kind == "business" then
-      return discoveredSub.businessName
+    local displayName=discoveredSubAccountDisplayName(discoveredSub)
+    if displayName ~= '' then
+      return displayName
     end
   end
   local kind=harvestPriorityKindFromAccountNumber(accountNumber)
@@ -6426,8 +6445,16 @@ function ListAccounts (knownAccounts)
   local accounts={makeListAccountEntry("Amazon", owner, secUsername, knownAccounts)}
 
   local discovered=LocalStorage.discoveredSubAccounts
-  if type(discovered) == 'table' and #discovered > 1 then
+  local completeDiscovered={}
+  if type(discovered) == 'table' then
     for _,sub in ipairs(discovered) do
+      if isCompleteDiscoveredSubAccount(sub) then
+        table.insert(completeDiscovered, sub)
+      end
+    end
+  end
+  if #completeDiscovered > 1 then
+    for _,sub in ipairs(completeDiscovered) do
       table.insert(accounts, makeListAccountEntry(
         "Amazon "..listAccountDisplayLabel(sub.accountNumber, sub),
         owner, sub.accountNumber, knownAccounts))
