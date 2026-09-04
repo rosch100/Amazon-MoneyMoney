@@ -5,6 +5,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 local now = os.time()
 
 env.connectShop = function()

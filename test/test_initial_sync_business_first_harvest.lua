@@ -4,10 +4,13 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 
 local plan = {
-  { kind = "personal", label = "Persönliches Konto" },
-  { kind = "business", label = "Altanis GmbH" },
+  { kind = "personal", label = "Persönliches Konto", customerName = "Persönliches Konto",
+    accountNumber = "A3PERSONALID01" },
+  { kind = "business", label = "Altanis GmbH", businessName = "Altanis GmbH",
+    accountNumber = "A3BUSINESSID02" },
 }
 local reordered = env.reorderSubAccountPlanByPriority(plan, "business")
 assert(reordered[1].kind == "business")

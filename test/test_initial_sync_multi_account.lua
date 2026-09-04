@@ -4,6 +4,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 local now = os.time()
 
 env.connectShop = function()
@@ -17,8 +18,10 @@ env.LocalStorage = {
 }
 
 env.rememberDiscoveredSubAccounts({
-  { kind = "personal", label = "Persönliches Konto" },
-  { kind = "business", label = "Example GmbH" },
+  { kind = "personal", label = "Persönliches Konto", customerName = "Persönliches Konto",
+    accountNumber = "A3PERSONALID01" },
+  { kind = "business", label = "Example GmbH", businessName = "Example GmbH",
+    accountNumber = "A3BUSINESSID02" },
 })
 
 env.ListAccounts({})
@@ -49,12 +52,12 @@ env.LocalStorage.pendingInitialSync = true
 env.LocalStorage.initialSyncHarvestDone = true
 env.LocalStorage.initialSyncRefreshedAccounts = nil
 
-local business = { accountNumber = "sub:business", owner = "test@example.com" }
+local business = { accountNumber = "A3BUSINESSID02", owner = "test@example.com" }
 env.RefreshAccount(business, 0)
 assert(env.isPendingInitialSync() == true,
   "business-only refresh must keep Erstimport pending while personal is missing")
 
-local personal = { accountNumber = "sub:personal", owner = "test@example.com" }
+local personal = { accountNumber = "A3PERSONALID01", owner = "test@example.com" }
 env.RefreshAccount(personal, 0)
 assert(env.isPendingInitialSync() == false,
   "refreshing both enabled sub-accounts completes Erstimport")
