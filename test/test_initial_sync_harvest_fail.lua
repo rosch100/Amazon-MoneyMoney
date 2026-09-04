@@ -17,7 +17,7 @@ env.LocalStorage = {
   OrderCache = {},
 }
 
-local account = { accountNumber = "mix", owner = "test@example.com" }
+local account = { accountNumber = "test@example.com", owner = "test@example.com" }
 
 env.ListAccounts({})
 env.EndSession()

@@ -470,6 +470,9 @@ end
 -- MoneyMoney accountNumber used as key in emittedAccounts maps.
 function emitAccountKey(accountNumber)
   if accountNumber == nil or accountNumber == '' then
+    if type(secUsername) == 'string' and secUsername ~= '' then
+      return secUsername
+    end
     return "mix"
   end
   return tostring(accountNumber)
@@ -701,7 +704,8 @@ function initialSyncSubAccountsNotYetRefreshed()
   end
   -- The combined MoneyMoney account harvests every discovered sub-account.
   -- It therefore satisfies the initial-sync requirement on its own.
-  if refreshed[emitAccountKey("mix")] ~= nil then
+  if refreshed[emitAccountKey(secUsername)] ~= nil
+      or refreshed["mix"] ~= nil then
     return {}
   end
   local missing={}
@@ -5173,7 +5177,7 @@ function isCompleteDiscoveredSubAccount(discoveredSub)
 end
 
 function listAccountDisplayLabel(accountNumber, discoveredSub)
-  if accountNumber == "mix" then
+  if isCombinedMoneyMoneyAccount(accountNumber) then
     return combinedAccountListLabel()
   end
   if type(discoveredSub) == 'table' then
@@ -5307,7 +5311,8 @@ function refreshAccountLedgerProfile(accountNumber)
   if accountNumber == "inverse" then
     profile.divisor=100
   end
-  if accountNumber == "mix"
+  if isCombinedMoneyMoneyAccount(accountNumber)
+      or accountNumber == "mix"
       or accountNumber == "monthly"
       or accountNumber == "yearly"
       or not isCombinedMoneyMoneyAccount(accountNumber) then

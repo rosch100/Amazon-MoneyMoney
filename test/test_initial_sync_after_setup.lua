@@ -7,6 +7,8 @@ local mm = require("mm_shim")
 local env = mm.loadPlugin("amazon-orders.lua")
 env.secUsername = "test@example.com"
 local now = os.time()
+assert(env.emitAccountKey(nil) == "test@example.com")
+assert(env.emitAccountKey("") == "test@example.com")
 
 env.connectShop = function()
   return mm.HTML("<html><body></body></html>")
@@ -34,7 +36,7 @@ env.LocalStorage = {
 }
 
 local account = {
-  accountNumber = "mix",
+  accountNumber = "test@example.com",
   owner = "test@example.com",
 }
 
@@ -81,7 +83,7 @@ assert(env.isPendingInitialSync() == false, "pending cleared when no details rem
 -- Pending details block clearing initial sync until resolved.
 env.LocalStorage.pendingInitialSync = true
 env.LocalStorage.initialSyncHarvestDone = true
-env.LocalStorage.initialSyncRefreshedAccounts = { mix = "mix" }
+env.LocalStorage.initialSyncRefreshedAccounts = { ["test@example.com"] = "test@example.com" }
 env.LocalStorage.OrderCache["303-open-details"] = {
   orderCode = "303-open-details",
   orderPositions = { { purpose = "Open", amount = 100, qty = 1 } },
