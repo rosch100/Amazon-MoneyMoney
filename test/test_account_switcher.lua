@@ -136,6 +136,7 @@ env.LocalStorage = { loginCounter = 1, OrderCache = {} }
 env.openAccountSwitcherEmbed = function()
   return mm.HTML(fixture)
 end
+env.bindActiveHtml(mm.HTML("<html><body><span class='nav-shortened-name'>Personal</span></body></html>"))
 env.switchAmazonSubAccount = function()
   return { error = "boom" }
 end
@@ -168,7 +169,7 @@ assert(calls[1].kind == "business" or calls[2].kind == "business")
 assert(#env.LocalStorage.discoveredSubAccounts == 0)
 assert(env.LocalStorage.subAccountScan.incomplete ~= true)
 
--- discoverAmazonSubAccounts: switcher only, never harvests orders
+-- discoverAmazonSubAccounts: short account switches, never harvests orders
 local discoverCalls = 0
 env.LocalStorage = { loginCounter = 10, OrderCache = {} }
 env.openAccountSwitcherEmbed = function()
@@ -178,12 +179,22 @@ env.collectOrdersFromOrderList = function()
   discoverCalls = discoverCalls + 1
   error("discover must not harvest orders")
 end
-env.switchAmazonSubAccount = function()
-  error("discover must not switch accounts")
+env.bindActiveHtml(mm.HTML([[
+<html><body><span class="nav-shortened-name">Personal</span>
+<script>var iss={customerId:"A3PERSONALID01"};</script></body></html>]]))
+env.switchAmazonSubAccount = function(option)
+  local marker = option.kind == "business"
+      and '<span class="abnav-accountfor">Example GmbH</span>'
+    or '<span class="nav-shortened-name">Personal</span>'
+  local customerId = option.kind == "business" and "A3BUSINESSID02" or "A3PERSONALID01"
+  env.bindActiveHtml(mm.HTML("<html><body>" .. marker
+    .. '<script>var iss={customerId:"' .. customerId .. '"};</script></body></html>'))
+  return { ok = true }
 end
-local opts = env.discoverAmazonSubAccounts()
+local opts, discoverErr = env.discoverAmazonSubAccounts()
+assert(discoverErr == nil, tostring(discoverErr))
 assert(#opts == 2)
-assert(#env.LocalStorage.discoveredSubAccounts == 0)
+assert(#env.LocalStorage.discoveredSubAccounts == 2)
 assert(discoverCalls == 0)
 
 -- Switcher unavailable at start: no options → scrape current session only
