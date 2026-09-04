@@ -931,6 +931,16 @@ if LocalStorage ~=nil then
 
 end
 
+if configDirty and io ~= nil and io.open ~= nil then
+  print('write config...')
+  local configFile, configError=io.open(configFileName,"wb")
+  if configFile == nil then
+    error("cannot write config file: "..tostring(configError))
+  end
+  configFile:write(JSON():set(config):json())
+  configFile:close()
+end
+
 print(((io == nil or io.open == nil) and 'signed ' or '')  .. const.services[1],"plugin loaded...")
 if config.debug then print('debugging...') end
 if debug ~= nil then
@@ -940,10 +950,10 @@ local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters). To mark this as an
 -- unofficial build the "(beta)" tag is added to the description instead.
-WebBanking{version  = 1.25,
+WebBanking{version  = 2.0,
   url         = baseurl,
   services    = const.services,
-  description = const.description.." (beta v1.25)"}
+  description = const.description.." (beta v2.0)"}
 
 function debugBuffer.tablePrint(tbl)
   local t={}
