@@ -2,8 +2,11 @@
 
 Datum: 2026-08-25
 
-Status: **Implementiert.** Historisches Design; verifiziert durch
-`test/test_list_accounts.lua`, `test/test_account_setup_no_harvest.lua` und die
+Status: **Historisch / überholt** durch
+`2026-09-04-amazon-account-names-and-numbers-design.md`. Ursprünglich
+implementiert; Neuangebote mit `mix` / `sub:personal` / `sub:business` sind
+obsolet. Verifiziert durch `test/test_list_accounts.lua`,
+`test/test_account_setup_no_harvest.lua` und die
 `test/test_initial_sync_*.lua`-Tests.
 
 ## Ziel

@@ -2,7 +2,8 @@
 
 Datum: 2026-08-31
 
-Status: **Implementiert.**
+Status: **Historisch / überholt** durch
+`2026-09-04-amazon-account-names-and-numbers-design.md`.
 
 ## Ziel
 
