@@ -31,3 +31,22 @@ erhalten.
 Die IDE-Lintdiagnostik meldet weiterhin neun bereits vorhandene Lua-Typwarnungen
 in `amazon-orders.lua` (u. a. HTML-Dictionary-Felder und dynamische
 Aufrufe); durch diese Änderung wurden keine neuen Warnungen festgestellt.
+
+## Fix: unvollständige Discovery-Einträge
+
+`ListAccounts` zählt und bietet nun ausschließlich Einträge mit `kind`
+`personal` oder `business`, einer nicht-leeren Customer-ID in
+`accountNumber` und einem verwendbaren Anzeigenamen an. Der Anzeigename
+verwendet den fachlichen Namen und fällt gemäß bestehendem Namensaufbau auf
+`label` zurück. Unterkonten werden erst ab zwei vollständigen Einträgen
+angeboten; unvollständige Einträge allein führen weiterhin nur zum
+gemeinsamen Konto.
+
+Zusätzliche Regressionstests decken Junk neben einem vollständigen Personal-
+und Business-Paar sowie ausschließlich unvollständige Einträge ab. Beide
+vollständigen Testläufe waren erfolgreich:
+
+- `./test/run.sh test/test_list_accounts.lua` → `test_list_accounts OK`
+- `for test_file in test/test_*.lua; do ./test/run.sh "$test_file" || exit 1; done`
+  → alle Tests bestanden
+- `git diff --check` → ohne Ausgabe/Fehler

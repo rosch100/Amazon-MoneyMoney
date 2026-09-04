@@ -26,6 +26,38 @@ assert(onlyShared[1].attributes.rescanOrder == "")
 assert(onlyShared[1].attributes.keepStorno == "false", "ListAccounts must pre-fill default values for MM note UI")
 assert(onlyShared[1].attributes.nameMaxLength == "0", "title line is untruncated by default")
 
+env.LocalStorage.discoveredSubAccounts = {
+  { kind = "personal", accountNumber = "", customerName = "Incomplete" },
+  { kind = "business", accountNumber = "JUNK-NO-NAME" },
+}
+assert(#env.ListAccounts({}) == 1, "incomplete discovery alone must offer only combined")
+
+env.LocalStorage.discoveredSubAccounts = {
+  { kind = "personal", accountNumber = "", customerName = "Incomplete" },
+  { kind = "business", accountNumber = "JUNK-NO-NAME" },
+  { kind = "other", accountNumber = "JUNK-UNKNOWN-KIND", label = "Junk" },
+  { kind = "personal", accountNumber = "A3PERSONALID01", label = "Test User" },
+  { kind = "business", accountNumber = "A3BUSINESSID02", label = "Example GmbH" },
+}
+local listedWithJunk = env.ListAccounts({})
+assert(#listedWithJunk == 3, "only complete discovered entries may be offered")
+local junkNumbers = {}
+for _, account in ipairs(listedWithJunk) do
+  junkNumbers[account.accountNumber] = true
+end
+assert(junkNumbers["JUNK-NO-NAME"] == nil)
+assert(junkNumbers["JUNK-UNKNOWN-KIND"] == nil)
+assert(junkNumbers["A3PERSONALID01"] == true)
+assert(junkNumbers["A3BUSINESSID02"] == true)
+
+env.LocalStorage.discoveredSubAccounts = {
+  { kind = "personal", accountNumber = "A3PERSONALID01", customerName = "Test User" },
+  { kind = "business", accountNumber = "A3BUSINESSID02", businessName = "Example GmbH" },
+  { kind = "personal", accountNumber = "JUNK-ONLY", customerName = "" },
+}
+local listedWithIncompleteOnly = env.ListAccounts({})
+assert(#listedWithIncompleteOnly == 3, "incomplete entries must not affect complete pair")
+
 env.rememberDiscoveredSubAccounts({
   { kind = "personal", label = "Test User", customerName = "Test User",
     accountNumber = "A3PERSONALID01" },
