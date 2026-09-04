@@ -4,6 +4,7 @@
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 
 local ENGLISH_DIFF = "Difference (shipping costs, coupon etc.)"
 
@@ -27,7 +28,7 @@ local function emitMix(order)
     mixed = true,
     divisor = -100,
     transactions = {},
-    accountNumber = "mix",
+    accountNumber = "test@example.com",
   }
   env.emitPurchaseLines(ctx, order, order.orderCode)
   return ctx.transactions

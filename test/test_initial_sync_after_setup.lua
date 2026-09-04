@@ -18,7 +18,7 @@ end
 
 env.LocalStorage = {
 
-  cacheVersion = 22,
+  cacheVersion = 23,
   loginCounter = 1,
   lastLoginCounter = 0,
   OrderCache = {

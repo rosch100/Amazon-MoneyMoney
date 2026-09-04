@@ -41,7 +41,7 @@ local webCacheHit=false
 local webCacheState='start'
 local invalidPrice=1e99
 local invalidDate=1e99
-local cacheVersion=22
+local cacheVersion=23
 local debugBuffer={context=''}
 local webCacheLastId=nil
 
@@ -99,7 +99,13 @@ local const={
     December=12
   },
   domain='.amazon.de',
-  services    = {"Amazon"},
+  -- Nicht "Amazon": kollidiert mit MoneyMoney’s eingebauter Amazon-Kreditkarte.
+  -- Nicht "Amazon Orders": Beutlings signierte Extension. Alt-Zugänge mit diesen
+  -- Namen bzw. Kontonummern mix/sub:*/normal/… werden nicht mehr bedient —
+  -- Konten müssen unter diesem Service neu angelegt werden.
+  services    = {"Amazon Bestellungen"},
+  obsoleteAccountRecreateMessage=
+    "Amazon: Alte Kontoanlage nicht mehr unterstützt. Bitte alle Amazon-Konten löschen und unter „Amazon Bestellungen“ neu anlegen.",
   description = "Give you an overview about your amazon orders.",
   returnText="Rückgabe: ",
   refundTransaction="Erstattung für Bestellung ",
@@ -156,13 +162,17 @@ local const={
     'Bestellnummer', 'Order ID', 'Bestell-ID', 'Order Number', 'Amazon Order ID',
     'Bestellnummer ', 'Order Id',
   },
-  combinedAccountListName="Alle Konten",
+  combinedAccountListName="Amazon",
   subAccountListNamePersonal="Persönlich",
   subAccountListNameBusiness="Geschäftlich",
-  monthlyContra="monthy contra",
-  yearlyContra="yearly contra",
+  -- MoneyMoney-Kontonummer = Prefix + customerId ohne führendes „A“.
+  -- Weder nackte customerId noch „AB-“+customerId: die persönliche ID bleibt
+  -- sonst als Substring erkennbar und MoneyMoney legt das Konto als
+  -- Amazon-Kreditkarte an (Live: „Amazon Roland“ trotz type=AccountTypeOther).
+  moneyMoneyCustomerIdAccountPrefix="AO.",
   daysByMonth={31,28,31,30,31,30,31,31,30,31,30,31},
-  legacyEmitAccountKeys={"mix", "normal", "inverse", "monthly", "yearly"},
+  -- Obsolete MoneyMoney accountNumbers (pre email/customerId). Refresh rejects these.
+  obsoleteMoneyMoneyAccountNumbers={"mix", "normal", "inverse", "monthly", "yearly"},
 }
 
 -- SSOT: account note keys (ListAccounts defaults + RefreshAccount).
@@ -182,7 +192,7 @@ local accountPowerUserKeys={
   'orderDetailsUrl',
 }
 
---- Legacy MoneyMoney note keys → canonical keys (read-only alias).
+-- MoneyMoney note key aliases (read → canonical). Not OrderCache legacy.
 local accountAttributeAliases={
   blackListOrders='blacklistOrders',
 }
@@ -343,10 +353,8 @@ function resetImportState(requireFullReimport)
   LocalStorage.OrderCache={}
   clearOrderFilterCaches()
   LocalStorage.invalidCache={}
-  LocalStorage.balancesByPeriod=nil
   LocalStorage.lastHarvestSince=nil
   LocalStorage.subAccountScan=nil
-  LocalStorage.legacyEmitMigrationVersion=nil
   LocalStorage.pendingInitialSync=nil
   LocalStorage.initialSyncHarvestDone=nil
   LocalStorage.initialSyncRefreshedAccounts=nil
@@ -359,73 +367,8 @@ function resetImportState(requireFullReimport)
   end
 end
 
-function legacyTxLeafHasEmitMarkers(leaf)
-  return type(leaf) == 'table'
-    and (leaf.emitted == true or type(leaf.since) == 'number')
-end
-
-function orderHasLegacyRefundMarkers(order)
-  if type(order) ~= 'table' or type(order.refundTransactions) ~= 'table' then
-    return false
-  end
-  for _,byAmount in pairs(order.refundTransactions) do
-    if type(byAmount) == 'table' then
-      for _,leaf in pairs(byAmount) do
-        if legacyTxLeafHasEmitMarkers(leaf) then
-          return true
-        end
-      end
-    end
-  end
-  return false
-end
-
-function orderHasLegacyReturnMarkers(order)
-  if type(order) ~= 'table' or type(order.returns) ~= 'table' then
-    return false
-  end
-  for _,byAmount in pairs(order.returns) do
-    if type(byAmount) == 'table' then
-      for _,byPurpose in pairs(byAmount) do
-        if type(byPurpose) == 'table' then
-          for _,leaf in pairs(byPurpose) do
-            if legacyTxLeafHasEmitMarkers(leaf) then
-              return true
-            end
-          end
-        end
-      end
-    end
-  end
-  return false
-end
-
-function orderCacheHasLegacyEmitMarkers(orderCache)
-  if type(orderCache) ~= 'table' then
-    return false
-  end
-  for _,order in pairs(orderCache) do
-    if type(order) ~= 'table' then
-      -- skip
-    elseif order.emitted == true or type(order.since) == 'number' then
-      return true
-    elseif orderHasLegacyRefundMarkers(order) then
-      return true
-    elseif orderHasLegacyReturnMarkers(order) then
-      return true
-    end
-  end
-  return false
-end
-
-function localStorageHasLegacyGetOrdersGate()
-  local gate=LocalStorage and LocalStorage.getOrders
-  return type(gate) == 'table' and next(gate) ~= nil
-end
-
 --- @function applyImportSchemaUpgrade
--- Numbered older cacheVersion → wipe plugin import state. Nil version with legacy
--- emit markers (or old getOrders gate) also requires full reimport.
+-- Older or missing cacheVersion with any import state → wipe and require full reimport.
 function applyImportSchemaUpgrade()
   if LocalStorage == nil then
     return false
@@ -434,26 +377,17 @@ function applyImportSchemaUpgrade()
     return false
   end
   local from=LocalStorage.cacheVersion
-  if from ~= nil and from ~= cacheVersion then
-    print("import schema", from, "->", cacheVersion, "full reimport required")
+  local hasOrders=type(LocalStorage.OrderCache) == 'table' and next(LocalStorage.OrderCache) ~= nil
+  local hasGetOrders=type(LocalStorage.getOrders) == 'table' and next(LocalStorage.getOrders) ~= nil
+  local wiped=false
+  if from ~= nil or hasOrders or hasGetOrders then
+    print("import schema", tostring(from), "->", cacheVersion, "full reimport required")
     resetImportState(true)
-    LocalStorage.cacheVersion=cacheVersion
-    return true
-  end
-  local hasUnversionedOrders=from == nil
-    and type(LocalStorage.OrderCache) == 'table'
-    and next(LocalStorage.OrderCache) ~= nil
-  if from == nil and (hasUnversionedOrders
-      or orderCacheHasLegacyEmitMarkers(LocalStorage.OrderCache)
-      or localStorageHasLegacyGetOrdersGate()) then
-    print("legacy cache without schema version -> full reimport required")
-    resetImportState(true)
-    LocalStorage.cacheVersion=cacheVersion
     LocalStorage.getOrders=nil
-    return true
+    wiped=true
   end
   LocalStorage.cacheVersion=cacheVersion
-  return false
+  return wiped
 end
 
 function orderHasPositions(order)
@@ -469,13 +403,21 @@ end
 --- @function emitAccountKey
 -- MoneyMoney accountNumber used as key in emittedAccounts maps.
 -- Every spelling of the login email collapses onto the same combined key.
+-- Sub-accounts: raw customerId and AB-<customerId> share one namespaced key.
 function emitAccountKey(accountNumber)
   if accountNumber == nil or accountNumber == ''
       or matchesCombinedAccountEmail(accountNumber) then
-    if type(secUsername) == 'string' and secUsername ~= '' then
-      return secUsername
+    if type(secUsername) ~= 'string' or secUsername == '' then
+      error("Amazon: emitAccountKey benötigt den Anmeldenamen (E-Mail)")
     end
-    return "mix"
+    return secUsername
+  end
+  local customerId=amazonCustomerIdFromMoneyMoneyAccountNumber(accountNumber)
+  if customerId == nil and isAmazonCustomerId(accountNumber) then
+    customerId=accountNumber
+  end
+  if customerId ~= nil then
+    return moneyMoneyAccountNumberForCustomerId(customerId)
   end
   return tostring(accountNumber)
 end
@@ -484,10 +426,7 @@ function isOrderEmittedForAccount(owner, accountNumber)
   if type(owner) ~= 'table' or type(owner.emittedAccounts) ~= 'table' then
     return false
   end
-  if owner.emittedAccounts[emitAccountKey(accountNumber)] == true then
-    return true
-  end
-  return isCombinedMoneyMoneyAccount(accountNumber) and owner.emittedAccounts.mix == true
+  return owner.emittedAccounts[emitAccountKey(accountNumber)] == true
 end
 
 function markOrderEmittedForAccount(owner, accountNumber)
@@ -498,15 +437,6 @@ function markOrderEmittedForAccount(owner, accountNumber)
     owner.emittedAccounts={}
   end
   owner.emittedAccounts[emitAccountKey(accountNumber)]=true
-end
-
-function markEmitAccountKeys(owner, keys)
-  if type(owner) ~= 'table' or type(keys) ~= 'table' then
-    return
-  end
-  for _,accountNumber in ipairs(keys) do
-    markOrderEmittedForAccount(owner, accountNumber)
-  end
 end
 
 --- @function clearOrderEmittedFlags
@@ -520,72 +450,6 @@ function clearOrderEmittedFlags(order, keepDetailsParsed)
   if not keepDetailsParsed then
     order.detailsParsed=nil
   end
-end
-
-function knownLegacyEmitAccountKeys()
-  local keys={}
-  for i,key in ipairs(const.legacyEmitAccountKeys) do
-    keys[i]=key
-  end
-  return keys
-end
-
-function migrateTxLeafEmitFlags(leaf, legacyKeys)
-  if type(leaf) ~= 'table' or type(legacyKeys) ~= 'table' then
-    return
-  end
-  if leaf.emitted == true or leaf.since == 0 then
-    markEmitAccountKeys(leaf, legacyKeys)
-  elseif type(leaf.since) == 'number' then
-    markEmitAccountKeys(leaf, {"mix"})
-  end
-  leaf.emitted=nil
-  leaf.since=nil
-end
-
-function migrateOrderTxLeaves(order, legacyKeys)
-  forEachAdjustmentLeaf(order, function(leaf)
-    migrateTxLeafEmitFlags(leaf, legacyKeys)
-  end)
-end
-
---- Migrates order.emitted / refund leaf flags into emittedAccounts maps.
--- Order-level flags map to legacy MM account types only (not sub:* — subs stay independent).
-function migrateLegacyEmitFlags(orderCache)
-  if type(orderCache) ~= 'table' then
-    return 0
-  end
-  local legacyKeys=knownLegacyEmitAccountKeys()
-  local n=0
-  for _,order in pairs(orderCache) do
-    if type(order) == 'table' then
-      if order.emitted == true or order.since == 0 then
-        markEmitAccountKeys(order, legacyKeys)
-        order.emitted=nil
-        order.since=nil
-        n=n+1
-      elseif type(order.since) == 'number' then
-        markEmitAccountKeys(order, {"mix"})
-        order.since=nil
-      end
-      migrateOrderTxLeaves(order, legacyKeys)
-    end
-  end
-  return n
-end
-
-function ensureLegacyEmitFlagsMigrated()
-  if LocalStorage == nil or LocalStorage.legacyEmitMigrationVersion == cacheVersion then
-    return
-  end
-  if type(LocalStorage.OrderCache) ~= 'table' then
-    LocalStorage.OrderCache={}
-  end
-  local n=migrateLegacyEmitFlags(LocalStorage.OrderCache)
-  if n > 0 then
-    print("migrated legacy emit flags for", n, "orders")
-  end
-  LocalStorage.legacyEmitMigrationVersion=cacheVersion
 end
 
 function clearAccountSetupState()
@@ -710,8 +574,7 @@ function initialSyncSubAccountsNotYetRefreshed()
   end
   -- The combined MoneyMoney account harvests every discovered sub-account.
   -- It therefore satisfies the initial-sync requirement on its own.
-  if refreshed[emitAccountKey(secUsername)] ~= nil
-      or refreshed["mix"] ~= nil then
+  if refreshed[emitAccountKey(secUsername)] ~= nil then
     return {}
   end
   local missing={}
@@ -791,46 +654,10 @@ function refreshAccountBlockedResult()
     MM.printStatus(const.fullReimportStatus)
     return emptyRefreshResult()
   end
-  ensureLegacyEmitFlagsMigrated()
   if isAccountSetupSession() then
     return accountDiscoveryRefreshResult()
   end
   return nil
-end
-
---- @function ensureBalancesByPeriodForAccount
--- Persisted period contra balances, keyed by MoneyMoney accountNumber.
-function ensureBalancesByPeriodForAccount(accountNumber)
-  if LocalStorage.balancesByPeriod == nil then
-    LocalStorage.balancesByPeriod={}
-  end
-  local key=emitAccountKey(accountNumber)
-  local root=LocalStorage.balancesByPeriod
-  if type(root[key]) ~= 'table' then
-    root[key]={}
-  end
-  return root[key]
-end
-
---- @function applyPeriodBalanceDelta
--- Period contra ledger in cents. report=false marks the bucket already booked.
-function applyPeriodBalanceDelta(balancesByPeriod, periodFmt, unixTime, delta, report)
-  if type(balancesByPeriod) ~= 'table' or type(periodFmt) ~= 'string' then
-    return
-  end
-  if type(unixTime) ~= 'number' or type(delta) ~= 'number' then
-    return
-  end
-  local period=os.date(periodFmt, unixTime)
-  local bucket=balancesByPeriod[period]
-  if bucket == nil then
-    bucket={report=true, balance=0}
-    balancesByPeriod[period]=bucket
-  end
-  bucket.balance=bucket.balance+delta
-  if report == false then
-    bucket.report=false
-  end
 end
 
 --- @function orderDetailsCompleteForEmit
@@ -907,8 +734,6 @@ if LocalStorage ~=nil then
   if applyImportSchemaUpgrade() then
     configDirty=true
   end
-
-  ensureLegacyEmitFlagsMigrated()
 
   if config.cleanOrdersCache then
     config.cleanOrdersCache=false
@@ -2047,13 +1872,7 @@ function emitAdjustmentLeaf(ctx, order, orderCode, leaf, bookingDate, amountCent
   if type(leaf) ~= 'table' or amount == nil then
     return
   end
-  if not ctx.mixed then
-    ctx.balance=ctx.balance-amount
-  end
   local report=not isOrderEmittedForAccount(leaf, ctx.accountNumber)
-  if ctx.periodly then
-    applyPeriodBalanceDelta(ctx.balancesByPeriod, ctx.periodFmt, bookingDate, -amount, report)
-  end
   if not report then
     return
   end
@@ -2134,61 +1953,12 @@ function appendOrderToRefresh(ctx, order, orderCode)
     markReversedPairOmitted(order, ctx.accountNumber)
     return
   end
-  if not ctx.mixed then
-    ctx.balance=ctx.balance+order.orderTotal
-  end
   local report=not isOrderEmittedForAccount(order, ctx.accountNumber)
     and orderDetailsCompleteForEmit(order, ctx.now, ctx.accountNumber)
-  if ctx.periodly then
-    applyPeriodBalanceDelta(ctx.balancesByPeriod, ctx.periodFmt, order.bookingDate, order.orderTotal, report)
-  end
   if report then
     emitPurchaseLines(ctx, order, orderCode)
   end
   emitOrderAdjustments(ctx, order, orderCode, report)
-end
-
-function appendPeriodContras(ctx, periodContra)
-  if not ctx.periodly then
-    return
-  end
-  local storedBalances=ensureBalancesByPeriodForAccount(ctx.accountNumber)
-  local lastPeriod=""
-  for k,_ in pairs(ctx.balancesByPeriod) do
-    if lastPeriod<k then
-      lastPeriod=k
-    end
-  end
-  for k,bucket in pairs(ctx.balancesByPeriod) do
-    if bucket.report then
-      if k == lastPeriod then
-        storedBalances[k]={bucket.balance}
-      else
-        if storedBalances[k] == nil then
-          storedBalances[k]={}
-        end
-        local sum=0
-        for _,delta in ipairs(storedBalances[k]) do
-          sum=sum+delta
-        end
-        if sum ~= bucket.balance then
-          table.insert(storedBalances[k],bucket.balance-sum)
-        end
-      end
-      for _,delta in ipairs(storedBalances[k]) do
-        table.insert(ctx.transactions,{
-          name=k,
-          amount = delta/ctx.divisor*-1,
-          bookingDate = getLastDayOfPeriod(k),
-          purpose = periodContra,
-          booked= k~=lastPeriod,
-        })
-        if k == lastPeriod then
-          ctx.balance=delta
-        end
-      end
-    end
-  end
 end
 
 function makeAccountTransaction(order, orderCode, name, amount, bookingDate, purpose)
@@ -2772,8 +2542,7 @@ function scheduleIncrementalRefundWatch(accountNumber, refreshSince, now)
       -- already queued
     elseif type(order.detailsDate) == 'number' and order.detailsDate > now then
       -- respect scheduleNextDetailsDate; do not re-fetch before rescan is due
-    elseif isOrderEmittedForAccount(order, accountNumber)
-        or isOrderEmittedForAccount(order, "mix") then
+    elseif isOrderEmittedForAccount(order, accountNumber) then
       order.detailsDate=1
       n=n+1
     end
@@ -3862,7 +3631,6 @@ function countBusinessOrdersWhere(predicate, now)
   local count=0
   for _,order in pairs(cache) do
     if type(order) == 'table' then
-      backfillSubAccountKind(order)
       if order.subAccountKind == 'business' and predicate(order, now, businessAccount) then
         count=count+1
       end
@@ -5125,6 +4893,9 @@ function subAccountNumberForKind(kind)
   if type(discovered) == 'table' then
     for _,sub in ipairs(discovered) do
       if type(sub) == 'table' and sub.kind == kind and type(sub.accountNumber) == 'string' and sub.accountNumber ~= '' then
+        if isAmazonCustomerId(sub.accountNumber) then
+          return moneyMoneyAccountNumberForCustomerId(sub.accountNumber)
+        end
         return sub.accountNumber
       end
     end
@@ -5146,26 +4917,51 @@ function subAccountKindDisplayLabel(kind)
 end
 
 function combinedAccountListLabel()
-  local discovered=LocalStorage and LocalStorage.discoveredSubAccounts
-  if type(discovered) ~= 'table' then
-    return const.combinedAccountListName
+  return const.combinedAccountListName
+end
+
+--- @function isAmazonCustomerId
+-- Raw Amazon session customerId (A…), as stored in discovery — not the MM accountNumber.
+function isAmazonCustomerId(customerId)
+  return type(customerId) == 'string'
+    and string.match(customerId, "^A[A-Z0-9]+$") ~= nil
+end
+
+--- @function moneyMoneyAccountNumberForCustomerId
+-- MoneyMoney accountNumber for a sub-account. Encodes customerId so the raw
+-- A… string is not a contiguous substring (Amazon-Kreditkarte host override).
+function moneyMoneyAccountNumberForCustomerId(customerId)
+  if not isAmazonCustomerId(customerId) then
+    error("Amazon: moneyMoneyAccountNumberForCustomerId erwartet eine Amazon-customerId")
   end
-  local personal=findSubAccountByKind(discovered, 'personal')
-  local business=findSubAccountByKind(discovered, 'business')
-  if type(personal) ~= 'table' or type(personal.label) ~= 'string'
-      or personal.label == ''
-      or type(business) ~= 'table' or type(business.label) ~= 'string'
-      or business.label == '' then
-    return const.combinedAccountListName
+  return const.moneyMoneyCustomerIdAccountPrefix..string.sub(customerId, 2)
+end
+
+--- @function amazonCustomerIdFromMoneyMoneyAccountNumber
+-- Decodes AO.<body> → A<body>; nil if not a current namespaced sub-account number.
+function amazonCustomerIdFromMoneyMoneyAccountNumber(accountNumber)
+  if type(accountNumber) ~= 'string' then
+    return nil
   end
-  return personal.label.." + "..business.label
+  local prefix=const.moneyMoneyCustomerIdAccountPrefix
+  if string.sub(accountNumber, 1, #prefix) ~= prefix then
+    return nil
+  end
+  local body=string.sub(accountNumber, #prefix+1)
+  if body == '' or string.match(body, "^[A-Z0-9]+$") == nil then
+    return nil
+  end
+  local customerId="A"..body
+  if not isAmazonCustomerId(customerId) then
+    return nil
+  end
+  return customerId
 end
 
 --- @function isAmazonCustomerIdAccountNumber
--- MoneyMoney sub-account numbers are Amazon customerIds (A…).
+-- MoneyMoney sub-account numbers are encoded customerIds (AO.<ohne führendes A>).
 function isAmazonCustomerIdAccountNumber(accountNumber)
-  return type(accountNumber) == 'string'
-    and string.match(accountNumber, "^A[A-Z0-9]+$") ~= nil
+  return amazonCustomerIdFromMoneyMoneyAccountNumber(accountNumber) ~= nil
 end
 
 function discoveredSubAccountDisplayName(discoveredSub)
@@ -5188,7 +4984,7 @@ function isCompleteDiscoveredSubAccount(discoveredSub)
   if discoveredSub.kind ~= "personal" and discoveredSub.kind ~= "business" then
     return false
   end
-  if not isAmazonCustomerIdAccountNumber(discoveredSub.accountNumber) then
+  if not isAmazonCustomerId(discoveredSub.accountNumber) then
     return false
   end
   return discoveredSubAccountDisplayName(discoveredSub) ~= ''
@@ -5204,8 +5000,9 @@ function accountNumberForLog(accountNumber)
   if kind ~= nil then
     return kind
   end
-  if isAmazonCustomerIdAccountNumber(accountNumber) then
-    return "customerId:"..string.sub(accountNumber, 1, 4).."…"
+  local customerId=amazonCustomerIdFromMoneyMoneyAccountNumber(accountNumber)
+  if customerId ~= nil then
+    return "customerId:"..string.sub(customerId, 1, 4).."…"
   end
   if type(accountNumber) == 'string' and accountNumber ~= '' then
     return accountNumber
@@ -5282,41 +5079,52 @@ function isCombinedMoneyMoneyAccount(accountNumber)
   if accountNumber == nil or accountNumber == '' then
     return true
   end
-  local num=tostring(accountNumber)
-  if num == "mix" then
-    return true
-  end
-  return matchesCombinedAccountEmail(num)
+  return matchesCombinedAccountEmail(accountNumber)
 end
 
---- @function isLegacyMoneyMoneyAccountNumber
--- True for the account numbers from before customerId discovery ("mix",
--- "normal", "inverse", "monthly", "yearly"). They all cover every order,
--- regardless of the sub-account it was placed in.
-function isLegacyMoneyMoneyAccountNumber(accountNumber)
+--- @function isObsoleteMoneyMoneyAccountNumber
+-- Alt-Kontonummern vor E-Mail/AO.-Encoding: kein Refresh mehr, nur Neu-Anlage.
+-- nil/"" sind kein Obsolete (Combined-Sentinel), sondern isCombinedMoneyMoneyAccount.
+-- Bare customerId und AB-<customerId> enthalten die ID als Substring → obsolete.
+function isObsoleteMoneyMoneyAccountNumber(accountNumber)
   if type(accountNumber) ~= 'string' or accountNumber == '' then
     return false
   end
-  for _,key in ipairs(const.legacyEmitAccountKeys) do
+  if string.match(accountNumber, "^sub:") then
+    return true
+  end
+  for _,key in ipairs(const.obsoleteMoneyMoneyAccountNumbers) do
     if accountNumber == key then
       return true
     end
   end
+  if isAmazonCustomerId(accountNumber) then
+    return true
+  end
+  if string.match(accountNumber, "^AB%-A[A-Z0-9]+$") then
+    return true
+  end
   return false
+end
+
+function assertCurrentMoneyMoneyAccountNumber(accountNumber)
+  if isObsoleteMoneyMoneyAccountNumber(accountNumber) then
+    error(const.obsoleteAccountRecreateMessage)
+  end
 end
 
 function moneyMoneyAccountKind(accountNumber)
   if type(accountNumber) ~= 'string' or accountNumber == '' then
     return nil
   end
-  local legacy=string.match(accountNumber, "^sub:(.+)$")
-  if legacy == "personal" or legacy == "business" then
-    return legacy
+  local customerId=amazonCustomerIdFromMoneyMoneyAccountNumber(accountNumber)
+  if customerId == nil then
+    return nil
   end
   local discovered=LocalStorage and LocalStorage.discoveredSubAccounts
   if type(discovered) == 'table' then
     for _,sub in ipairs(discovered) do
-      if type(sub) == 'table' and sub.accountNumber == accountNumber
+      if type(sub) == 'table' and sub.accountNumber == customerId
           and (sub.kind == "personal" or sub.kind == "business") then
         return sub.kind
       end
@@ -5325,79 +5133,26 @@ function moneyMoneyAccountKind(accountNumber)
   return nil
 end
 
---- @function backfillSubAccountKind
--- Legacy OrderCache entries may have accountNumber (Amazon label) but no
--- subAccountKind. Infer kind from discoveredSubAccounts when labels match.
-function backfillSubAccountKind(order)
-  if type(order) ~= 'table' then
-    return
-  end
-  if type(order.subAccountKind) == 'string' and order.subAccountKind ~= '' then
-    return
-  end
-  local label=order.accountNumber
-  if type(label) ~= 'string' or label == '' then
-    return
-  end
-  local discovered=LocalStorage and LocalStorage.discoveredSubAccounts
-  if type(discovered) ~= 'table' then
-    return
-  end
-  for _,sub in ipairs(discovered) do
-    if type(sub) == 'table' and sub.label == label and type(sub.kind) == 'string' and sub.kind ~= '' then
-      order.subAccountKind=sub.kind
-      return
-    end
-  end
-end
-
 function orderMatchesMoneyMoneyAccount(order, accountNumber)
   if type(order) ~= 'table' then
     return false
   end
-  if isCombinedMoneyMoneyAccount(accountNumber)
-      or isLegacyMoneyMoneyAccountNumber(accountNumber) then
+  if isObsoleteMoneyMoneyAccountNumber(accountNumber) then
+    return false
+  end
+  if isCombinedMoneyMoneyAccount(accountNumber) then
     return true
   end
   local wantKind=moneyMoneyAccountKind(accountNumber)
   if wantKind == nil then
     return false
   end
-  backfillSubAccountKind(order)
   return order.subAccountKind == wantKind
 end
 
---- Legacy MoneyMoney account types: divisor, mixed ledger, optional period contra.
--- The mixed ledger (bookings balanced by an Ausgleich) covers the combined
--- account, the period accounts and every sub-account. Only the legacy "normal"
--- and "inverse" accounts track a real balance.
-function refreshAccountLedgerProfile(accountNumber)
-  local profile={
-    divisor=-100,
-    mixed=false,
-    periodly=false,
-    periodFmt=nil,
-    periodContra=nil,
-  }
-  if accountNumber == "inverse" then
-    profile.divisor=100
-  end
-  if isCombinedMoneyMoneyAccount(accountNumber)
-      or accountNumber == "monthly"
-      or accountNumber == "yearly"
-      or not isLegacyMoneyMoneyAccountNumber(accountNumber) then
-    profile.mixed=true
-  end
-  if accountNumber == "monthly" then
-    profile.periodly=true
-    profile.periodFmt="%Y-%m"
-    profile.periodContra=const.monthlyContra
-  elseif accountNumber == "yearly" then
-    profile.periodly=true
-    profile.periodFmt="%Y"
-    profile.periodContra=const.yearlyContra
-  end
-  return profile
+--- Current MoneyMoney accounts always use the mixed ledger (Ausgleich).
+function refreshAccountLedgerProfile(_accountNumber)
+  return { divisor=-100 }
 end
 
 --- @function detailsRescanDelaySec
@@ -5666,7 +5421,6 @@ function reportEmptyEmitIfMisaligned(accountNumber, transactions, now)
   local hasOtherKind=false
   for _,order in pairs(cache) do
     if type(order) == 'table' then
-      backfillSubAccountKind(order)
       if order.subAccountKind == wantKind
           and orderDetailsCompleteForEmit(order, now, accountNumber) then
         hasEmitReady=true
@@ -6142,11 +5896,12 @@ function SupportsBank (protocol, bankCode)
   if protocol ~= ProtocolWebBanking then
     return false
   end
-  -- Leave Beutling's "Amazon Orders" service name alone while both extensions exist.
-  if type(bankCode) == 'string' and bankCode:sub(1, #"Amazon Orders") == "Amazon Orders" then
+  if type(bankCode) ~= 'string' then
     return false
   end
-  return bankCode == "Amazon"
+  -- Nur der aktuelle Service. "Amazon Orders" (Beutling), "Amazon" (Fork-Alt /
+  -- Kreditkarten-Kollision) und sonstige Namen werden bewusst nicht bedient.
+  return bankCode == const.services[1]
 end
 
 function endsWith(string,ending)
@@ -6283,7 +6038,6 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
           print("clean LocalStorage")
           LocalStorage.OrderCache={}
           clearOrderFilterCaches()
-          LocalStorage.balancesByPeriod={}
         end
       end
     end
@@ -6632,11 +6386,19 @@ function buildAccountAttributes(knownAccounts, accountNumber)
 end
 
 function makeListAccountEntry(name, owner, accountNumber, knownAccounts)
+  -- Explizit Sonstige: MoneyMoney setzt die Kontoart nur bei Neu-Anlage;
+  -- Refresh ändert sie nicht. AccountTypeOther muss aus der Host-Laufzeit kommen.
+  -- Unterkonten: accountNumber = AO.<customerId ohne führendes A> — weder nackte
+  -- customerId noch AB-<customerId> (Substring → Amazon-Kreditkarte).
+  local accountType=AccountTypeOther
+  if accountType == nil then
+    error("Amazon: AccountTypeOther fehlt in der MoneyMoney-Laufzeit")
+  end
   return {
     name=name,
     owner=owner,
     accountNumber=accountNumber,
-    type=AccountTypeOther,
+    type=accountType,
     portfolio=false,
     currency="EUR",
     -- MoneyMoney Konto-Einstellungen (undokumentiert, wie showDailyBalance):
@@ -6685,9 +6447,10 @@ function ListAccounts (knownAccounts)
   end
   if #completeDiscovered > 1 then
     for _,sub in ipairs(completeDiscovered) do
+      local mmNumber=moneyMoneyAccountNumberForCustomerId(sub.accountNumber)
       table.insert(accounts, makeListAccountEntry(
         "Amazon "..listAccountDisplayLabel(sub.accountNumber, sub),
-        owner, sub.accountNumber, knownAccounts))
+        owner, mmNumber, knownAccounts))
     end
   end
   return accounts
@@ -6799,6 +6562,7 @@ function fetchPendingOrderDetails(accountNumber, now)
 end
 
 function RefreshAccount (account, since)
+  assertCurrentMoneyMoneyAccountNumber(account and account.accountNumber)
   local now=os.time()
 
   webCacheState='RefreshAccount'
@@ -6834,12 +6598,7 @@ function RefreshAccount (account, since)
   ensureOrderCache()
   orderBlacklist=loadOrderBlacklistFromConfig()
 
-  local ledger=refreshAccountLedgerProfile(account.accountNumber)
-  local mixed=ledger.mixed
-  local periodly=ledger.periodly
-  local periodFmt=ledger.periodFmt
-  local periodContra=ledger.periodContra
-  local divisor=ledger.divisor
+  local divisor=refreshAccountLedgerProfile(account.accountNumber).divisor
 
   print("Refresh",accountNumberForLog(account.accountNumber))
 
@@ -6913,12 +6672,8 @@ function RefreshAccount (account, since)
   local ctx={
     transactions=transactions,
     accountNumber=account.accountNumber,
-    mixed=mixed,
-    periodly=periodly,
-    periodFmt=periodFmt,
     divisor=divisor,
     now=now,
-    balancesByPeriod={},
     balance=0,
   }
   for orderCode,order in pairs(LocalStorage.OrderCache) do
@@ -6927,11 +6682,7 @@ function RefreshAccount (account, since)
     end
   end
 
-  if mixed and not periodly then
-    addMixFloatingBalance(transactions, ctx.accountNumber, refreshSince, now, divisor)
-  end
-
-  appendPeriodContras(ctx, periodContra)
+  addMixFloatingBalance(transactions, ctx.accountNumber, refreshSince, now, divisor)
 
   if config.debug then
     RegressionTest.run(transactions,account.accountNumber)

@@ -1,10 +1,11 @@
--- RefreshAccount: no dummies; per-account emittedAccounts; subs independent of mix.
+-- RefreshAccount: no dummies; per-account emittedAccounts; subs independent of combined.
 -- Run: test/run.sh test/test_emit_no_dummies.lua
 ---@diagnostic disable: duplicate-set-field -- Test cases intentionally replace sandbox mocks.
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 
 env.connectShop = function()
   return mm.HTML("<html><body></body></html>")
@@ -44,7 +45,7 @@ local function baseCache()
       bookingDate = os.time({ year = 2026, month = 8, day = 21 }),
       detailsDate = os.time() + 86400,
       detailsParsed = true,
-      emittedAccounts = { mix = true },
+      emittedAccounts = { ["test@example.com"] = true },
       subAccountKind = "business",
     },
   }
@@ -52,14 +53,14 @@ end
 
 -- Skip network harvest: login counters match + lastHarvestSince newer than since.
 env.LocalStorage = {
-  cacheVersion = 22,
+  cacheVersion = 23,
   loginCounter = 1,
   lastLoginCounter = 1,
   lastHarvestSince = os.time(),
   OrderCache = baseCache(),
 }
 
-local account = { accountNumber = "mix", owner = "test@example.com" }
+local account = { accountNumber = "test@example.com", owner = "test@example.com" }
 local since = os.time() - (7 * 24 * 60 * 60)
 local result = env.RefreshAccount(account, since)
 
@@ -82,13 +83,13 @@ for _, tx in ipairs(result.transactions) do
   end
 end
 assert(refs["303-1111111-1111111"] == true, "new order must be emitted")
-assert(refs["303-2222222-2222222"] == nil, "already emitted for mix must not re-import")
-assert(env.LocalStorage.OrderCache["303-1111111-1111111"].emittedAccounts["mix"] == true,
-  "new order must be marked emitted for mix")
-assert(env.LocalStorage.OrderCache["303-1111111-1111111"].emittedAccounts["sub:business"] == nil,
-  "mix emit must not mark sub:business")
+assert(refs["303-2222222-2222222"] == nil, "already emitted for combined email must not re-import")
+assert(env.LocalStorage.OrderCache["303-1111111-1111111"].emittedAccounts["test@example.com"] == true,
+  "new order must be marked emitted for combined email")
+assert(env.LocalStorage.OrderCache["303-1111111-1111111"].emittedAccounts["AO.3BUSINESSID02"] == nil,
+  "combined emit must not mark business customerId")
 
--- Second mix refresh: no re-emit
+-- Second combined refresh: no re-emit
 local result2 = env.RefreshAccount(account, since)
 local count2 = 0
 for _, tx in ipairs(result2.transactions) do
@@ -96,10 +97,16 @@ for _, tx in ipairs(result2.transactions) do
     count2 = count2 + 1
   end
 end
-assert(count2 == 0, "second mix refresh must not re-emit")
+assert(count2 == 0, "second combined refresh must not re-emit")
 
--- New sub:business account must still receive orders already emitted on mix
-local subAccount = { accountNumber = "sub:business", owner = "test@example.com" }
+-- Business customerId account must still receive orders already emitted on combined
+env.rememberDiscoveredSubAccounts({
+  { kind = "personal", label = "Persönliches Konto", customerName = "Persönliches Konto",
+    accountNumber = "A3PERSONALID01" },
+  { kind = "business", label = "Example GmbH", businessName = "Example GmbH",
+    accountNumber = "A3BUSINESSID02" },
+})
+local subAccount = { accountNumber = "AO.3BUSINESSID02", owner = "test@example.com" }
 local resultSub = env.RefreshAccount(subAccount, since)
 local subRefs = {}
 for _, tx in ipairs(resultSub.transactions) do
@@ -107,10 +114,10 @@ for _, tx in ipairs(resultSub.transactions) do
     subRefs[tx.endToEndReference] = true
   end
 end
-assert(subRefs["303-1111111-1111111"] == true, "sub must emit order already sent to mix")
-assert(subRefs["303-2222222-2222222"] == true, "sub must emit order only marked for mix")
-assert(env.LocalStorage.OrderCache["303-1111111-1111111"].emittedAccounts["sub:business"] == true)
-assert(env.LocalStorage.OrderCache["303-2222222-2222222"].emittedAccounts["sub:business"] == true)
+assert(subRefs["303-1111111-1111111"] == true, "sub must emit order already sent to combined")
+assert(subRefs["303-2222222-2222222"] == true, "sub must emit order already marked for combined")
+assert(env.LocalStorage.OrderCache["303-1111111-1111111"].emittedAccounts["AO.3BUSINESSID02"] == true)
+assert(env.LocalStorage.OrderCache["303-2222222-2222222"].emittedAccounts["AO.3BUSINESSID02"] == true)
 
 -- Incomplete details must not mark emitted
 env.LocalStorage.OrderCache["303-incomplete"] = {
@@ -171,7 +178,7 @@ env.LocalStorage.OrderCache["303-laterpos"] = {
   bookingDate = os.time({ year = 2026, month = 8, day = 20 }),
   detailsDate = os.time() + 86400,
   detailsParsed = true,
-  emittedAccounts = { ["sub:business"] = true },
+  emittedAccounts = { ["A3BUSINESSID02"] = true },
   subAccountKind = "business",
 }
 assert(env.orderHasPositions(env.LocalStorage.OrderCache["303-laterpos"]) == false)
@@ -193,30 +200,9 @@ for _, tx in ipairs(resultLater.transactions) do
   end
 end
 assert(laterCount > 0, "order must emit after positions appear")
-assert(env.LocalStorage.OrderCache["303-laterpos"].emittedAccounts["sub:business"] == true)
+assert(env.LocalStorage.OrderCache["303-laterpos"].emittedAccounts["AO.3BUSINESSID02"] == true)
 
--- balancesByPeriod is per MoneyMoney account
-env.LocalStorage.balancesByPeriod = nil
-local monthlyStore = env.ensureBalancesByPeriodForAccount("monthly")
-local mixStore = env.ensureBalancesByPeriodForAccount("mix")
-assert(monthlyStore ~= mixStore)
-monthlyStore["2024-02"] = { 50 }
-assert(mixStore["2024-02"] == nil, "monthly store is separate")
-mixStore["2023-12"] = { 10 }
-assert(env.LocalStorage.balancesByPeriod.mix == mixStore)
-assert(env.LocalStorage.balancesByPeriod.monthly == monthlyStore)
-
--- applyPeriodBalanceDelta: refunds and returns share one period ledger.
-local buckets = {}
-env.applyPeriodBalanceDelta(buckets, "%Y-%m", os.time({ year = 2026, month = 8, day = 1 }), 5000, true)
-env.applyPeriodBalanceDelta(buckets, "%Y-%m", os.time({ year = 2026, month = 8, day = 10 }), -2000, true)
-assert(buckets["2026-08"].balance == 3000)
-assert(buckets["2026-08"].report == true)
-env.applyPeriodBalanceDelta(buckets, "%Y-%m", os.time({ year = 2026, month = 8, day = 11 }), -500, false)
-assert(buckets["2026-08"].balance == 2500)
-assert(buckets["2026-08"].report == false, "already-emitted leaf must not re-open the period contra")
-
--- migrated return leaf must not re-emit on mix
+-- email emit markers on order+return must not re-emit on combined refresh
 env.LocalStorage.OrderCache["303-ret"] = {
   orderCode = "303-ret",
   orderPositions = { { purpose = "Item", amount = 5000, qty = 1 } },
@@ -225,12 +211,12 @@ env.LocalStorage.OrderCache["303-ret"] = {
   bookingDate = os.time({ year = 2026, month = 7, day = 1 }),
   detailsDate = os.time() + 86400,
   detailsParsed = true,
-  emittedAccounts = { mix = true },
+  emittedAccounts = { ["test@example.com"] = true },
   subAccountKind = "business",
   returns = {
     [os.time({ year = 2026, month = 7, day = 10 })] = {
       [5000] = {
-        ["Item"] = { emittedAccounts = { mix = true } },
+        ["Item"] = { emittedAccounts = { ["test@example.com"] = true } },
       },
     },
   },
@@ -240,8 +226,8 @@ for k,_ in pairs(env.LocalStorage.OrderCache["303-ret"].returns) do
   retBooking = k
 end
 local retLeaf = env.LocalStorage.OrderCache["303-ret"].returns[retBooking][5000]["Item"]
-assert(retLeaf.emittedAccounts["mix"] == true)
-assert(env.isOrderEmittedForAccount(retLeaf, "mix") == true)
+assert(retLeaf.emittedAccounts["test@example.com"] == true)
+assert(env.isOrderEmittedForAccount(retLeaf, "test@example.com") == true)
 local mixAfterRet = env.RefreshAccount(account, since)
 local retTx = 0
 for _, tx in ipairs(mixAfterRet.transactions) do
@@ -249,51 +235,20 @@ for _, tx in ipairs(mixAfterRet.transactions) do
     retTx = retTx + 1
   end
 end
-assert(retTx == 0, "already-emitted order+return must not produce mix txs")
+assert(retTx == 0, "already-emitted order+return must not produce combined txs")
 
--- Monthly: returns must shrink the period contra so the account still nets to zero.
-local returnDate = os.time({ year = 2026, month = 8, day = 10 })
-env.LocalStorage.OrderCache = {
-  ["303-month-ret"] = {
-    orderCode = "303-month-ret",
-    orderPositions = { { purpose = "Item", amount = 5000, qty = 1 } },
-    orderSum = 5000,
-    orderTotal = 5000,
-    bookingDate = os.time({ year = 2026, month = 8, day = 1 }),
-    detailsDate = os.time() + 86400,
-    detailsParsed = true,
-    subAccountKind = "business",
-    returns = {
-      [returnDate] = {
-        [2000] = { ["Item"] = {} },
-      },
-    },
-  },
-}
-local monthlyAccount = { accountNumber = "monthly", owner = "test@example.com" }
-local monthlyResult = env.RefreshAccount(monthlyAccount, since)
-local purchase, returned, contra = 0, 0, 0
-for _, tx in ipairs(monthlyResult.transactions) do
-  if tx.endToEndReference == "303-month-ret" then
-    if (tx.name or ""):find("Rückgabe:", 1, true) then
-      returned = returned + tx.amount
-    else
-      purchase = purchase + tx.amount
-    end
-  elseif tx.purpose == "monthy contra" then
-    contra = contra + tx.amount
-  end
-end
-assert(math.abs(purchase - (-50)) < 0.001, "monthly purchase, got " .. tostring(purchase))
-assert(math.abs(returned - 20) < 0.001, "monthly return credit, got " .. tostring(returned))
-assert(math.abs(contra - 30) < 0.001,
-  "period contra must be orderTotal minus return (30), got " .. tostring(contra))
-assert(math.abs(purchase + returned + contra) < 0.001, "monthly purchase+return+contra must net to 0")
+-- Obsolete period account numbers are rejected (no monthly/yearly Refresh).
+local monthlyOk, monthlyErr = pcall(env.RefreshAccount,
+  { accountNumber = "monthly", owner = "test@example.com" }, since)
+assert(monthlyOk == false, "RefreshAccount must reject obsolete monthly")
+assert(tostring(monthlyErr):find("neu anlegen", 1, true)
+    or tostring(monthlyErr):find("Amazon Bestellungen", 1, true),
+  "rejection must name recreate / Amazon Bestellungen")
 
 -- Emit-only refresh (harvest skipped) still runs incremental refund watch.
 local emitOnlySince = os.time() - (3 * 24 * 60 * 60)
 env.LocalStorage = {
-  cacheVersion = 22,
+  cacheVersion = 23,
   loginCounter = 1,
   lastLoginCounter = 1,
   lastHarvestSince = os.time(),
@@ -302,7 +257,7 @@ env.LocalStorage = {
       orderCode = "303-emitonly",
       bookingDate = emitOnlySince + 3600,
       detailsDate = os.time() - 3600,
-      emittedAccounts = { mix = true },
+      emittedAccounts = { ["test@example.com"] = true },
       orderPositions = { { purpose = "X", amount = 100, qty = 1 } },
       orderSum = 100,
       orderTotal = 100,
@@ -322,7 +277,7 @@ assert(fetched["303-emitonly"] == true,
 -- Scan error must not block refund watch + details fetch for due orders.
 local scanErrSince = os.time() - (3 * 24 * 60 * 60)
 env.LocalStorage = {
-  cacheVersion = 22,
+  cacheVersion = 23,
   loginCounter = 2,
   lastLoginCounter = 2,
   lastHarvestSince = 0,
@@ -331,7 +286,7 @@ env.LocalStorage = {
       orderCode = "303-scanerr",
       bookingDate = scanErrSince + 3600,
       detailsDate = os.time() - 3600,
-      emittedAccounts = { mix = true },
+      emittedAccounts = { ["test@example.com"] = true },
       orderPositions = { { purpose = "Y", amount = 200, qty = 1 } },
       orderSum = 200,
       orderTotal = 200,

@@ -2,6 +2,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 
 env.LocalStorage = {
   cacheVersion = 21,
@@ -14,7 +15,7 @@ env.LocalStorage = {
 }
 assert(env.applyImportSchemaUpgrade() == true,
   "cache version 21 must be migrated for the detailsParsed contract")
-assert(env.LocalStorage.cacheVersion == 22, "cache migration must persist schema version 22")
+assert(env.LocalStorage.cacheVersion == 23, "cache migration must persist schema version 23")
 assert(next(env.LocalStorage.OrderCache) == nil,
   "cache migration must remove entries without a trustworthy detailsParsed marker")
 
@@ -37,6 +38,18 @@ env.LocalStorage = {
 }
 assert(env.applyImportSchemaUpgrade() == true,
   "non-numeric cache versions must trigger a full reimport")
+assert(env.LocalStorage.cacheVersion == 23)
+assert(env.LocalStorage.requireFullReimport == true)
+
+env.LocalStorage = {
+  cacheVersion = 22,
+  OrderCache = { ["304-v22"] = { orderPositions = {{amount = 1}} } },
+}
+assert(env.applyImportSchemaUpgrade() == true,
+  "cache version 22 must wipe to current schema 23")
+assert(env.LocalStorage.cacheVersion == 23)
+assert(env.LocalStorage.requireFullReimport == true)
+assert(next(env.LocalStorage.OrderCache) == nil)
 
 local missingNetDateOk, missingNetDateError = pcall(
   env.emitPartialReturnNetLine,
@@ -64,12 +77,12 @@ assert(tostring(missingRefundDateError):find("Bestelldatum", 1, true),
 assert(env.orderDetailsCompleteForEmit(
   {detailsDate = os.time() + 3600, detailsParsed = false},
   os.time(),
-  "mix") == false,
+  "test@example.com") == false,
   "orders without parsed details must never be emit-ready")
 assert(env.orderDetailsCompleteForEmit(
   {detailsDate = os.time() + 3600, detailsParsed = true, bookingDate = "invalid"},
   os.time(),
-  "mix") == false,
+  "test@example.com") == false,
   "orders without a valid booking date must never be emit-ready")
 
 env.connectShopWithCheck = function()

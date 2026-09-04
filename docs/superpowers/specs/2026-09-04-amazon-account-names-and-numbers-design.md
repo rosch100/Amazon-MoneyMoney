@@ -12,12 +12,18 @@ Status: **Implementiert** (2026-09-04). Implementierungsplan:
 - Geschäftlich: **Amazon** + Switcher-`businessName` (gleiche Form wie privat).
 - Kontonummern sinnvoll und stabil:
   - Gemeinsam: Login-E-Mail (`secUsername`).
-  - Persönlich / Geschäftlich: Amazon-`customerId` der jeweiligen Session.
+  - Persönlich / Geschäftlich: `AO.` + Amazon-`customerId` **ohne** führendes
+    `A` (MoneyMoney-Nummer; Discovery speichert die rohe `customerId`).
+    Nackte `customerId` und `AB-<customerId>` enthalten die ID als Substring und
+    werden von MoneyMoney mit *Amazon-Kreditkarte* verknüpft → obsolete.
 - Gemeinsames Konto (und die Unterkonten) als MoneyMoney-Kontoart
   **Sonstiges** (`AccountTypeOther`), inkl. der bestehenden Flags gegen
   Gesamtsumme/Diagramme.
-- Breaking: Nutzer löschen Amazon-Konten und legen neu an. Alte Nummern
-  `mix` / `sub:personal` / `sub:business` nur noch Legacy-Refresh.
+- Breaking: Nutzer müssen Amazon-Konten löschen und unter *Amazon Bestellungen*
+  neu anlegen. Alt-Service `"Amazon"` und Alt-Nummern
+  `mix` / `sub:*` / `normal` / `inverse` / `monthly` / `yearly` sowie nackte
+  `customerId`s und `AB-…` werden nicht mehr bedient (`SupportsBank` /
+  `RefreshAccount` fordern Neu-Anlage).
 
 ## Nicht-Ziele
 
@@ -46,13 +52,14 @@ Status: **Implementiert** (2026-09-04). Implementierungsplan:
 | Konto | `accountNumber` | Quelle |
 | --- | --- | --- |
 | Gemeinsam | Login-E-Mail | `secUsername` aus der Session |
-| Persönlich | Amazon-`customerId` | Seiten-JS der Personal-Session |
-| Geschäftlich | Amazon-`customerId` | Seiten-JS der Business-Session |
+| Persönlich | `AO.` + `customerId` ohne führendes `A` | Seiten-JS der Personal-Session |
+| Geschäftlich | `AO.` + `customerId` ohne führendes `A` | Seiten-JS der Business-Session |
 
 `discoveredSubAccounts` speichert nur Unterkonten
-`{kind, label, customerName|businessName, accountNumber=customerId}`.
-Das gemeinsame Konto wird **nicht** als Discovery-Eintrag mit Rolle
-„combined“ persistiert.
+`{kind, label, customerName|businessName, accountNumber=customerId}` (roh).
+`ListAccounts` setzt die MoneyMoney-Nummer auf `AO.`+`customerId[2…]`. Das
+gemeinsame Konto wird **nicht** als Discovery-Eintrag mit Rolle „combined“
+persistiert.
 
 ### Discovery (Ansatz A)
 
@@ -80,73 +87,73 @@ wechseln, um je Session die `customerId` zu lesen:
 | MFA/Auth beim Discovery-Wechsel scheitert (nach einmaliger Credential-Antwort wie Refresh) | **Fehler** zurückgeben; keine Kontenliste mit Teilstand |
 | Rückwechsel zur Ausgangssession scheitert | **Fehler** (siehe Schritt 4) |
 
-## Interne Erkennung (Muss-Rewrite)
-
-Heutiger Stand ist mit E-Mail/`customerId` **falsch**:
-`isCombinedMoneyMoneyAccount` behandelt jede Nummer ohne Prefix `sub:` als
-Combined; `orderMatchesMoneyMoneyAccount` liefert bei unbekanntem Key
-faktisch „match all“. Das darf nach dem Umbau **nicht** mehr gelten.
+## Interne Erkennung
 
 ### SSOT
 
 | Rolle | Erkennung |
 | --- | --- |
-| Combined (neu) | `accountNumber == secUsername` (Login-E-Mail der Session) |
-| Combined (Legacy) | `accountNumber == "mix"` oder leere/`nil`-Nummer wie bisher für Altpfade |
-| Personal (neu) | Eintrag in `discoveredSubAccounts` mit `accountNumber` und `kind=="personal"` |
-| Business (neu) | Eintrag in `discoveredSubAccounts` mit `accountNumber` und `kind=="business"` |
-| Personal (Legacy) | `accountNumber == "sub:personal"` |
-| Business (Legacy) | `accountNumber == "sub:business"` |
+| Combined | Login-E-Mail (`secUsername`); leere/`nil`-Nummer nur für interne Emit-Hilfen |
+| Personal | Discovery-Eintrag mit `accountNumber` und `kind=="personal"` |
+| Business | Discovery-Eintrag mit `accountNumber` und `kind=="business"` |
+| Obsolete MM-Nummern | `mix` / `sub:*` / `normal` / `inverse` / `monthly` / `yearly` → kein Refresh; Fehler mit Neu-Anlage |
 
-Unbekannte `accountNumber`: **kein** Match-all. Kind-Hilfen liefern `nil`;
-Order-Filter für reine Unterkonten matchen nur bei bekanntem `kind`.
+Unbekannte `accountNumber`: **kein** Match-all.
 
-### Pflicht-Rewrite
+### Hilfen
 
-Mindestens diese Hilfen müssen die SSOT-Tabelle umsetzen (nicht nur
-`isCombinedMoneyMoneyAccount`):
+- `isCombinedMoneyMoneyAccount` / `isObsoleteMoneyMoneyAccountNumber`
+- `orderMatchesMoneyMoneyAccount` / `harvestPriorityKindFromAccountNumber`
+- `listAccountDisplayLabel` / `subAccountNumberForKind` (Discovery)
+- Combined-`ListAccounts`-Name fest `Amazon` (`combinedAccountListLabel` = `"Amazon"`)
 
-- `isCombinedMoneyMoneyAccount`
-- `orderMatchesMoneyMoneyAccount`
-- `harvestPriorityKindFromAccountNumber`
-- `listAccountDisplayLabel` / `subAccountNumberForKind` (neue Nummern aus
-  Discovery, Legacy-Aliase behalten)
-- Aufrufer, die heute `^sub:` oder hart `"mix"` annehmen
+### Key-Inventar
 
-### Key-Inventar (Pflicht beim Umbau)
+| Bereich | Soll |
+| --- | --- |
+| `ListAccounts` | E-Mail, `AO.`+`customerId` ohne führendes `A` |
+| `emitAccountKey` | Combined = Login-E-Mail (Pflicht); Subs = encoded `AO.…` |
+| `obsoleteMoneyMoneyAccountNumbers` | Reject (+ nackte `customerId`, `AB-A…`) |
+| `initialSyncRefreshedAccounts` | Combined-E-Mail-Key / encoded Sub-Nummer |
+| Order-`emittedAccounts` | nur aktuelle Keys (E-Mail / `AO.…`) |
+| `cacheVersion` | aktuell **23**; ältere/unversionierte Import-Caches werden verworfen |
 
-| Bereich | Heute | Soll |
-| --- | --- | --- |
-| `ListAccounts` | `"mix"`, `sub:*` | E-Mail, `customerId` |
-| `emitAccountKey(nil/'' )` | `"mix"` | Combined-Key = E-Mail wenn bekannt; Legacy `"mix"` nur für Alt-Emit-Marker |
-| `legacyEmitAccountKeys` | enthält `"mix"` | `"mix"` bleibt für Alt-Cache; neu E-Mail parallel wo nötig |
-| `initialSyncRefreshedAccounts` / Check auf `mix` | hart `"mix"` | Combined-E-Mail + Legacy `"mix"` |
-| `floatingBalanceAnchorByAccount` | via `emitAccountKey` | gleiche Key-Semantik |
-| `balancesByPeriod` | via `emitAccountKey` | gleiche Key-Semantik |
-| Order-`emittedAccounts` / `isOrderEmittedForAccount(..., "mix")` | hart `"mix"` | Combined-Key + Legacy |
-| Tests mit `"mix"` / `sub:*` | fest verdrahtet | neue Keys; Legacy-Fälle behalten |
+Ledger: alle aktuellen Konten nutzen Mixed + Ausgleich. Kein Perioden-Contra,
+keine Emit-/OrderCache-Migration. Notiz-Alias `blackListOrders` →
+`blacklistOrders` bleibt lesend gültig.
 
 ## Kontoart Sonstiges
 
 Bekannter Ist-Zustand: Plugin setzt bereits `type=AccountTypeOther`, aber das
 gemeinsame Live-Konto kann in MoneyMoney als **Kreditkarte** stehen (manuell
 oder beim Anlegen überschrieben; Refresh ändert die Art bestehender Konten
-nicht).
+nicht). Zusätzlich kollidierte der frühere Service-Name `"Amazon"` mit
+MoneyMoney’s eingebauter **Amazon-Kreditkarte**; Neuangebote nutzen daher
+`"Amazon Bestellungen"`. `SupportsBank` akzeptiert **nur** diesen Namen
+(kein Legacy `"Amazon"`, kein Beutling `"Amazon Orders"`). Alt-Kontonummern
+lösen in `RefreshAccount` einen Fehler mit Neu-Anlage-Hinweis aus.
 
 Sicherstellen:
 
 1. `ListAccounts` setzt für **alle** angebotenen Konten explizit
-   `type=AccountTypeOther` (gemeinsam und Unterkonten).
-2. Weiterhin `withTotalSum=false`, `showInDiagrams=false`,
+   `type=AccountTypeOther` (gemeinsam und Unterkonten); fehlt die Konstante
+   in der Host-Laufzeit, bricht `ListAccounts` mit Fehler ab.
+2. Unterkonten-`accountNumber` enthält die rohe `customerId` **nicht** als
+   Substring (`AO.` + ID ohne führendes `A`). Nackte IDs und `AB-A…` sind
+   obsolete — sonst überschreibt MoneyMoney die persönliche ID mit
+   *Kreditkarte* (eingebaute Amazon-Kreditkarte; Live mit `AB-A3Q0…` bestätigt).
+3. Weiterhin `withTotalSum=false`, `showInDiagrams=false`,
    `showDailyBalance=false`, `perspective.chart=1`.
-3. Tests prüfen `type` für das gemeinsame Konto und die Unterkonten.
-4. README: nach dem Update Amazon-Konten **löschen und neu anlegen**, sonst
-   bleibt eine manuell/alt gesetzte Kontoart (z. B. Kreditkarte) erhalten.
-5. Kein Codepfad darf `AccountTypeCreditCard` oder eine andere Art setzen.
+4. Tests prüfen `type`, Encoding ohne Substring-Leak und Obsolete-Formen.
+5. README: nach dem Update Amazon-Konten **löschen und neu anlegen** unter
+   *Amazon Bestellungen*; Alt-Zugänge und Alt-Nummern werden nicht bedient.
+6. Kein Codepfad darf `AccountTypeCreditCard` oder eine andere Art setzen.
+7. `WebBanking.services` / `SupportsBank`: ausschließlich
+   `"Amazon Bestellungen"`.
 
 MoneyMoney-UI kann die Art beim Bestätigen noch überschreiben; das Plugin
-kann das nicht verhindern. Nach Neu-Anlage ist der vom Plugin gelieferte
-Default **Sonstiges**.
+kann das nicht verhindern. Nach Neu-Anlage mit `AO.`-Nummern ist der vom
+Plugin gelieferte Default **Sonstiges**.
 
 ## Breaking / Doku
 
@@ -155,17 +162,16 @@ Default **Sonstiges**.
   2026-08-25 (Keys `mix`/`sub:*` für Neuangebote) als historisch markieren bzw.
   auf dieses Dokument verweisen.
 
-## Tests (geplant)
+## Tests
 
-- `ListAccounts`: Name `Amazon` + E-Mail-Kontonummer; `type=AccountTypeOther`.
-- Bei zwei Subs: `Amazon <customerName>` / `Amazon <businessName>`, jeweilige
-  `customerId`, `type=AccountTypeOther`.
-- Unvollständige Discovery (fehlende ID): nur Combined; kein `sub:*`.
+- `ListAccounts`: Name `Amazon` + E-Mail; `type=AccountTypeOther`.
+- Bei zwei Subs: `Amazon <customerName>` / `Amazon <businessName>`,
+  `accountNumber=AO.<customerId ohne A>`.
+- Unvollständige Discovery: nur Combined; kein `sub:*`.
 - Auth-Fehler in Discovery: Fehler, keine Teilliste.
-- `isCombined` / `orderMatches` / `harvestPriorityKind`: E-Mail = combined;
-  `customerId` = nur eigenes Kind; unbekannte Nummer ≠ match-all; Legacy
-  `mix`/`sub:*` weiter.
-- Harvest-/Refresh-Tests auf neue Keys bzw. Legacy-Aliase anpassen.
+- `isCombined` / `orderMatches`: E-Mail = combined; `AO.…` = eigenes Kind;
+  nackte `customerId` / `AB-A…` / unbekannte Nummer ≠ match-all; obsolete →
+  kein Match / Refresh-Fehler.
 
 ## Offene Umsetzungshinweise (kein Spec-Blocker)
 

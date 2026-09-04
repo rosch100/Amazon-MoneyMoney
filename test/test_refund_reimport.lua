@@ -4,6 +4,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 
 local orderCode = "305-1111111-1111111"
 local bookingDate = os.time({ year = 2025, month = 5, day = 15 })
@@ -13,17 +14,17 @@ local order = {
   orderCode = orderCode,
   orderTotal = amount,
   bookingDate = bookingDate,
-  emittedAccounts = { mix = true },
+  emittedAccounts = { ["test@example.com"] = true },
   orderPositions = { { purpose = "Item C", amount = amount, qty = 1 } },
 }
 
 env.registerRefundTransaction(order, bookingDate, amount)
 assert(order.refundTransactions[bookingDate][amount] ~= nil)
 assert(order.refundTransactions[bookingDate][amount].emittedAccounts == nil)
-assert(env.isOrderEmittedForAccount(order.refundTransactions[bookingDate][amount], "mix") == false)
+assert(env.isOrderEmittedForAccount(order.refundTransactions[bookingDate][amount], "test@example.com") == false)
 
-env.markOrderEmittedForAccount(order.refundTransactions[bookingDate][amount], "mix")
-assert(env.isOrderEmittedForAccount(order.refundTransactions[bookingDate][amount], "mix") == true)
-assert(env.isOrderEmittedForAccount(order.refundTransactions[bookingDate][amount], "sub:business") == false)
+env.markOrderEmittedForAccount(order.refundTransactions[bookingDate][amount], "test@example.com")
+assert(env.isOrderEmittedForAccount(order.refundTransactions[bookingDate][amount], "test@example.com") == true)
+assert(env.isOrderEmittedForAccount(order.refundTransactions[bookingDate][amount], "A3BUSINESSID02") == false)
 
 print("test_refund_reimport OK")

@@ -4,6 +4,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 
 local now = os.time()
 local day = 24 * 60 * 60
@@ -25,7 +26,7 @@ local recent = { bookingDate = now - day }
 env.scheduleNextDetailsDate(recent, now)
 assert(recent.detailsDate >= now + minRecent)
 assert(recent.detailsDate < now + minRecent + jitRecent)
-assert(env.orderNeedsDetailsForAccount(recent, now, "mix") == false,
+assert(env.orderNeedsDetailsForAccount(recent, now, "test@example.com") == false,
   "just-scheduled detailsDate must not fetch again this refresh")
 
 local nodate = {}
@@ -64,11 +65,15 @@ assert(fetchState.counter == 1 and fetchState.failed == 1,
 
 local sessionSwitches = 0
 env.LocalStorage = { OrderCache = {} }
+env.rememberDiscoveredSubAccounts({
+  { kind = "business", label = "Example GmbH", businessName = "Example GmbH",
+    accountNumber = "A3BUSINESSID02" },
+})
 env.ensureAmazonSubAccountSession = function()
   sessionSwitches = sessionSwitches + 1
   return nil
 end
-env.fetchPendingOrderDetails("sub:business", now)
+env.fetchPendingOrderDetails("AO.3BUSINESSID02", now)
 assert(sessionSwitches == 0,
   "empty details queue must not switch Amazon sub-account sessions")
 

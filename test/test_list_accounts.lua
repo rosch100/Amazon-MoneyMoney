@@ -50,8 +50,9 @@ end
 assert(junkNumbers["JUNK-NO-NAME"] == nil)
 assert(junkNumbers["JUNK-UNKNOWN-KIND"] == nil)
 assert(junkNumbers["sub:personal"] == nil)
-assert(junkNumbers["A3PERSONALID01"] == true)
-assert(junkNumbers["A3BUSINESSID02"] == true)
+assert(junkNumbers["A3PERSONALID01"] == nil, "bare customerId must not be offered")
+assert(junkNumbers["AO.3PERSONALID01"] == true)
+assert(junkNumbers["AO.3BUSINESSID02"] == true)
 assert(env.isCompleteDiscoveredSubAccount({
   kind = "personal", accountNumber = "sub:personal", customerName = "X",
 }) == false, "legacy sub:* must not count as complete")
@@ -80,12 +81,18 @@ assert(#listed == 3, "shared + 2 subs, got " .. #listed)
 local byNum = {}
 for _, a in ipairs(listed) do byNum[a.accountNumber] = a end
 assert(byNum["user@example.com"].name == "Amazon")
-assert(byNum["A3PERSONALID01"].name == "Amazon Test User")
-assert(byNum["A3BUSINESSID02"].name == "Amazon Example GmbH")
+assert(byNum["AO.3PERSONALID01"].name == "Amazon Test User")
+assert(byNum["AO.3BUSINESSID02"].name == "Amazon Example GmbH")
+assert(byNum["AO.3PERSONALID01"].subAccount == nil)
 assert(byNum["user@example.com"].type == "AccountTypeOther")
-assert(byNum["A3PERSONALID01"].type == "AccountTypeOther")
+assert(byNum["AO.3PERSONALID01"].type == "AccountTypeOther")
+assert(byNum["AO.3BUSINESSID02"].type == "AccountTypeOther")
 assert(byNum["mix"] == nil)
 assert(byNum["sub:personal"] == nil)
+assert(byNum["A3PERSONALID01"] == nil)
+assert(byNum["AB-A3PERSONALID01"] == nil)
+assert(string.find(byNum["AO.3PERSONALID01"].accountNumber, "A3PERSONALID01", 1, true) == nil,
+  "encoded MM number must not contain raw customerId substring")
 
 env.rememberDiscoveredSubAccounts({
   { kind = "business", label = "Example GmbH", businessName = "Example GmbH",
@@ -97,15 +104,19 @@ local reverseListed = env.ListAccounts({})
 assert(reverseListed[1].accountNumber == "user@example.com")
 assert(reverseListed[1].name == "Amazon")
 
-assert(env.listAccountDisplayLabel("mix") == "Test User + Example GmbH")
-assert(env.listAccountDisplayLabel("sub:personal") == "Persönlich")
-assert(env.listAccountDisplayLabel("sub:business") == "Geschäftlich")
+assert(env.listAccountDisplayLabel("user@example.com") == "Amazon")
+assert(env.listAccountDisplayLabel("A3PERSONALID01", {
+  kind = "personal", customerName = "Test User", accountNumber = "A3PERSONALID01",
+}) == "Test User")
+assert(env.listAccountDisplayLabel("A3BUSINESSID02", {
+  kind = "business", businessName = "Example GmbH", accountNumber = "A3BUSINESSID02",
+}) == "Example GmbH")
 
 -- Known accounts: ListAccounts stays stable (no getOrders / reload gate)
 env.clearPendingInitialSync()
 env.clearAccountSetupState()
 env.LocalStorage.lastHarvestSince = os.time()
-local listedKnown = env.ListAccounts({ "user@example.com", "A3PERSONALID01" })
+local listedKnown = env.ListAccounts({ "user@example.com", "AO.3PERSONALID01" })
 assert(#listedKnown == 3)
 assert(env.isPendingInitialSync() == false, "account search must not trigger initial full import")
 
@@ -117,21 +128,21 @@ assert(listedWithKnownAttrs[1].attributes.resetCache == "2026-08-27")
 assert(listedWithKnownAttrs[1].attributes[1] == nil)
 assert(listedWithKnownAttrs[1].attributes.blacklistOrders == "")
 
-assert(env.subAccountNumberForKind("personal") == "A3PERSONALID01")
-assert(env.subAccountNumberForKind("business") == "A3BUSINESSID02")
-assert(env.isCombinedMoneyMoneyAccount("mix") == true)
-assert(env.isCombinedMoneyMoneyAccount("A3BUSINESSID02") == false)
-assert(env.orderMatchesMoneyMoneyAccount({ subAccountKind = "business" }, "mix") == true)
-assert(env.orderMatchesMoneyMoneyAccount({ subAccountKind = "business" }, "A3BUSINESSID02") == true)
-assert(env.orderMatchesMoneyMoneyAccount({ subAccountKind = "personal" }, "A3BUSINESSID02") == false)
+assert(env.subAccountNumberForKind("personal") == "AO.3PERSONALID01")
+assert(env.subAccountNumberForKind("business") == "AO.3BUSINESSID02")
+assert(env.isCombinedMoneyMoneyAccount("mix") == false)
+assert(env.isCombinedMoneyMoneyAccount("AO.3BUSINESSID02") == false)
+assert(env.orderMatchesMoneyMoneyAccount({ subAccountKind = "business" }, "user@example.com") == true)
+assert(env.orderMatchesMoneyMoneyAccount({ subAccountKind = "business" }, "mix") == false)
+assert(env.orderMatchesMoneyMoneyAccount({ subAccountKind = "business" }, "AO.3BUSINESSID02") == true)
+assert(env.orderMatchesMoneyMoneyAccount({ subAccountKind = "personal" }, "AO.3BUSINESSID02") == false)
 
--- Legacy cache: label only → backfill kind from discovery
-local legacy = { accountNumber = "Example GmbH" }
-assert(env.orderMatchesMoneyMoneyAccount(legacy, "A3BUSINESSID02") == true)
-assert(legacy.subAccountKind == "business")
-assert(env.orderNeedsDetailsForAccount({ detailsDate = 1, subAccountKind = "personal" }, 100, "A3BUSINESSID02") == false)
-assert(env.orderNeedsDetailsForAccount({ detailsDate = 1, subAccountKind = "business" }, 100, "A3BUSINESSID02") == true)
-assert(env.orderNeedsDetailsForAccount({ detailsDate = 1, subAccountKind = "personal" }, 100, "mix") == true)
+-- Match requires explicit subAccountKind (no label-only backfill)
+assert(env.orderMatchesMoneyMoneyAccount({ accountNumber = "Example GmbH" }, "AO.3BUSINESSID02") == false)
+assert(env.orderMatchesMoneyMoneyAccount({ subAccountKind = "business" }, "AO.3BUSINESSID02") == true)
+assert(env.orderNeedsDetailsForAccount({ detailsDate = 1, subAccountKind = "personal" }, 100, "AO.3BUSINESSID02") == false)
+assert(env.orderNeedsDetailsForAccount({ detailsDate = 1, subAccountKind = "business" }, 100, "AO.3BUSINESSID02") == true)
+assert(env.orderNeedsDetailsForAccount({ detailsDate = 1, subAccountKind = "personal" }, 100, "user@example.com") == true)
 
 local order = {}
 env.assignSubAccountMeta(order, "Example GmbH", "business")

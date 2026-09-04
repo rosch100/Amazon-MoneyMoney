@@ -4,6 +4,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 
 env.connectShop = function()
   return mm.HTML("<html><body></body></html>")
@@ -35,7 +36,7 @@ local function baseOrder(code, cents, emitted)
     subAccountKind = "business",
   }
   if emitted then
-    order.emittedAccounts = { mix = true }
+    order.emittedAccounts = { ["test@example.com"] = true }
   end
   return order
 end
@@ -60,19 +61,19 @@ local function findFloating(txs)
   return found, n
 end
 
-env.LocalStorage = { cacheVersion = 22, OrderCache = {} }
+env.LocalStorage = { cacheVersion = 23, OrderCache = {} }
 skipHarvest()
 env.LocalStorage.OrderCache = {
   ["303-1111111-1111111"] = baseOrder("303-1111111-1111111", 1640),
   ["303-2222222-2222222"] = baseOrder("303-2222222-2222222", 3101, true),
 }
 
-local account = { accountNumber = "mix", owner = "test@example.com" }
+local account = { accountNumber = "test@example.com", owner = "test@example.com" }
 local since = os.time() - (7 * 24 * 60 * 60)
 local now = os.time()
 local result = env.RefreshAccount(account, since)
 
-assert(result.balance == 0, "mix must report balance 0 for net worth, got " .. tostring(result.balance))
+assert(result.balance == 0, "combined must report balance 0 for net worth, got " .. tostring(result.balance))
 
 local realSum = 0
 local orderContra = 0
@@ -95,7 +96,7 @@ assert(floating.name == FLOATING_NAME)
 -- Clean reimport: Ausgleich offsets all emitted orders (new 16.40 + already emitted 31.01).
 assert(math.abs(floating.amount - 47.41) < 0.001, "floating offsets full emitted ledger, got " .. tostring(floating.amount))
 assert(floating.bookingDate >= since, "Ausgleich bookingDate must be in the since window")
-local expectedDate = env.mixFloatingBookingDate(since, now, "mix")
+local expectedDate = env.mixFloatingBookingDate(since, now, "test@example.com")
 assert(floating.bookingDate == expectedDate, "Ausgleich anchors before earliest emitted booking")
 
 -- Second refresh: no purchase re-emit; same pending slot (name+date), accumulated amount.
@@ -151,11 +152,11 @@ assert(floatingOld.bookingDate == floating.bookingDate, "persisted anchor must s
 env.LocalStorage.pendingInitialSync = true
 env.LocalStorage.initialSyncHarvestDone = true
 env.LocalStorage.initialSyncExpectedAccounts = nil
-env.LocalStorage.initialSyncRefreshedAccounts = { mix = "mix" }
+env.LocalStorage.initialSyncRefreshedAccounts = { ["test@example.com"] = "test@example.com" }
 env.LocalStorage.floatingBalanceAnchorByAccount = nil
 local resultPending = env.RefreshAccount(account, since)
 local floatingPending = findFloating(resultPending.transactions)
-assert(floatingPending.bookingDate == env.mixFloatingBookingDate(since, now, "mix"))
+assert(floatingPending.bookingDate == env.mixFloatingBookingDate(since, now, "test@example.com"))
 env.LocalStorage.OrderCache["303-6666666-6666666"] = baseOrder("303-6666666-6666666", 500, true)
 env.LocalStorage.OrderCache["303-6666666-6666666"].bookingDate = os.time({ year = 2015, month = 1, day = 1 })
 local resultPending2 = env.RefreshAccount(account, since)

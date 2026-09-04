@@ -1,10 +1,22 @@
--- Erstimport: empty emit on sub:business when cache holds only personal orders.
+-- Erstimport: empty emit on AO.3BUSINESSID02 when cache holds only personal orders.
 -- Run: test/run.sh test/test_empty_emit_misaligned.lua
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 local now = os.time()
+local BIZ_ID = "A3BUSINESSID02"
+local BIZ = "AO." .. BIZ_ID:sub(2)
+
+local function ensureBizDiscovery()
+  env.rememberDiscoveredSubAccounts({
+    { kind = "personal", label = "Persönliches Konto", customerName = "Persönliches Konto",
+      accountNumber = "A3PERSONALID01" },
+    { kind = "business", label = "Example GmbH", businessName = "Example GmbH",
+      accountNumber = BIZ_ID },
+  })
+end
 local statusMessages = {}
 
 env.MM.printStatus = function(...)
@@ -48,27 +60,29 @@ end
 local function refreshBusiness(pendingInitialSync)
   statusMessages = {}
   env.LocalStorage = {
-    cacheVersion = 22,
+    cacheVersion = 23,
     loginCounter = 1,
     lastLoginCounter = 0,
     lastHarvestSince = 0,
     pendingInitialSync = pendingInitialSync,
     OrderCache = personalOnlyCache,
   }
+  ensureBizDiscovery()
   local result = env.RefreshAccount(
-    { accountNumber = "sub:business", owner = "test@example.com" },
+    { accountNumber = BIZ, owner = "test@example.com" },
     0)
   return result, lastStatus()
 end
 
 -- Direct unit: reportEmptyEmitIfMisaligned during Erstimport
 env.LocalStorage = {
-  cacheVersion = 22,
+  cacheVersion = 23,
   pendingInitialSync = true,
   OrderCache = personalOnlyCache,
 }
 statusMessages = {}
-env.reportEmptyEmitIfMisaligned("sub:business", {}, now)
+ensureBizDiscovery()
+env.reportEmptyEmitIfMisaligned(BIZ, {}, now)
 assert(lastStatus():find("Geschäftlich", 1, true),
   "Erstimport must warn when only personal orders in cache")
 assert(lastStatus():find("noch nicht abgerufen", 1, true),
@@ -76,7 +90,8 @@ assert(lastStatus():find("noch nicht abgerufen", 1, true),
 
 env.LocalStorage.pendingInitialSync = false
 statusMessages = {}
-env.reportEmptyEmitIfMisaligned("sub:business", {}, now)
+ensureBizDiscovery()
+env.reportEmptyEmitIfMisaligned(BIZ, {}, now)
 assert(#statusMessages == 0, "incremental refresh must not warn on empty emit")
 
 local function hasMisalignedWarning()
@@ -88,7 +103,7 @@ local function hasMisalignedWarning()
   return false
 end
 
--- Integration: RefreshAccount sub:business during Erstimport
+-- Integration: RefreshAccount AO.3BUSINESSID02 during Erstimport
 local result, _ = refreshBusiness(true)
 local personalOnBusiness = 0
 for _, tx in ipairs(result.transactions) do
@@ -96,7 +111,7 @@ for _, tx in ipairs(result.transactions) do
     personalOnBusiness = personalOnBusiness + 1
   end
 end
-assert(personalOnBusiness == 0, "must not emit personal orders on sub:business")
+assert(personalOnBusiness == 0, "must not emit personal orders on AO.3BUSINESSID02")
 assert(hasMisalignedWarning(),
   "RefreshAccount must surface misaligned emit status during Erstimport")
 
@@ -114,7 +129,7 @@ assert(not hasMisalignedWarning(),
 -- Business orders ready: no misaligned warning
 statusMessages = {}
 env.LocalStorage = {
-  cacheVersion = 22,
+  cacheVersion = 23,
   pendingInitialSync = true,
   OrderCache = {
     ["303-biz-1111111-1111111"] = {
@@ -129,7 +144,8 @@ env.LocalStorage = {
     },
   },
 }
-env.reportEmptyEmitIfMisaligned("sub:business", {}, now)
+ensureBizDiscovery()
+env.reportEmptyEmitIfMisaligned(BIZ, {}, now)
 assert(#statusMessages == 0, "emit-ready business orders must not trigger misaligned warning")
 
 print("test_empty_emit_misaligned OK")

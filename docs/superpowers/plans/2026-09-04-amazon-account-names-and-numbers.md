@@ -1,8 +1,12 @@
 # Amazon Account Names and Numbers Implementation Plan
 
+> **Status: umgesetzt** (2026-09-04). Autoritative Ist-Semantik:
+> `docs/superpowers/specs/2026-09-04-amazon-account-names-and-numbers-design.md`.
+> Dieser Plan ist die historische Task-Liste; bei Widerspruch gilt die Spec.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** MoneyMoney listet Amazon als Konto `Amazon` (E-Mail-Kontonummer, Sonstiges), Unterkonten als `Amazon <customerName|businessName>` mit Amazon-`customerId`, inkl. korrekter Match-Logik und Legacy-`mix`/`sub:*`.
+**Goal:** MoneyMoney listet Amazon als Konto `Amazon` (E-Mail-Kontonummer, Sonstiges), Unterkonten als `Amazon <customerName|businessName>` mit Amazon-`customerId`, inkl. korrekter Match-Logik (kein Match-all).
 
 **Architecture:** Reine Hilfen für `customerId`-Parsing und Konto-Rollen-SSOT zuerst (TDD); dann `ListAccounts`/Discovery mit kurzem Switcher-Wechsel; danach Key-Aliase (`emitAccountKey`, Initial-Sync) und Doku. Monolith `amazon-orders.lua` bleibt; keine Dateisplit-Pflicht.
 
@@ -17,7 +21,7 @@
 - `type=AccountTypeOther` für alle Neuangebote; Flags `withTotalSum=false`, `showInDiagrams=false`, `showDailyBalance=false`, `perspective.chart=1`.
 - Keine stillen Fallbacks (`sub:*`, Dummy-E-Mail, Match-all für unbekannte Nummern).
 - Discovery ohne Order-Harvest; MFA/Auth-Fail und Restore-Fail → Fehler, keine Teilliste.
-- Legacy-Refresh für `mix` / `sub:personal` / `sub:business` bleibt.
+- Kein Refresh für Alt-Nummern `mix` / `sub:*` / `normal` / … — Neu-Anlage unter *Amazon Bestellungen*.
 - Breaking: Nutzer löscht und legt Amazon-Konten neu an (README).
 - Tests: `./test/run.sh test/<file>.lua` bzw. Suite-Loop laut `test/README.md`.
 - Commits nur mit sinnvoller Message; kein Cursor-Co-Author-Trailer.

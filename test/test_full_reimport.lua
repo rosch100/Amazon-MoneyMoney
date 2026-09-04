@@ -4,6 +4,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 
 local function skipHarvest()
   env.LocalStorage.loginCounter = 1
@@ -11,7 +12,7 @@ local function skipHarvest()
   env.LocalStorage.lastHarvestSince = os.time()
 end
 
-local account = { accountNumber = "mix", owner = "test@example.com" }
+local account = { accountNumber = "test@example.com", owner = "test@example.com" }
 local since = os.time() - (7 * 24 * 60 * 60)
 
 -- Fresh storage (no prior version and no imported orders): initialize schema.
@@ -21,7 +22,7 @@ env.LocalStorage = {
 skipHarvest()
 assert(env.applyImportSchemaUpgrade() == false)
 assert(env.LocalStorage.requireFullReimport == nil)
-assert(env.LocalStorage.cacheVersion == 22)
+assert(env.LocalStorage.cacheVersion == 23)
 assert(next(env.LocalStorage.OrderCache) == nil)
 
 -- Legacy cache without schema version but with old emit markers: full reimport.
@@ -74,17 +75,27 @@ env.LocalStorage = {
   OrderCache = {
     ["303-old"] = { orderCode = "303-old", orderTotal = 1 },
   },
-  balancesByPeriod = { mix = { ["2026-08"] = { 1 } } },
   lastHarvestSince = 1,
   cookies = "keep-me",
 }
 assert(env.applyImportSchemaUpgrade() == true)
 assert(env.LocalStorage.requireFullReimport == true)
 assert(env.LocalStorage.OrderCache["303-old"] == nil)
-assert(env.LocalStorage.balancesByPeriod == nil)
 assert(env.LocalStorage.lastHarvestSince == nil)
 assert(env.LocalStorage.cookies == "keep-me", "login session must survive schema wipe")
-assert(env.LocalStorage.cacheVersion == 22)
+assert(env.LocalStorage.cacheVersion == 23)
+
+-- Upgrade from schema 22 with data: wipe to 23 + require full reimport.
+env.LocalStorage = {
+  cacheVersion = 22,
+  OrderCache = {
+    ["303-v22"] = { orderCode = "303-v22", orderTotal = 1 },
+  },
+}
+assert(env.applyImportSchemaUpgrade() == true)
+assert(env.LocalStorage.requireFullReimport == true)
+assert(env.LocalStorage.OrderCache["303-v22"] == nil)
+assert(env.LocalStorage.cacheVersion == 23)
 
 skipHarvest()
 local blocked = env.RefreshAccount(account, since)
