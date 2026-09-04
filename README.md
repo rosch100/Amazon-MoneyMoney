@@ -26,16 +26,14 @@ Unsignierte Plugins laufen nur in der **Beta** von MoneyMoney, und die Signaturp
 
 *Konto hinzufügen* → *Andere* → *Amazon*.
 
-Ohne erkannte Unterkonten wird **Amazon Alle Konten** angeboten. Sind ein
-persönliches und ein geschäftliches Amazon-Konto verbunden, verwendet das
-gemeinsame Konto beide von Amazon gelieferten Namen, zum Beispiel
-**Amazon Persönliches Konto + Example GmbH**. Zusätzlich werden
-**Amazon Persönlich** und **Amazon Geschäftlich** angeboten.
+Das gemeinsame Konto heißt **Amazon**; die Kontonummer ist die Login-E-Mail.
+Sind ein persönliches und ein geschäftliches Amazon-Konto verbunden, werden
+zusätzlich **Amazon <Name>** (persönlich) und **Amazon <Firmenname>**
+(geschäftlich) angeboten. Die Kontonummern der Unterkonten sind die jeweiligen
+Amazon-Kunden-IDs.
 
-Technisch verwendet das Plugin dafür weiterhin die Kontonummern `mix`,
-`sub:personal` und `sub:business`; `mix` ist nicht Teil des sichtbaren Namens.
-Die beiden Unterkonten und der kombinierte Name werden nur angeboten, wenn der
-Amazon-Kontowechsler beim Login tatsächlich beide Unterkonten liefert.
+Die Unterkonten werden nur angeboten, wenn der Amazon-Kontowechsler beim Login
+tatsächlich beide Unterkonten liefert und Amazon die Namen meldet.
 
 Alle diese Konten buchen Käufe, Erstattungen und Rückgaben als echte Umsätze. Eine offene Buchung **Amazon Ausgleich** hält den Saldo bei 0. Sie erscheinen als *Sonstige*, zählen nicht zur Gesamtsumme in der Seitenleiste und nicht in Diagrammen. Die Umsatzliste öffnet als Liste, nicht als Balkendiagramm.
 
@@ -50,8 +48,8 @@ meldet und keine offene Platzhalterbuchung mehr auf einen unvollständigen
 Abruf hinweist. Beim Einrichten sucht `ListAccounts` nur Konten; der eigentliche
 Erstimport beginnt nach dem Ende dieser Sitzung.
 
-Bei **Amazon Geschäftlich** hat das Geschäftskonto Vorrang. **Amazon Alle
-Konten** arbeitet dagegen im Round-Robin-Verfahren: Pro Aktualisierung wird
+Beim **geschäftlichen Unterkonto** hat das Geschäftskonto Vorrang. **Amazon**
+(gemeinsames Konto) arbeitet dagegen im Round-Robin-Verfahren: Pro Aktualisierung wird
 höchstens ein Batch je erkanntem Unterkonto verarbeitet und bei noch offenen
 Daten mit dem nächsten Unterkonto fortgesetzt. Dadurch kann ein vollständiger
 Erstimport mehrere Aktualisierungen benötigen.
@@ -140,7 +138,12 @@ Diese Felder kann man zusätzlich eintragen (kein Standardwert in der Notiztabel
 
 ## Update von älteren Versionen
 
-Es hat sich so viel geändert (Titelzeile, Mix-Buchungen, Kontotypen, Persönlich/Geschäftlich), dass **Löschen und neu Anlegen der Amazon-Konten** empfohlen wird. Bestehende Umsätze werden nicht umgeschrieben; alte Titelzeilen mit Bestellnummer bleiben sonst stehen.
+Es hat sich so viel geändert (Anzeigenamen, Kontonummern, Kontoart *Sonstige*,
+Mix-Buchungen), dass **Löschen und neu Anlegen der Amazon-Konten** empfohlen wird.
+Bestehende Umsätze werden nicht umgeschrieben; alte Titelzeilen mit Bestellnummer
+bleiben sonst stehen. Ohne Neuanlage behalten alte Konten ihre bisherige
+Kreditkarten-Zuordnung, die neuen Kontonummern und Kontoart *Sonstige* kommen
+dann aber nicht zuverlässig an.
 
 Cache-Version 21 verwirft außerdem bewusst Bestelldaten, die mit einem falschen
 Seiten-Zeichensatz gelesen worden sein können. MoneyMoney zeigt deshalb nach
@@ -151,19 +154,24 @@ Umsätze werden nicht still verändert.
 2. Plugin aktualisieren.
 3. Zugang und Konten neu anlegen, danach Erstimport wie oben.
 
-Nur Umsätze löschen und `resetCache` setzen reicht in der Regel nicht: Kontotyp *Sonstige*, Notizfelder und die neue Aufteilung der Konten kommen so nicht zuverlässig an.
+Nur Umsätze löschen und `resetCache` setzen reicht in der Regel nicht: Kontotyp
+*Sonstige*, neue Kontonummern (E-Mail bzw. Amazon-Kunden-ID), Notizfelder und
+die neue Aufteilung der Konten kommen so nicht zuverlässig an.
 
 ## Änderungen gegenüber der ursprünglichen Version
 
 Fork von [Michael Beutling](https://github.com/Michael-Beutling/Amazon-MoneyMoney). Gegenüber dem Original:
 
 - **Titelzeile** ist der Artikelname, nicht mehr die Bestellnummer. Die Bestellnummer steht unter **Referenz**.
-- **Persönlich und Geschäftlich** als eigene Konten, plus **Alle Konten**. Die fünf Buchungsarten Normal / Invertiert / Mix / Monatlich / Jährlich werden nicht mehr neu angeboten.
+- **Gemeinsames Konto** **Amazon** (Kontonummer = Login-E-Mail) sowie getrennte
+  Unterkonten **Amazon <Name>** / **Amazon <Firmenname>**
+  (Kontonummer = Amazon-Kunden-ID). Die fünf Buchungsarten Normal / Invertiert /
+  Mix / Monatlich / Jährlich werden nicht mehr neu angeboten.
 - **Mix-Logik:** echte Käufe, Erstattungen und Rückgaben, dazu ein offener **Amazon Ausgleich** auf Saldo 0 — nicht mehr Kauf und Gegenbuchung mit der Bestellnummer als Titel.
 - Konten erscheinen als **Sonstige** und zählen nicht zur Gesamtsumme oder zu Diagrammen.
 - **Amazon Business** über die Beschaffungsanalysen (Berichte), nicht nur über die Bestellübersicht.
 - **Fortsetzbarer Erstimport:** Zustandsbehafteter Harvest über mehrere
-  Aktualisierungen, Round-Robin für *Alle Konten* und Priorität des gewählten
+  Aktualisierungen, Round-Robin für *Amazon* (gemeinsames Konto) und Priorität des gewählten
   Unterkontos.
 - **Business-Batching und Pagination:** `PAST_12_MONTHS` plus ältere
   `CUSTOM_RANGE`-Zeiträume, sechs Jobs je Aktualisierung sowie fortsetzbare
