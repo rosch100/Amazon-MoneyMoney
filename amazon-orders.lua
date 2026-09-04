@@ -468,8 +468,10 @@ end
 
 --- @function emitAccountKey
 -- MoneyMoney accountNumber used as key in emittedAccounts maps.
+-- Every spelling of the login email collapses onto the same combined key.
 function emitAccountKey(accountNumber)
-  if accountNumber == nil or accountNumber == '' then
+  if accountNumber == nil or accountNumber == ''
+      or matchesCombinedAccountEmail(accountNumber) then
     if type(secUsername) == 'string' and secUsername ~= '' then
       return secUsername
     end
@@ -485,11 +487,7 @@ function isOrderEmittedForAccount(owner, accountNumber)
   if owner.emittedAccounts[emitAccountKey(accountNumber)] == true then
     return true
   end
-  local isCombinedAccount = accountNumber == nil
-    or accountNumber == ''
-    or accountNumber == 'mix'
-    or accountNumber == secUsername
-  return isCombinedAccount and owner.emittedAccounts.mix == true
+  return isCombinedMoneyMoneyAccount(accountNumber) and owner.emittedAccounts.mix == true
 end
 
 function markOrderEmittedForAccount(owner, accountNumber)
@@ -5229,6 +5227,26 @@ function rememberDiscoveredSubAccounts(options)
   end
 end
 
+--- @function normalizeAccountEmail
+-- Comparable form of an email used as MoneyMoney accountNumber: MoneyMoney and
+-- Amazon may differ in case and padding, the mailbox is still the same.
+function normalizeAccountEmail(value)
+  if type(value) ~= 'string' then
+    return ''
+  end
+  return string.lower(trim(value))
+end
+
+--- @function matchesCombinedAccountEmail
+-- True when accountNumber addresses the login email of the combined account.
+function matchesCombinedAccountEmail(accountNumber)
+  local login=normalizeAccountEmail(secUsername)
+  if login == '' then
+    return false
+  end
+  return normalizeAccountEmail(accountNumber) == login
+end
+
 function isCombinedMoneyMoneyAccount(accountNumber)
   if accountNumber == nil or accountNumber == '' then
     return true
@@ -5237,8 +5255,21 @@ function isCombinedMoneyMoneyAccount(accountNumber)
   if num == "mix" then
     return true
   end
-  if type(secUsername) == 'string' and secUsername ~= '' and num == secUsername then
-    return true
+  return matchesCombinedAccountEmail(num)
+end
+
+--- @function isLegacyMoneyMoneyAccountNumber
+-- True for the account numbers from before customerId discovery ("mix",
+-- "normal", "inverse", "monthly", "yearly"). They all cover every order,
+-- regardless of the sub-account it was placed in.
+function isLegacyMoneyMoneyAccountNumber(accountNumber)
+  if type(accountNumber) ~= 'string' or accountNumber == '' then
+    return false
+  end
+  for _,key in ipairs(const.legacyEmitAccountKeys) do
+    if accountNumber == key then
+      return true
+    end
   end
   return false
 end
@@ -5293,10 +5324,8 @@ function orderMatchesMoneyMoneyAccount(order, accountNumber)
   if type(order) ~= 'table' then
     return false
   end
-  if isCombinedMoneyMoneyAccount(accountNumber) then
-    return true
-  end
-  if accountNumber == "inverse" or accountNumber == "monthly" or accountNumber == "yearly" then
+  if isCombinedMoneyMoneyAccount(accountNumber)
+      or isLegacyMoneyMoneyAccountNumber(accountNumber) then
     return true
   end
   local wantKind=moneyMoneyAccountKind(accountNumber)
@@ -5308,6 +5337,9 @@ function orderMatchesMoneyMoneyAccount(order, accountNumber)
 end
 
 --- Legacy MoneyMoney account types: divisor, mixed ledger, optional period contra.
+-- The mixed ledger (bookings balanced by an Ausgleich) covers the combined
+-- account, the period accounts and every sub-account. Only the legacy "normal"
+-- and "inverse" accounts track a real balance.
 function refreshAccountLedgerProfile(accountNumber)
   local profile={
     divisor=-100,
@@ -5320,10 +5352,9 @@ function refreshAccountLedgerProfile(accountNumber)
     profile.divisor=100
   end
   if isCombinedMoneyMoneyAccount(accountNumber)
-      or accountNumber == "mix"
       or accountNumber == "monthly"
       or accountNumber == "yearly"
-      or not isCombinedMoneyMoneyAccount(accountNumber) then
+      or not isLegacyMoneyMoneyAccountNumber(accountNumber) then
     profile.mixed=true
   end
   if accountNumber == "monthly" then
@@ -5866,10 +5897,31 @@ function continueSubAccountScan(otpCode)
   return runSubAccountScanLoop()
 end
 
+--- @function readAmazonCustomerIdForSession
+-- customerId of the active session. Sub-account switches can land on pages that
+-- do not embed it, so retry on the css order-history landing page. Without a
+-- timeFilter that page only serves the shell, it does not harvest orders.
+function readAmazonCustomerIdForSession()
+  local customerId=parseAmazonCustomerIdFromHtml(html)
+  if customerId ~= nil then
+    return customerId
+  end
+  local probe=connectShop('GET', buildOrderHistoryUrl('css'))
+  if probe == nil then
+    return nil
+  end
+  local resolved, akamaiErr=resolveAkamaiInterstitial(probe)
+  if akamaiErr ~= nil then
+    print("Akamai on customerId probe:", akamaiErr)
+  end
+  return parseAmazonCustomerIdFromHtml(resolved)
+end
+
 --- @function discoverAmazonSubAccounts
 -- ListAccounts / "Nach neuen Konten suchen": read each sub-account customerId
 -- via short session switches, then restore the session active at entry.
--- Does not load order pages or harvest orders (no Umsätze).
+-- Does not harvest orders (no Umsätze); the customerId fallback loads the
+-- order-history shell only.
 -- @return #table|nil switcher options (may be empty), error string on failure
 function discoverAmazonSubAccounts(statusText)
   local msg=statusText
@@ -5907,7 +5959,7 @@ function discoverAmazonSubAccounts(statusText)
       discoveryErr="Amazon-Unterkonto-Ermittlung fehlgeschlagen: "..switchErr
       break
     end
-    local customerId=parseAmazonCustomerIdFromHtml(html)
+    local customerId=readAmazonCustomerIdForSession()
     option.customerId=customerId
     option.accountNumber=customerId
   end
