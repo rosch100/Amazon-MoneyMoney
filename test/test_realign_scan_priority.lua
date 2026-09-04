@@ -43,7 +43,7 @@ env.realignSubAccountScanForHarvestPriority("business")
 assert(env.LocalStorage.subAccountScan ~= nil,
   "running business scan must be kept when priority matches")
 
-local switchSequence = {}
+local harvestedKinds = {}
 env.openAccountSwitcherEmbed = function()
   return mm.HTML("<html><body></body></html>")
 end
@@ -51,15 +51,21 @@ env.parseAccountSwitcher = function()
   return plan
 end
 env.switchAmazonSubAccount = function(opt)
-  switchSequence[#switchSequence + 1] = opt.kind
+  local marker = opt.kind == "business"
+      and '<span class="abnav-accountfor">Altanis GmbH</span>'
+    or '<span class="nav-shortened-name">Personal</span>'
+  env.bindActiveHtml(mm.HTML("<html><body>" .. marker .. "</body></html>"))
   return { ok = true }
 end
-env.collectOrdersFromOrderList = function()
+env.collectOrdersFromOrderList = function(_, kind)
+  harvestedKinds[#harvestedKinds + 1] = kind
   return 0, nil
 end
 env.subAccountHarvestHasMore = function()
   return false
 end
+env.bindActiveHtml(mm.HTML(
+  '<html><body><span class="nav-shortened-name">Personal</span></body></html>'))
 
 env.LocalStorage.subAccountScan = {
   phase = "running",
@@ -70,7 +76,7 @@ env.LocalStorage.subAccountScan = {
   loginCounter = 1,
 }
 env.continueSubAccountScan(nil)
-assert(switchSequence[1] == "business",
-  "after realign, first switch must be business, got " .. tostring(switchSequence[1]))
+assert(harvestedKinds[1] == "business",
+  "after realign, first harvest must be business, got " .. tostring(harvestedKinds[1]))
 
 print("test_realign_scan_priority OK")

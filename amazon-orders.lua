@@ -4899,6 +4899,16 @@ function sessionMatchesSubAccountKind(kind)
   return false
 end
 
+function activeAmazonSubAccountKind()
+  if sessionMatchesSubAccountKind('business') then
+    return 'business'
+  end
+  if sessionMatchesSubAccountKind('personal') then
+    return 'personal'
+  end
+  return nil
+end
+
 function businessGetHarvestBlockedBySpaShell()
   local cssPage=connectShop('GET', buildOrderHistoryUrl('css', 'last30'))
   if cssPage ~= nil then
@@ -5824,9 +5834,10 @@ function continueSubAccountScan(otpCode)
 end
 
 --- @function discoverAmazonSubAccounts
--- ListAccounts / "Nach neuen Konten suchen": only parse the CVF switcher.
--- Does not switch accounts and does not load orders (no Umsätze).
--- @return #table switcher options (may be empty)
+-- ListAccounts / "Nach neuen Konten suchen": read each sub-account customerId
+-- via short session switches, then restore the session active at entry.
+-- Does not load order pages or harvest orders (no Umsätze).
+-- @return #table|nil switcher options (may be empty), error string on failure
 function discoverAmazonSubAccounts(statusText)
   local msg=statusText
   if type(msg) ~= 'string' or msg == '' then
@@ -5838,17 +5849,51 @@ function discoverAmazonSubAccounts(statusText)
   if switcherHtml ~= nil then
     options=parseAccountSwitcher(switcherHtml)
   end
+  if #options < 2 then
+    rememberDiscoveredSubAccounts(options)
+    print("discovered Amazon sub-accounts=0")
+    return options, nil
+  end
+
+  local startingKind=activeAmazonSubAccountKind()
+  if startingKind == nil then
+    return nil, "Amazon-Ausgangskonto konnte für die Unterkonto-Ermittlung nicht erkannt werden"
+  end
+
+  local discoveryErr=nil
+  for _,option in ipairs(options) do
+    local switchErr=ensureAmazonSubAccountSession(option.kind)
+    if switchErr ~= nil then
+      discoveryErr="Amazon-Unterkonto-Ermittlung fehlgeschlagen: "..switchErr
+      break
+    end
+    local customerId=parseAmazonCustomerIdFromHtml(html)
+    option.customerId=customerId
+    option.accountNumber=customerId
+  end
+
+  local restoreErr=ensureAmazonSubAccountSession(startingKind)
+  if restoreErr ~= nil then
+    return nil, "Amazon-Ausgangskonto konnte nicht wiederhergestellt werden: "..restoreErr
+  end
+  if discoveryErr ~= nil then
+    return nil, discoveryErr
+  end
+
   rememberDiscoveredSubAccounts(options)
   local n=0
   if type(LocalStorage.discoveredSubAccounts) == 'table' then
     n=#LocalStorage.discoveredSubAccounts
   end
   print("discovered Amazon sub-accounts=", n)
-  return options
+  return options, nil
 end
 
 function startSubAccountScan(priorityKind)
-  local options=discoverAmazonSubAccounts("Amazon: Bestellhistorie wird geladen…")
+  local options, discoveryErr=discoverAmazonSubAccounts("Amazon: Bestellhistorie wird geladen…")
+  if discoveryErr ~= nil then
+    return discoveryErr
+  end
   if #options == 0 then
     print("no switchable Amazon sub-accounts, scraping current session")
     local n, err, hasMore=harvestSubAccountPlanEntry("", nil)
@@ -6357,8 +6402,11 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
   end
 
   -- Account search: discover sub-accounts only (no order harvest / no Umsätze).
-  -- Harvest runs later in RefreshAccount after the user chose mix and/or sub:*.
-  discoverAmazonSubAccounts()
+  -- Harvest runs later in RefreshAccount after the user chose an account.
+  local _, discoveryErr=discoverAmazonSubAccounts()
+  if discoveryErr ~= nil then
+    return discoveryErr
+  end
   return nil
 end
 
