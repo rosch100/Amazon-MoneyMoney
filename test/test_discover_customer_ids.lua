@@ -213,4 +213,38 @@ assert(env.LocalStorage.discoveredSubAccounts == nil or #env.LocalStorage.discov
   "restore failure must not commit the newly discovered snapshot")
 assert(harvestCalls == 0)
 
+-- Refresh harvest reuses stored customerIds and skips enrichment switches.
+installSwitcher()
+env.LocalStorage = {
+  discoveredSubAccounts = {
+    {
+      kind = "personal",
+      label = "Test User",
+      customerName = "Test User",
+      accountNumber = "A3PERSONALID01",
+    },
+    {
+      kind = "business",
+      label = "Example GmbH",
+      businessName = "Example GmbH",
+      accountNumber = "A3BUSINESSID02",
+    },
+  },
+}
+env.bindActiveHtml(accountPage("personal", "A3STARTPERSONAL"))
+local reuseSwitches = {}
+env.ensureAmazonSubAccountSession = function(kind)
+  reuseSwitches[#reuseSwitches + 1] = kind
+  error("reuse path must not switch for customerId enrichment")
+end
+local reused, reuseErr = env.discoverAmazonSubAccounts(
+  "Amazon: Bestellhistorie wird geladen…",
+  {reuseCustomerIds = true})
+assert(reuseErr == nil, tostring(reuseErr))
+assert(#reused == 2)
+assert(#reuseSwitches == 0, "stored customerIds must skip enrichment switches")
+assert(reused[1].accountNumber == "A3PERSONALID01" or reused[2].accountNumber == "A3PERSONALID01")
+assert(#env.LocalStorage.discoveredSubAccounts == 2)
+assert(harvestCalls == 0)
+
 print("test_discover_customer_ids OK")

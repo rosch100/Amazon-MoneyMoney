@@ -5161,25 +5161,56 @@ function combinedAccountListLabel()
   return personal.label.." + "..business.label
 end
 
+--- @function isAmazonCustomerIdAccountNumber
+-- MoneyMoney sub-account numbers are Amazon customerIds (A…).
+function isAmazonCustomerIdAccountNumber(accountNumber)
+  return type(accountNumber) == 'string'
+    and string.match(accountNumber, "^A[A-Z0-9]+$") ~= nil
+end
+
 function discoveredSubAccountDisplayName(discoveredSub)
   if type(discoveredSub) ~= 'table' then
     return ''
   end
   if discoveredSub.kind == "personal" then
-    return trim(firstNonEmpty(discoveredSub.customerName, discoveredSub.label))
+    return trim(type(discoveredSub.customerName) == 'string' and discoveredSub.customerName or '')
   end
   if discoveredSub.kind == "business" then
-    return trim(firstNonEmpty(discoveredSub.businessName, discoveredSub.label))
+    return trim(type(discoveredSub.businessName) == 'string' and discoveredSub.businessName or '')
   end
   return ''
 end
 
 function isCompleteDiscoveredSubAccount(discoveredSub)
-  return type(discoveredSub) == 'table'
-    and (discoveredSub.kind == "personal" or discoveredSub.kind == "business")
-    and type(discoveredSub.accountNumber) == 'string'
-    and trim(discoveredSub.accountNumber) ~= ''
-    and discoveredSubAccountDisplayName(discoveredSub) ~= ''
+  if type(discoveredSub) ~= 'table' then
+    return false
+  end
+  if discoveredSub.kind ~= "personal" and discoveredSub.kind ~= "business" then
+    return false
+  end
+  if not isAmazonCustomerIdAccountNumber(discoveredSub.accountNumber) then
+    return false
+  end
+  return discoveredSubAccountDisplayName(discoveredSub) ~= ''
+end
+
+--- @function accountNumberForLog
+-- Avoid writing the login email (or full customerId) into MoneyMoney logs.
+function accountNumberForLog(accountNumber)
+  if isCombinedMoneyMoneyAccount(accountNumber) then
+    return "combined"
+  end
+  local kind=moneyMoneyAccountKind(accountNumber)
+  if kind ~= nil then
+    return kind
+  end
+  if isAmazonCustomerIdAccountNumber(accountNumber) then
+    return "customerId:"..string.sub(accountNumber, 1, 4).."…"
+  end
+  if type(accountNumber) == 'string' and accountNumber ~= '' then
+    return accountNumber
+  end
+  return "?"
 end
 
 function listAccountDisplayLabel(accountNumber, discoveredSub)
@@ -5917,13 +5948,63 @@ function readAmazonCustomerIdForSession()
   return parseAmazonCustomerIdFromHtml(resolved)
 end
 
+--- @function storedCustomerIdForKind
+-- customerId already stored for a switcher kind, if complete.
+function storedCustomerIdForKind(kind)
+  if type(kind) ~= 'string' or kind == '' then
+    return nil
+  end
+  local discovered=LocalStorage and LocalStorage.discoveredSubAccounts
+  if type(discovered) ~= 'table' then
+    return nil
+  end
+  for _,sub in ipairs(discovered) do
+    if type(sub) == 'table' and sub.kind == kind and isCompleteDiscoveredSubAccount(sub) then
+      return sub.accountNumber
+    end
+  end
+  return nil
+end
+
+--- @function canReuseStoredCustomerIds
+-- Harvest refresh can skip ID-switch enrichment when every switcher option
+-- already has a stored customerId for its kind.
+function canReuseStoredCustomerIds(options)
+  if type(options) ~= 'table' or #options < 2 then
+    return false
+  end
+  for _,option in ipairs(options) do
+    if type(option) ~= 'table' or type(option.kind) ~= 'string'
+        or storedCustomerIdForKind(option.kind) == nil then
+      return false
+    end
+  end
+  return true
+end
+
+function attachStoredCustomerIds(options)
+  if type(options) ~= 'table' then
+    return
+  end
+  for _,option in ipairs(options) do
+    if type(option) == 'table' then
+      local customerId=storedCustomerIdForKind(option.kind)
+      option.customerId=customerId
+      option.accountNumber=customerId
+    end
+  end
+end
+
 --- @function discoverAmazonSubAccounts
 -- ListAccounts / "Nach neuen Konten suchen": read each sub-account customerId
 -- via short session switches, then restore the session active at entry.
 -- Does not harvest orders (no Umsätze); the customerId fallback loads the
 -- order-history shell only.
+-- opts.reuseCustomerIds: when true (Refresh harvest), skip switch enrichment if
+-- LocalStorage already holds complete customerIds for every switcher option.
 -- @return #table|nil switcher options (may be empty), error string on failure
-function discoverAmazonSubAccounts(statusText)
+function discoverAmazonSubAccounts(statusText, opts)
+  opts=type(opts) == 'table' and opts or {}
   local msg=statusText
   if type(msg) ~= 'string' or msg == '' then
     msg="Amazon: Unterkonten werden ermittelt…"
@@ -5944,6 +6025,13 @@ function discoverAmazonSubAccounts(statusText)
   if #options < 2 then
     rememberDiscoveredSubAccounts(options)
     print("discovered Amazon sub-accounts=0")
+    return options, nil
+  end
+
+  if opts.reuseCustomerIds and canReuseStoredCustomerIds(options) then
+    attachStoredCustomerIds(options)
+    rememberDiscoveredSubAccounts(options)
+    print("discovered Amazon sub-accounts=", #LocalStorage.discoveredSubAccounts, "(reused)")
     return options, nil
   end
 
@@ -5982,7 +6070,9 @@ function discoverAmazonSubAccounts(statusText)
 end
 
 function startSubAccountScan(priorityKind)
-  local options, discoveryErr=discoverAmazonSubAccounts("Amazon: Bestellhistorie wird geladen…")
+  local options, discoveryErr=discoverAmazonSubAccounts(
+    "Amazon: Bestellhistorie wird geladen…",
+    {reuseCustomerIds=true})
   if discoveryErr ~= nil then
     return discoveryErr
   end
@@ -6579,7 +6669,7 @@ function ListAccounts (knownAccounts)
   local enableInitialSync=type(LocalStorage.lastHarvestSince) ~= 'number'
   beginAccountSetupSession(enableInitialSync)
   if type(secUsername) ~= 'string' or secUsername == '' then
-    error("ListAccounts requires secUsername")
+    error("Amazon: ListAccounts benötigt den Anmeldenamen (E-Mail)")
   end
   local owner=secUsername
   local accounts={makeListAccountEntry("Amazon", owner, secUsername, knownAccounts)}
@@ -6751,7 +6841,7 @@ function RefreshAccount (account, since)
   local periodContra=ledger.periodContra
   local divisor=ledger.divisor
 
-  print("Refresh",account.accountNumber)
+  print("Refresh",accountNumberForLog(account.accountNumber))
 
   local transactions={}
 
