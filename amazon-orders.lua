@@ -479,9 +479,17 @@ function emitAccountKey(accountNumber)
 end
 
 function isOrderEmittedForAccount(owner, accountNumber)
-  return type(owner) == 'table'
-    and type(owner.emittedAccounts) == 'table'
-    and owner.emittedAccounts[emitAccountKey(accountNumber)] == true
+  if type(owner) ~= 'table' or type(owner.emittedAccounts) ~= 'table' then
+    return false
+  end
+  if owner.emittedAccounts[emitAccountKey(accountNumber)] == true then
+    return true
+  end
+  local isCombinedAccount = accountNumber == nil
+    or accountNumber == ''
+    or accountNumber == 'mix'
+    or accountNumber == secUsername
+  return isCombinedAccount and owner.emittedAccounts.mix == true
 end
 
 function markOrderEmittedForAccount(owner, accountNumber)
