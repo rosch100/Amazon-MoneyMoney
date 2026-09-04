@@ -2943,6 +2943,21 @@ function firstNonEmpty(...)
   return ''
 end
 
+function parseAmazonCustomerIdFromHtml(htmlOrText)
+  local text=htmlOrText
+  if type(text) == 'table' and type(text.html) == 'function' then
+    text=text:html()
+  end
+  if type(text) ~= 'string' or text == '' then
+    return nil
+  end
+  local id=string.match(text, "[\"']?customer[Ii][Dd][\"']?%s*[:=]%s*[\"'](A[A-Z0-9]+)[\"']")
+  if type(id) == 'string' and id ~= '' then
+    return id
+  end
+  return nil
+end
+
 function inferSubAccountKindFromAmazonType(accountType)
   if type(accountType) ~= 'string' or accountType == '' then
     return nil
