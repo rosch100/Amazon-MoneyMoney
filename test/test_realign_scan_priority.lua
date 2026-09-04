@@ -44,6 +44,10 @@ assert(env.LocalStorage.subAccountScan ~= nil,
   "running business scan must be kept when priority matches")
 
 local harvestedKinds = {}
+-- No live pages offline: the customerId probe finds nothing beyond the active HTML.
+env.connectShop = function()
+  return nil
+end
 env.openAccountSwitcherEmbed = function()
   return mm.HTML("<html><body></body></html>")
 end

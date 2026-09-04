@@ -25,4 +25,40 @@ assert(env.orderMatchesMoneyMoneyAccount(biz, "user@example.com") == true)
 assert(env.orderMatchesMoneyMoneyAccount(biz, "A3BUSINESSID02") == true)
 assert(env.orderMatchesMoneyMoneyAccount(biz, "A3PERSONALID01") == false)
 assert(env.orderMatchesMoneyMoneyAccount(biz, "unknown-id") == false)
+
+-- Legacy account numbers span all sub-accounts, "normal" included.
+local personal = { subAccountKind = "personal" }
+for _, legacy in ipairs({ "mix", "normal", "inverse", "monthly", "yearly" }) do
+  assert(env.isLegacyMoneyMoneyAccountNumber(legacy) == true, legacy)
+  assert(env.orderMatchesMoneyMoneyAccount(biz, legacy) == true, legacy)
+  assert(env.orderMatchesMoneyMoneyAccount(personal, legacy) == true, legacy)
+end
+assert(env.isLegacyMoneyMoneyAccountNumber("A3PERSONALID01") == false)
+assert(env.isLegacyMoneyMoneyAccountNumber("user@example.com") == false)
+
+-- Only legacy "normal"/"inverse" track a real balance; everything else is mixed.
+local normalLedger = env.refreshAccountLedgerProfile("normal")
+assert(normalLedger.mixed == false, "legacy normal must not use the mixed ledger")
+assert(normalLedger.divisor == -100)
+assert(normalLedger.periodly == false)
+
+local inverseLedger = env.refreshAccountLedgerProfile("inverse")
+assert(inverseLedger.mixed == false, "legacy inverse must not use the mixed ledger")
+assert(inverseLedger.divisor == 100)
+
+assert(env.refreshAccountLedgerProfile("mix").mixed == true)
+assert(env.refreshAccountLedgerProfile(nil).mixed == true)
+assert(env.refreshAccountLedgerProfile("user@example.com").mixed == true)
+assert(env.refreshAccountLedgerProfile("A3PERSONALID01").mixed == true)
+
+local monthlyLedger = env.refreshAccountLedgerProfile("monthly")
+assert(monthlyLedger.mixed == true)
+assert(monthlyLedger.periodly == true)
+assert(monthlyLedger.periodFmt == "%Y-%m")
+
+local yearlyLedger = env.refreshAccountLedgerProfile("yearly")
+assert(yearlyLedger.mixed == true)
+assert(yearlyLedger.periodly == true)
+assert(yearlyLedger.periodFmt == "%Y")
+
 print("test_account_role_ssot OK")

@@ -6,6 +6,11 @@ local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
 
+-- No live pages offline: the customerId probe finds nothing beyond the active HTML.
+env.connectShop = function()
+  return nil
+end
+
 local f = assert(io.open("test/fixtures/cvf_account_switcher.html", "rb"))
 local fixture = f:read("*all")
 f:close()

@@ -108,6 +108,36 @@ assert(switches[#switches] == "personal", "discovery must restore the personal s
 assert(env.sessionMatchesSubAccountKind("personal") == true)
 assert(harvestCalls == 0)
 
+-- A landing page without customerId is retried on the css order-history page.
+installSwitcher()
+env.LocalStorage = {}
+env.bindActiveHtml(accountPage("personal", "A3STARTPERSONAL"))
+env.ensureAmazonSubAccountSession = function(kind)
+  env.bindActiveHtml(accountPage(kind, nil))
+  return nil
+end
+local probeRequests = {}
+env.connectShop = function(method, url)
+  probeRequests[#probeRequests + 1] = tostring(method) .. " " .. tostring(url)
+  local kind = env.sessionMatchesSubAccountKind("business") and "business" or "personal"
+  return accountPage(kind, kind == "personal" and "A3PERSONALID01" or "A3BUSINESSID02")
+end
+
+local probed, probeErr = env.discoverAmazonSubAccounts()
+assert(probeErr == nil, tostring(probeErr))
+assert(#probed == 2)
+assert(#probeRequests == 2, "one probe per sub-account, no order harvest")
+assert(probeRequests[1]:find("GET ", 1, true) == 1, probeRequests[1])
+assert(probeRequests[1]:find("/gp/css/order-history", 1, true), probeRequests[1])
+assert(not probeRequests[1]:find("timeFilter", 1, true), "probe must not request an order filter")
+local probedByKind = {}
+for _, option in ipairs(env.LocalStorage.discoveredSubAccounts) do
+  probedByKind[option.kind] = option
+end
+assert(probedByKind.personal.accountNumber == "A3PERSONALID01")
+assert(probedByKind.business.accountNumber == "A3BUSINESSID02")
+assert(harvestCalls == 0)
+
 -- Partial IDs are remembered only as complete entries; ListAccounts offers combined only.
 installSwitcher()
 env.LocalStorage = {}
@@ -115,6 +145,10 @@ env.bindActiveHtml(accountPage("personal", "A3STARTPERSONAL"))
 env.ensureAmazonSubAccountSession = function(kind)
   local customerId = kind == "personal" and "A3PERSONALID01" or nil
   env.bindActiveHtml(accountPage(kind, customerId))
+  return nil
+end
+-- Probe page unavailable: the business option stays incomplete.
+env.connectShop = function()
   return nil
 end
 
