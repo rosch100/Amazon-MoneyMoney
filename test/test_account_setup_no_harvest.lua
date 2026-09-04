@@ -23,8 +23,8 @@ env.LocalStorage = {
   OrderCache = {},
 }
 
-local mix = {
-  accountNumber = "mix",
+local combinedAccount = {
+  accountNumber = "test@example.com",
   owner = "test@example.com",
   name = "Amazon test",
 }
@@ -60,7 +60,7 @@ env.LocalStorage.OrderCache = {
   },
 }
 
-local result = env.RefreshAccount(mix, now - (7 * 24 * 60 * 60))
+local result = env.RefreshAccount(combinedAccount, now - (7 * 24 * 60 * 60))
 assert(type(result) == "table", "finder refresh must succeed")
 assert(#result.transactions == 0, "finder must not emit bookings")
 assert(harvestCalled == false, "finder must not scan orders")
@@ -72,7 +72,7 @@ assert(env.isAccountSetupSession() == false)
 assert(env.isPendingInitialSync() == true, "pending survives EndSession")
 assert(env.shouldRunAccountHarvest(0, now) == true, "Erstimport after create must harvest")
 
-local imported = env.RefreshAccount(mix, now - (7 * 24 * 60 * 60))
+local imported = env.RefreshAccount(combinedAccount, now - (7 * 24 * 60 * 60))
 assert(harvestCalled == true, "post-create RefreshAccount must scan orders")
 assert(#imported.transactions > 0, "post-create RefreshAccount must emit bookings")
 assert(env.LocalStorage.lastHarvestSince == 0, "Erstimport records since=0")
@@ -86,7 +86,7 @@ env.ListAccounts({ "test@example.com" })
 assert(env.isAccountSetupSession() == true)
 assert(env.isPendingInitialSync() == false, "account search must not start Erstimport")
 assert(env.shouldRunAccountHarvest(now - 86400, now) == false, "account search must not harvest")
-local search = env.RefreshAccount(mix, now - 86400)
+local search = env.RefreshAccount(combinedAccount, now - 86400)
 assert(harvestCalled == false, "account search RefreshAccount must not scan orders")
 assert(#search.transactions == 0, "account search must not emit")
 
