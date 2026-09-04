@@ -24,7 +24,7 @@ Unsignierte Plugins laufen nur in der **Beta** von MoneyMoney, und die Signaturp
 
 ## Konten anlegen
 
-*Konto hinzufügen* → *Andere* → *Amazon Orders*.
+*Konto hinzufügen* → *Andere* → *Amazon*.
 
 Ohne erkannte Unterkonten wird **Amazon Alle Konten** angeboten. Sind ein
 persönliches und ein geschäftliches Amazon-Konto verbunden, verwendet das
