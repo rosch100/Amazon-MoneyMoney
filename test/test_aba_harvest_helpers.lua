@@ -94,6 +94,15 @@ local urls = env.extractAbaDownloadUrls(
 assert(#urls == 1)
 assert(urls[1]:find("download/abc.csv", 1, true))
 
+local absOk = env.extractAbaDownloadUrls(
+  '"https://www.amazon.de/b2b/aba/reports/download/ok.csv"')
+assert(#absOk == 1, "absolute amazon.de ABA URL must be accepted")
+assert(absOk[1] == "https://www.amazon.de/b2b/aba/reports/download/ok.csv")
+
+local lookalike = env.extractAbaDownloadUrls(
+  '"https://www.amazon.de.evil.example/b2b/aba/reports/download/evil.csv"')
+assert(#lookalike == 0, "lookalike host must not enter ABA download list")
+
 -- Incremental refresh must not discard an unfinished full ABA harvest.
 env.LocalStorage = {
   OrderCache = { ["303-1111111-0000001"] = { orderTotal = 1 } },

@@ -4503,10 +4503,12 @@ function extractAbaDownloadUrls(raw)
       table.insert(urls, abs)
     end
   end
-  for abs in raw:gmatch('"(https://www%.amazon%.de[^"]*/b2b/aba/[^"]+download[^"]*)"') do
-    if not seen[abs] and isAbaDownloadUrl(abs) then
-      seen[abs]=true
-      table.insert(urls, abs)
+  -- Require '/' immediately after the host so www.amazon.de.evil… cannot match.
+  for abs in raw:gmatch('"(https://www%.amazon%.de/[^"]*b2b/aba/[^"]+download[^"]*)"') do
+    local ok, validated=pcall(absoluteAmazonUrl, abs)
+    if ok and not seen[validated] and isAbaDownloadUrl(validated) then
+      seen[validated]=true
+      table.insert(urls, validated)
     end
   end
   return urls
@@ -5841,10 +5843,10 @@ function SupportsBank (protocol, bankCode)
     return false
   end
   -- Leave Beutling's "Amazon Orders" service name alone while both extensions exist.
-  if bankCode:sub(1, #"Amazon Orders") == "Amazon Orders" then
+  if type(bankCode) == 'string' and bankCode:sub(1, #"Amazon Orders") == "Amazon Orders" then
     return false
   end
-  return bankCode:sub(1, #"Amazon") == "Amazon"
+  return bankCode == "Amazon"
 end
 
 function endsWith(string,ending)
@@ -6067,8 +6069,9 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       leaveLoginLoop=false
       -- work-a-round simple add new login
       local signInLink=html:xpath('//a[@id="cvf-account-switcher-add-accounts-link"]'):attr('href')
-      print('signInLink='..signInLink)
-      if signInLink ~= '' then
+      if type(signInLink) == 'string' and signInLink ~= '' then
+        local logPath=signInLink:match("^([^?#]+)") or signInLink
+        print('signInLink='..logPath)
         html=connectShop('GET',signInLink)
         if html == nil then
           return failMissingLoginPage("Zusätzliches Konto")
