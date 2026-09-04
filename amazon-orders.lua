@@ -1298,7 +1298,7 @@ function connectShopWithCheck(method, url, postContent, postContentType, headers
     print("Forced log out detect, enter username/password")
     html:xpath('//*[@name="email"]'):attr("value", secUsername)
     html:xpath('//*[@name="password"]'):attr("value",secPassword)
-    html= connectShop(html:xpath(xpform):submit())
+    html= connectShopForm(html:xpath(xpform))
   end
   return html
 end
@@ -2910,7 +2910,10 @@ function absoluteAmazonUrl(url)
     return url
   end
   if string.match(url, "^https?://") then
-    local host = string.match(url, "^https?://([^/]+)")
+    if not string.match(url, "^https://") then
+      error("absoluteAmazonUrl: only https allowed")
+    end
+    local host = string.match(url, "^https://([^/]+)")
     if not host then
       error("absoluteAmazonUrl: invalid absolute URL")
     end
@@ -3217,7 +3220,7 @@ function submitAmazonMfa(htmlNode, otpCode)
   end
   htmlNode:xpath('//*[@name="otpCode"]'):attr("value", otpCode)
   htmlNode:xpath('//*[@name="rememberDevice"]'):attr('checked', 'checked')
-  return connectShop(form:submit()), nil
+  return connectShopForm(form), nil
 end
 
 --- @function submitSwitchAuthPrompt
@@ -3243,7 +3246,7 @@ function submitSwitchAuthPrompt(htmlNode)
   end
   htmlNode:xpath('//*[@name="password"]'):attr("value", secPassword)
   print("switch auth_prompt: submitting password")
-  return connectShop(form:submit()), nil
+  return connectShopForm(form), nil
 end
 
 --- @function finishAccountSwitchLanding
@@ -4760,7 +4763,7 @@ function submitOrderTimeFilter(htmlNode, orderFilterVal)
     return nil
   end
   htmlNode:xpath(const.xpathOrderMonthSelect):select(orderFilterVal)
-  return connectShop(form:submit())
+  return connectShopForm(form)
 end
 
 --- @function buildOrderHistoryUrl
@@ -6034,7 +6037,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         MM.printStatus("Warte auf Anmeldebestätigung, noch "
           ..tostring(math.floor(waitUntil-os.time())).." Sekunden")
         MM.sleep(3)
-        local pollPage=connectShop(authLink:submit())
+        local pollPage=connectShopForm(authLink)
         if pollPage == nil then
           return failMissingLoginPage("Anmeldebestätigung")
         end
@@ -6055,7 +6058,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     if arbToken ~= '' then
       print("account selector")
       leaveLoginLoop=false
-      print('Account selector arbToken='..arbToken)
+      print('Account selector arbToken=<redacted>')
       local embed=accountSwitcherEmbedUrl(arbToken, cvfEmbedVersionQuery(html))
       html=connectShop('GET', absoluteAmazonUrl(embed))
       if html == nil then
@@ -6108,7 +6111,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
           element:attr('checked','')
         end
       end)
-      html=connectShop(authSelect:submit())
+      html=connectShopForm(authSelect)
       if html == nil then
         return failMissingLoginPage("Authentifizierungsmethode")
       end
@@ -6160,7 +6163,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       end)
       if number == 0 then
         -- no selectable options
-        html= connectShop(html:xpath('//form[@name="claimspicker"]'):submit())
+        html= connectShopForm(html:xpath('//form[@name="claimspicker"]'))
         if html == nil then
           return failMissingLoginPage("Bestätigungscode")
         end
@@ -6181,7 +6184,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
             label='Please select 1-'..number
           }
         else
-          html= connectShop(html:xpath('//form[@name="claimspicker"]'):submit())
+          html= connectShopForm(html:xpath('//form[@name="claimspicker"]'))
           if html == nil then
             return failMissingLoginPage("Bestätigungsmethode")
           end
@@ -6202,7 +6205,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       leaveLoginLoop=false
       if config.debug then print("passcode 2. part") end
       html:xpath('//*[@name="code"]'):attr("value",credentials[1])
-      html= connectShop(html:xpath('//form[@action="verify"]'):submit())
+      html= connectShopForm(html:xpath('//form[@action="verify"]'))
       if html == nil then
         return failMissingLoginPage("Bestätigungscode")
       end
@@ -6226,7 +6229,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         html:xpath('//*[@name="otpCode"]'):attr("value",credentials[1])
         -- checkbox
         html:xpath('//*[@name="rememberDevice"]'):attr('checked','checked')
-        html= connectShop(html:xpath('//*[@id="auth-mfa-form"]'):submit())
+        html= connectShopForm(html:xpath('//*[@id="auth-mfa-form"]'))
         if html == nil then
           return failMissingLoginPage("Zwei-Faktor-Authentifizierung")
         end
@@ -6246,7 +6249,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         html:xpath('//*[@name="email"]'):attr("value", secUsername)
       end
       html:xpath('//*[@name="password"]'):attr("value",secPassword)
-      html= connectShop(html:xpath(xpform):submit())
+      html= connectShopForm(html:xpath(xpform))
       if html == nil then
         return failMissingLoginPage("Benutzername und Passwort")
       end
@@ -6643,6 +6646,8 @@ end
 function EndSession ()
   clearAccountSetupState()
   tryCompleteInitialSync(os.time())
+  secPassword=nil
+  secUsername=nil
   -- Logout.
   if config.reallyLogout and html ~= nil then
     local logoutElement=html:xpath('//a[contains(@id,"nav-item-signout") or contains(@href,"sign-out")]')
