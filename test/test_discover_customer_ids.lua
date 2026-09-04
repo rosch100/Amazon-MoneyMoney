@@ -26,11 +26,61 @@ local function installSwitcher()
   end
 end
 
+local function mfaChallengePage()
+  return mm.HTML([[
+<html><body>
+  <form id="auth-mfa-form">
+    <p>Bestätigungscode eingeben</p>
+    <input name="otpCode" type="text"/>
+  </form>
+</body></html>]])
+end
+
+local function authenticationChallengePage()
+  return mm.HTML([[
+<html><body>
+  <form action="verify">
+    <input name="code" type="text"/>
+  </form>
+</body></html>]])
+end
+
 local harvestCalls = 0
 env.collectOrdersFromOrderList = function()
   harvestCalls = harvestCalls + 1
   error("discovery must not harvest orders")
 end
+
+-- Authentication challenge responses while opening the switcher are hard errors.
+env.LocalStorage = {}
+env.openAccountSwitcherEmbed = function()
+  return authenticationChallengePage()
+end
+local authChallengeResult, authChallengeErr = env.discoverAmazonSubAccounts()
+assert(authChallengeResult == nil)
+assert(type(authChallengeErr) == "string"
+  and authChallengeErr:find("authentication challenge", 1, true), tostring(authChallengeErr))
+
+-- A missing switcher response must still surface MFA from the active HTML state.
+env.LocalStorage = {}
+env.bindActiveHtml(mfaChallengePage())
+env.openAccountSwitcherEmbed = function()
+  return nil
+end
+local challengeResult, challengeErr = env.discoverAmazonSubAccounts()
+assert(challengeResult == nil)
+assert(type(challengeErr) == "string" and challengeErr:find("2FA", 1, true), tostring(challengeErr))
+
+-- A benign page without switcher forms means that no sub-accounts are available.
+env.LocalStorage = {}
+env.bindActiveHtml(accountPage("personal", "A3STARTPERSONAL"))
+env.openAccountSwitcherEmbed = function()
+  return mm.HTML("<html><body><p>Kein Kontenwechsel verfügbar</p></body></html>")
+end
+local emptyOptions, emptyErr = env.discoverAmazonSubAccounts()
+assert(emptyErr == nil, tostring(emptyErr))
+assert(#emptyOptions == 0, "benign no-switcher page must return empty options")
+assert(#env.LocalStorage.discoveredSubAccounts == 0)
 
 -- Happy path: enrich both options and restore the personal starting session.
 installSwitcher()
