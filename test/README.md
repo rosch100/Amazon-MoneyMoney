@@ -38,7 +38,7 @@ The complete suite is organized by behavior:
 | Area | Tests |
 |------|-------|
 | Host shim and HTML parser | `selftest.lua`, `test_parse.lua`, `test_html_encoding.lua`, `test_akamai_interstitial.lua` |
-| Account discovery, attributes and migration | `test_list_accounts.lua`, `test_account_attributes.lua`, `test_account_switcher.lua`, `test_migrate_legacy_emit.lua` |
+| Account discovery, attributes and emit keys | `test_list_accounts.lua`, `test_account_attributes.lua`, `test_account_switcher.lua`, `test_emit_account_key.lua` |
 | Account setup and initial sync | `test_account_setup_no_harvest.lua`, `test_initial_sync_*.lua`, `test_full_refresh.lua`, `test_full_reimport.lua`, `test_empty_emit_misaligned.lua` |
 | Sub-account scheduling | `test_sub_account_scan_refresh.lua`, `test_mix_scan_round_robin.lua`, `test_realign_scan_priority.lua`, `test_preserve_incomplete_scan_login.lua` |
 | Order-list and Business harvest | `test_order_filter_scan.lua`, `test_scan_filters_months.lua`, `test_business_*.lua`, `test_ab_order_history.lua` |

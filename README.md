@@ -2,7 +2,11 @@
 
 Bestellungen von amazon.de als Umsätze in MoneyMoney.
 
+Version: **2.0**
+Service: **Amazon Bestellungen**
+Auth: Username/Passwort (Amazon-Login; kein Cookie-Import)
 Repository: https://github.com/rosch100/Amazon-MoneyMoney
+Hub (gemeinsame Tools/Doku): https://github.com/rosch100/moneymoney-extensions
 
 Das ist ein fork von https://github.com/Michael-Beutling/Amazon-MoneyMoney und eine Weiterentwicklung von Michaels plugin.
 
@@ -24,22 +28,35 @@ Unsignierte Plugins laufen nur in der **Beta** von MoneyMoney, und die Signaturp
 
 ## Konten anlegen
 
-*Konto hinzufügen* → *Andere* → *Amazon*.
+*Konto hinzufügen* → *Andere* → *Amazon Bestellungen*.
 
 Das gemeinsame Konto heißt **Amazon**; die Kontonummer ist die Login-E-Mail.
 Sind ein persönliches und ein geschäftliches Amazon-Konto verbunden, werden
 zusätzlich **Amazon <Name>** (persönlich) und **Amazon <Firmenname>**
-(geschäftlich) angeboten. Die Kontonummern der Unterkonten sind die jeweiligen
-Amazon-Kunden-IDs.
+(geschäftlich) angeboten. Die Kontonummern der Unterkonten sind `AO.` plus die
+Amazon-Kunden-ID **ohne** führendes `A` (z. B. `AO.3Q0VYB8LMHNXG`) — so bleibt
+die ID nicht als Substring erkennbar und MoneyMoney mappt sie nicht auf die
+eingebaute *Amazon-Kreditkarte*.
 
 Die Unterkonten werden nur angeboten, wenn der Amazon-Kontowechsler beim Login
 tatsächlich beide Unterkonten liefert und Amazon die Namen meldet.
 
-Alle diese Konten buchen Käufe, Erstattungen und Rückgaben als echte Umsätze. Eine offene Buchung **Amazon Ausgleich** hält den Saldo bei 0. Sie erscheinen als *Sonstige*, zählen nicht zur Gesamtsumme in der Seitenleiste und nicht in Diagrammen. Die Umsatzliste öffnet als Liste, nicht als Balkendiagramm.
+Alle diese Konten buchen Käufe, Erstattungen und Rückgaben als echte Umsätze. Eine offene Buchung **Amazon Ausgleich** hält den Saldo bei 0. Sie erscheinen als Kontoart *Sonstige*, zählen nicht zur Gesamtsumme in der Seitenleiste und nicht in Diagrammen. Die Umsatzliste öffnet als Liste, nicht als Balkendiagramm.
+
+Der Service heißt absichtlich nicht nur *Amazon*, damit er nicht mit MoneyMoney’s
+eingebauter *Amazon-Kreditkarte* kollidiert und nicht Beutlings *Amazon Orders*
+übernimmt. Alt-Zugänge mit Service *Amazon* oder Kontonummern wie `mix` /
+`sub:*` / `normal` / … sowie nackte Kunden-IDs oder `AB-…` werden **nicht** mehr
+aktualisiert: MoneyMoney meldet dann, dass die Konten unter *Amazon Bestellungen*
+neu angelegt werden müssen.
+
+Beim Bestätigen in MoneyMoney die Kontoart prüfen (*Sonstige*). Eine bereits
+angelegte *Kreditkarte* ändert ein Refresh nicht.
 
 Beim Einrichten (*Konten werden gesucht*) werden noch keine Umsätze geladen.
 
-Bestehende Konten vom Typ Normal, Invertiert, Monatlich oder Jährlich bleiben gültig, werden aber nicht neu angelegt.
+Alte Konten (auch Normal / Invertiert / Monatlich / Jährlich) bitte löschen und
+neu anlegen — sie werden nicht weiter bedient.
 
 ## Erstimport
 
@@ -67,7 +84,7 @@ Standard-Container und sind nur für lokale Debug-Sitzungen gedacht:
 - `./webCache_on.sh` aktiviert den Webcache.
 - `./webCache_off.sh` deaktiviert den Webcache.
 - `./clean_webCache.sh` leert den Webcache und legt ihn wieder an.
-- `./toogleCleanLocalStorage.sh` schaltet die Bereinigung von
+- `./toggleCleanLocalStorage.sh` schaltet die Bereinigung von
   `LocalStorage` beim nächsten Debug-Lauf um.
 
 Geschäftliche Bestellungen kommen primär aus Amazon Business Analytics:
@@ -121,8 +138,8 @@ Konto → Einstellungen → Notizen. Diese Felder legt MoneyMoney beim Anlegen b
 
 | Feld | Bedeutung |
 |------|-----------|
-| `resetCache` | Cache leeren und Bestellhistorie neu einlesen. Wert ändern (z. B. auf das heutige Datum), dann aktualisieren. |
-| `blacklistOrders` | Bestellnummern (kommagetrennt), die weder als Umsätze ausgegeben noch regulär im Detailabruf verarbeitet werden. Ihre nächste Detailprüfung wird planmäßig terminiert. Das ältere Feld `blackListOrders` gilt weiter. |
+| `resetCache` | Cache leeren und Bestellhistorie neu einlesen. Nach Schema-Upgrade (Statusmeldung zum vollständigen Neuimport) den Wert **ändern** (z. B. auf das heutige Datum) — derselbe alte Wert hebt die Sperre nicht auf — dann aktualisieren. |
+| `blacklistOrders` | Bestellnummern (kommagetrennt), die weder als Umsätze ausgegeben noch regulär im Detailabruf verarbeitet werden. Ihre nächste Detailprüfung wird planmäßig terminiert. Das ältere Notizfeld `blackListOrders` wird weiterhin gelesen. |
 | `rescanOrder` | Eine Bestellnummer, deren Details beim nächsten Abruf neu geladen werden. Die bereits gemerkte Ausgabezuordnung wird für diese Bestellung zurückgesetzt. |
 | `keepStorno` | `true`: Buchung und passendes Storno behalten. Standard: `false`. Bereits importierte Buchungen werden nicht gelöscht; eine spätere volle Erstattung wird trotzdem importiert. |
 | `nameMaxLength` | Maximale Länge der **Titelzeile** (Zeichen). `0` = ungekürzt (Standard). Der Verwendungszweck bleibt immer vollständig. Beispiel: `70`. |
@@ -139,23 +156,25 @@ Diese Felder kann man zusätzlich eintragen (kein Standardwert in der Notiztabel
 ## Update von älteren Versionen
 
 Es hat sich so viel geändert (Anzeigenamen, Kontonummern, Kontoart *Sonstige*,
-Mix-Buchungen), dass **Löschen und neu Anlegen der Amazon-Konten** empfohlen wird.
+Mix-Buchungen, Service *Amazon Bestellungen*), dass **Löschen und neu Anlegen
+der Amazon-Konten** Pflicht ist. Alt-Zugänge und alte Kontonummern
+(`mix` / `sub:*` / `normal` / …) werden bewusst nicht mehr aktualisiert.
 Bestehende Umsätze werden nicht umgeschrieben; alte Titelzeilen mit Bestellnummer
-bleiben sonst stehen. Ohne Neuanlage behalten alte Konten ihre bisherige
-Kreditkarten-Zuordnung, die neuen Kontonummern und Kontoart *Sonstige* kommen
-dann aber nicht zuverlässig an.
+bleiben sonst stehen. Ohne Neuanlage bleibt die bisherige Kontoart (z. B.
+Kreditkarte) und die neuen Nummern/Service-Namen kommen nicht an.
 
-Cache-Version 21 verwirft außerdem bewusst Bestelldaten, die mit einem falschen
-Seiten-Zeichensatz gelesen worden sein können. MoneyMoney zeigt deshalb nach
-dem Update die Aufforderung zum vollständigen Neuimport; vorhandene fehlerhafte
-Umsätze werden nicht still verändert.
+Cache-Version **23** verwirft ältere Plugin-Importcaches. MoneyMoney zeigt
+danach die Aufforderung zum vollständigen Neuimport; vorhandene fehlerhafte
+Umsätze werden nicht still verändert. Zusätzlich: in den Kontonotizen
+`resetCache` auf einen **neuen** Wert setzen (nicht denselben wie zuvor),
+danach aktualisieren — sonst bleibt der Abruf gesperrt.
 
 1. Amazon-Zugang in MoneyMoney entfernen (Konten löschen).
 2. Plugin aktualisieren.
 3. Zugang und Konten neu anlegen, danach Erstimport wie oben.
 
 Nur Umsätze löschen und `resetCache` setzen reicht in der Regel nicht: Kontotyp
-*Sonstige*, neue Kontonummern (E-Mail bzw. Amazon-Kunden-ID), Notizfelder und
+*Sonstige*, neue Kontonummern (E-Mail bzw. `AO.` + Kunden-ID ohne `A`), Notizfelder und
 die neue Aufteilung der Konten kommen so nicht zuverlässig an.
 
 ## Änderungen gegenüber der ursprünglichen Version
@@ -165,8 +184,9 @@ Fork von [Michael Beutling](https://github.com/Michael-Beutling/Amazon-MoneyMone
 - **Titelzeile** ist der Artikelname, nicht mehr die Bestellnummer. Die Bestellnummer steht unter **Referenz**.
 - **Gemeinsames Konto** **Amazon** (Kontonummer = Login-E-Mail) sowie getrennte
   Unterkonten **Amazon <Name>** / **Amazon <Firmenname>**
-  (Kontonummer = Amazon-Kunden-ID). Die fünf Buchungsarten Normal / Invertiert /
-  Mix / Monatlich / Jährlich werden nicht mehr neu angeboten.
+  (Kontonummer = `AO.` + Amazon-Kunden-ID ohne führendes `A`). Die fünf Buchungsarten Normal / Invertiert /
+  Mix / Monatlich / Jährlich und Alt-Nummern `mix`/`sub:*` werden nicht mehr
+  bedient — Konten unter *Amazon Bestellungen* neu anlegen.
 - **Mix-Logik:** echte Käufe, Erstattungen und Rückgaben, dazu ein offener **Amazon Ausgleich** auf Saldo 0 — nicht mehr Kauf und Gegenbuchung mit der Bestellnummer als Titel.
 - Konten erscheinen als **Sonstige** und zählen nicht zur Gesamtsumme oder zu Diagrammen.
 - **Amazon Business** über die Beschaffungsanalysen (Berichte), nicht nur über die Bestellübersicht.
@@ -211,3 +231,7 @@ ab; das Plugin garantiert keine feste Laufzeit pro Aktualisierung.
 ## Haftung
 
 Keine. Wenn das Skript täglich zehn Tonnen Hundefutter bestellt, ist das dein Problem.
+
+## Lizenz
+
+MIT — siehe [LICENSE](LICENSE).

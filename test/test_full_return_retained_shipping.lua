@@ -54,7 +54,6 @@ local function emitOrder(order)
     now = now,
     periodly = false,
     balance = 0,
-    balancesByPeriod = {},
   }
   env.appendOrderToRefresh(ctx, order, order.orderCode)
   return ctx.transactions

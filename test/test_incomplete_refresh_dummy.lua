@@ -5,6 +5,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 
 env.connectShop = function()
   return mm.HTML("<html><body></body></html>")
@@ -22,7 +23,7 @@ env.scanAllAmazonSubAccounts = function()
   return 0, nil
 end
 
-local account = { accountNumber = "mix", owner = "test@example.com" }
+local account = { accountNumber = "test@example.com", owner = "test@example.com" }
 local since = 0
 local now = os.time()
 
@@ -49,13 +50,13 @@ end
 
 local function completedInitialSyncStorage(orderCache, scan)
   return {
-    cacheVersion = 22,
+    cacheVersion = 23,
     loginCounter = 1,
     lastLoginCounter = 1,
     lastHarvestSince = since,
     pendingInitialSync = true,
     initialSyncHarvestDone = true,
-    initialSyncRefreshedAccounts = { mix = "mix" },
+    initialSyncRefreshedAccounts = { ["test@example.com"] = "test@example.com" },
     OrderCache = orderCache,
     subAccountScan = scan,
   }
@@ -63,7 +64,7 @@ end
 
 -- Paused sub-account scan
 env.LocalStorage = {
-  cacheVersion = 22,
+  cacheVersion = 23,
   loginCounter = 1,
   lastLoginCounter = 0,
   lastHarvestSince = 0,
@@ -155,7 +156,7 @@ env.getOrderDetails = function(_order)
 end
 local recentSince = now - 7 * 86400
 env.LocalStorage = {
-  cacheVersion = 22,
+  cacheVersion = 23,
   loginCounter = 1,
   lastLoginCounter = 1,
   lastHarvestSince = recentSince,
@@ -186,13 +187,13 @@ env.getOrderDetails = function(order)
   return true
 end
 env.LocalStorage = {
-  cacheVersion = 22,
+  cacheVersion = 23,
   loginCounter = 2,
   lastLoginCounter = 2,
   lastHarvestSince = since,
   pendingInitialSync = true,
   initialSyncHarvestDone = true,
-  initialSyncRefreshedAccounts = { mix = "mix" },
+  initialSyncRefreshedAccounts = { ["test@example.com"] = "test@example.com" },
   OrderCache = {
     ["303-done-login"] = {
       orderCode = "303-done-login",
@@ -202,7 +203,7 @@ env.LocalStorage = {
       bookingDate = now,
       detailsDate = now + 86400,
       detailsParsed = true,
-      emittedAccounts = { mix = true },
+      emittedAccounts = { ["test@example.com"] = true },
       subAccountKind = "personal",
     },
   },
@@ -222,7 +223,7 @@ env.LocalStorage = completedInitialSyncStorage({
       bookingDate = now,
       detailsDate = now + 86400,
       detailsParsed = true,
-      emittedAccounts = { mix = true },
+      emittedAccounts = { ["test@example.com"] = true },
       subAccountKind = "personal",
     },
   }, doneScan(since, true, 10))
@@ -235,7 +236,7 @@ assert(dDoneIncomplete.purpose:find("Abruf der Unterkonten", 1, true),
 -- ABA pagination incomplete: harvest must continue and dummy must stay until the batch succeeds
 local incSince = now - 7 * 86400
 env.LocalStorage = {
-  cacheVersion = 22,
+  cacheVersion = 23,
   loginCounter = 1,
   lastLoginCounter = 1,
   lastHarvestSince = incSince,
@@ -251,7 +252,7 @@ env.LocalStorage = {
       bookingDate = now,
       detailsDate = now + 86400,
       detailsParsed = true,
-      emittedAccounts = { mix = true },
+      emittedAccounts = { ["test@example.com"] = true },
       subAccountKind = "business",
     },
   },
@@ -278,7 +279,7 @@ assert(env.isAbaRollupHarvestIncomplete() == false,
 
 -- Complete refresh: no dummy
 env.LocalStorage = {
-  cacheVersion = 22,
+  cacheVersion = 23,
   loginCounter = 1,
   lastLoginCounter = 1,
   lastHarvestSince = since,
@@ -291,7 +292,7 @@ env.LocalStorage = {
       bookingDate = now,
       detailsDate = now + 86400,
       detailsParsed = true,
-      emittedAccounts = { mix = true },
+      emittedAccounts = { ["test@example.com"] = true },
       subAccountKind = "personal",
     },
   },

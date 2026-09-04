@@ -4,6 +4,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 local now = os.time()
 
 env.connectShop = function()
@@ -26,7 +27,7 @@ end
 
 env.LocalStorage = {
 
-  cacheVersion = 22,
+  cacheVersion = 23,
   loginCounter = 2,
   pendingInitialSync = true,
   initialSyncHarvestDone = true,
@@ -53,25 +54,32 @@ env.LocalStorage = {
   },
 }
 
+env.rememberDiscoveredSubAccounts({
+  { kind = "personal", label = "Persönliches Konto", customerName = "Persönliches Konto",
+    accountNumber = "A3PERSONALID01" },
+  { kind = "business", label = "Example GmbH", businessName = "Example GmbH",
+    accountNumber = "A3BUSINESSID02" },
+})
+
 env.scanAllAmazonSubAccounts = function()
   env.LocalStorage.subAccountScan = { phase = "done", incomplete = false, totalNew = 0 }
   return 0, nil
 end
 
-local businessAccount = { accountNumber = "sub:business", owner = "test@example.com" }
+local businessAccount = { accountNumber = "AO.3BUSINESSID02", owner = "test@example.com" }
 local result = env.RefreshAccount(businessAccount, now - (30 * 24 * 60 * 60))
 assert(type(result) == "table")
 assert(env.lastDetailsSessionKind == "business", "details fetch must switch to business session")
-assert(#detailsFetched == 1, "sub:business refresh must fetch only business order details, got " .. #detailsFetched)
+assert(#detailsFetched == 1, "business refresh must fetch only business order details, got " .. #detailsFetched)
 assert(detailsFetched[1] == "303-business-1", "expected business order, got " .. tostring(detailsFetched[1]))
 assert(#result.transactions == 2, "business mixed account emits purchase + Ausgleich, got " .. #result.transactions)
 
 detailsFetched = {}
 env.lastDetailsSessionKind = nil
-local personalAccount = { accountNumber = "sub:personal", owner = "test@example.com" }
+local personalAccount = { accountNumber = "AO.3PERSONALID01", owner = "test@example.com" }
 local personalResult = env.RefreshAccount(personalAccount, now - (30 * 24 * 60 * 60))
 assert(env.lastDetailsSessionKind == "personal", "details fetch must switch to personal session")
-assert(#detailsFetched == 1, "sub:personal refresh must fetch only personal order details, got " .. #detailsFetched)
+assert(#detailsFetched == 1, "personal refresh must fetch only personal order details, got " .. #detailsFetched)
 assert(detailsFetched[1] == "303-personal-1", "expected personal order, got " .. tostring(detailsFetched[1]))
 assert(#personalResult.transactions == 2, "personal mixed account emits purchase + Ausgleich")
 

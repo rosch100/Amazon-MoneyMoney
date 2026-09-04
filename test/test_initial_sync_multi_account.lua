@@ -25,7 +25,7 @@ env.rememberDiscoveredSubAccounts({
 })
 
 env.ListAccounts({})
-env.EndSession()
+env.clearAccountSetupState()
 
 assert(env.LocalStorage.initialSyncExpectedAccounts == nil,
   "must not pre-seed expected accounts from ListAccounts")
@@ -43,21 +43,21 @@ end
 
 mockCompleteScan()
 
-local mix = { accountNumber = "mix", owner = "test@example.com" }
-env.RefreshAccount(mix, 0)
+local combined = { accountNumber = "test@example.com", owner = "test@example.com" }
+env.RefreshAccount(combined, 0)
 assert(env.isPendingInitialSync() == false,
-  "mix-only setup must complete without refreshing undiscovered sub accounts")
+  "combined-only setup must complete without refreshing undiscovered sub accounts")
 
 env.LocalStorage.pendingInitialSync = true
 env.LocalStorage.initialSyncHarvestDone = true
 env.LocalStorage.initialSyncRefreshedAccounts = nil
 
-local business = { accountNumber = "A3BUSINESSID02", owner = "test@example.com" }
+local business = { accountNumber = "AO.3BUSINESSID02", owner = "test@example.com" }
 env.RefreshAccount(business, 0)
 assert(env.isPendingInitialSync() == true,
   "business-only refresh must keep Erstimport pending while personal is missing")
 
-local personal = { accountNumber = "A3PERSONALID01", owner = "test@example.com" }
+local personal = { accountNumber = "AO.3PERSONALID01", owner = "test@example.com" }
 env.RefreshAccount(personal, 0)
 assert(env.isPendingInitialSync() == false,
   "refreshing both enabled sub-accounts completes Erstimport")

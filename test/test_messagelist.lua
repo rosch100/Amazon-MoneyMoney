@@ -4,6 +4,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 
 assert(env.getMessageList == nil, "dead message-center API must be removed")
 assert(env.connectShopJson == nil, "connectShopJson was only used by message center")
@@ -92,7 +93,7 @@ env.LocalStorage = {
       orderCode = "303-due-1111111",
       bookingDate = recentSince + 3600,
       detailsDate = now - 3600,
-      emittedAccounts = { mix = true },
+      emittedAccounts = { ["test@example.com"] = true },
       orderPositions = { { purpose = "W", amount = 1, qty = 1 } },
       orderTotal = 1,
     },
@@ -100,20 +101,20 @@ env.LocalStorage = {
       orderCode = "303-future-2222222",
       bookingDate = recentSince - (30 * 24 * 60 * 60),
       detailsDate = now + 86400,
-      emittedAccounts = { mix = true },
+      emittedAccounts = { ["test@example.com"] = true },
       orderTotal = 1,
     },
     ["303-old-3333333"] = {
       orderCode = "303-old-3333333",
       bookingDate = now - (400 * 24 * 60 * 60),
       detailsDate = now - 3600,
-      emittedAccounts = { mix = true },
+      emittedAccounts = { ["test@example.com"] = true },
       orderTotal = 1,
     },
   },
   refreshSince = recentSince,
 }
-local watched = env.scheduleIncrementalRefundWatch("mix", recentSince, now)
+local watched = env.scheduleIncrementalRefundWatch("test@example.com", recentSince, now)
 assert(watched == 1, "expected 1 re-queued (due only), got " .. tostring(watched))
 assert(env.LocalStorage.OrderCache["303-due-1111111"].detailsDate == 1)
 assert(env.LocalStorage.OrderCache["303-future-2222222"].detailsDate == now + 86400,

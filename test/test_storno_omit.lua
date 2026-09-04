@@ -3,6 +3,7 @@
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 
 local now = os.time() + 86400
 local bookingDate = os.time({ year = 2026, month = 6, day = 22 })
@@ -12,11 +13,10 @@ local function mixCtx()
     mixed = true,
     divisor = -100,
     transactions = {},
-    accountNumber = "mix",
+    accountNumber = "test@example.com",
     now = now,
     periodly = false,
     balance = 0,
-    balancesByPeriod = {},
   }
 end
 
@@ -72,7 +72,7 @@ do
   env.registerRefundTransaction(order, bookingDate + 86400, 670)
   local txs = emitOrder(order)
   assert(#txs == 0, "full refund must omit purchase+refund, got " .. names(txs))
-  assert(env.isOrderEmittedForAccount(order, "mix") == true, "omitted purchase must be marked emitted")
+  assert(env.isOrderEmittedForAccount(order, "test@example.com") == true, "omitted purchase must be marked emitted")
 end
 
 print("== keepStorno keeps booking and full refund ==")
@@ -110,7 +110,7 @@ end
 print("== already emitted purchase still imports later full refund ==")
 do
   local order = purchaseOrder("303-later-refund", 670)
-  order.emittedAccounts = { mix = true }
+  order.emittedAccounts = { ["test@example.com"] = true }
   env.registerRefundTransaction(order, bookingDate + 86400, 670)
   local txs = emitOrder(order)
   local purchases = countBy(txs, function(tx)
@@ -195,13 +195,13 @@ do
   local order = purchaseOrder("303-notes-storno", 670)
   env.registerRefundTransaction(order, bookingDate + 86400, 670)
   env.LocalStorage = {
-    cacheVersion = 22,
+    cacheVersion = 23,
     loginCounter = 1,
     lastLoginCounter = 1,
     lastHarvestSince = os.time(),
     OrderCache = { ["303-notes-storno"] = order },
   }
-  local account = { accountNumber = "mix", owner = "test@example.com" }
+  local account = { accountNumber = "test@example.com", owner = "test@example.com" }
   local omitted = env.RefreshAccount(account, bookingDate)
   local omittedCount = countBy(omitted.transactions, function(tx)
     return tx.endToEndReference == "303-notes-storno"

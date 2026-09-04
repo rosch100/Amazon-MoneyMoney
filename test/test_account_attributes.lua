@@ -6,7 +6,7 @@ local mm = require("mm_shim")
 local env = mm.loadPlugin("amazon-orders.lua")
 
 assert(env.isSupportedAccountAttributeKey("blacklistOrders") == true)
-assert(env.isSupportedAccountAttributeKey("blackListOrders") == true, "legacy alias")
+assert(env.isSupportedAccountAttributeKey("blackListOrders") == true, "read alias")
 assert(env.isSupportedAccountAttributeKey("keepStorno") == true)
 assert(env.isSupportedAccountAttributeKey("nameMaxLength") == true)
 assert(env.isSupportedAccountAttributeKey("stornoAnzeigen") == false)
@@ -26,10 +26,11 @@ assert(merged.stornoAnzeigen == nil)
 assert(merged.keepStorno == "true")
 assert(merged.debug == nil, "internal flags must not merge from known accounts")
 
-local mergedLegacy = env.mergeAccountAttributes(env.defaultAccountAttributes(), {
+local mergedAlias = env.mergeAccountAttributes(env.defaultAccountAttributes(), {
   blackListOrders = "303-legacy-1111111-1111111",
 })
-assert(mergedLegacy.blacklistOrders == "303-legacy-1111111-1111111")
+assert(mergedAlias.blacklistOrders == "303-legacy-1111111-1111111")
+assert(mergedAlias.blackListOrders == nil)
 
 env.applyAccountAttribute("blackListOrders", "303-2222222-2222222", true)
 local blacklist = env.loadOrderBlacklistFromConfig()

@@ -9,7 +9,7 @@ local storage = {
 }
 local env = mm.loadPlugin("amazon-orders.lua", storage)
 
-assert(storage.cacheVersion == 22, "schema version must be upgraded during plugin load")
+assert(storage.cacheVersion == 23, "schema version must be upgraded during plugin load")
 assert(storage.requireFullReimport == true, "schema migration must require full reimport")
 assert(next(storage.OrderCache) == nil, "schema migration must clear the legacy order cache")
 
