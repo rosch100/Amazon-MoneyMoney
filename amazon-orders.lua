@@ -2913,7 +2913,7 @@ function absoluteAmazonUrl(url)
     if not string.match(url, "^https://") then
       error("absoluteAmazonUrl: only https allowed")
     end
-    local host = string.match(url, "^https://([^/]+)")
+    local host = string.match(url, "^https://([^/?#]+)")
     if not host then
       error("absoluteAmazonUrl: invalid absolute URL")
     end
@@ -2921,7 +2921,7 @@ function absoluteAmazonUrl(url)
     -- Ignore explicit default ports when comparing to baseurl origin.
     host = string.gsub(host, ":443$", "")
     host = string.gsub(host, ":80$", "")
-    local allowedHost = string.lower(string.match(baseurl, "^https?://([^/]+)"))
+    local allowedHost = string.lower(string.match(baseurl, "^https?://([^/?#]+)"))
     if host ~= allowedHost then
       error("absoluteAmazonUrl: host not allowed: " .. host)
     end
