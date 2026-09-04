@@ -100,7 +100,7 @@ local const={
     December=12
   },
   domain='.amazon.de',
-  services    = {"Amazon Orders"},
+  services    = {"Amazon"},
   description = "Give you an overview about your amazon orders.",
   returnText="Rückgabe: ",
   refundTransaction="Erstattung für Bestellung ",
@@ -931,16 +931,6 @@ if LocalStorage ~=nil then
 
 end
 
-if configDirty and io ~= nil and io.open ~= nil then
-  print('write config...')
-  local configFile, configError=io.open(configFileName,"wb")
-  if configFile == nil then
-    error("cannot write config file: "..tostring(configError))
-  end
-  configFile:write(JSON():set(config):json())
-  configFile:close()
-end
-
 print(((io == nil or io.open == nil) and 'signed ' or '')  .. const.services[1],"plugin loaded...")
 if config.debug then print('debugging...') end
 if debug ~= nil then
@@ -950,10 +940,10 @@ local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters). To mark this as an
 -- unofficial build the "(beta)" tag is added to the description instead.
-WebBanking{version  = 1.104,
+WebBanking{version  = 1.25,
   url         = baseurl,
   services    = const.services,
-  description = const.description.." (beta v1.104)"}
+  description = const.description.." (beta v1.25)"}
 
 function debugBuffer.tablePrint(tbl)
   local t={}
@@ -2900,6 +2890,18 @@ function absoluteAmazonUrl(url)
     return url
   end
   if string.match(url, "^https?://") then
+    local host = string.match(url, "^https?://([^/]+)")
+    if not host then
+      error("absoluteAmazonUrl: invalid absolute URL")
+    end
+    host = string.lower(host)
+    -- Ignore explicit default ports when comparing to baseurl origin.
+    host = string.gsub(host, ":443$", "")
+    host = string.gsub(host, ":80$", "")
+    local allowedHost = string.lower(string.match(baseurl, "^https?://([^/]+)"))
+    if host ~= allowedHost then
+      error("absoluteAmazonUrl: host not allowed: " .. host)
+    end
     return url
   end
   if string.sub(url, 1, 1) == '/' then
@@ -5812,7 +5814,14 @@ function getLastDayOfPeriod(period)
 end
 
 function SupportsBank (protocol, bankCode)
-  return protocol == ProtocolWebBanking and "Amazon Orders" == bankCode:sub(1,#"Amazon Orders")
+  if protocol ~= ProtocolWebBanking then
+    return false
+  end
+  -- Leave Beutling's "Amazon Orders" service name alone while both extensions exist.
+  if bankCode:sub(1, #"Amazon Orders") == "Amazon Orders" then
+    return false
+  end
+  return bankCode:sub(1, #"Amazon") == "Amazon"
 end
 
 function endsWith(string,ending)

@@ -16,7 +16,7 @@ end
 local ok, result = pcall(
   env.InitializeSession2,
   env.ProtocolWebBanking,
-  "Amazon Orders",
+  "Amazon",
   1,
   {"user@example.com", "secret"},
   true)
@@ -38,7 +38,7 @@ unexpectedEnv.connectShop = function()
 end
 local unexpectedResult = unexpectedEnv.InitializeSession2(
   unexpectedEnv.ProtocolWebBanking,
-  "Amazon Orders",
+  "Amazon",
   1,
   {"user@example.com", "secret"},
   true)
@@ -102,7 +102,7 @@ technicalErrorEnv.connectShop = function()
 end
 local technicalError = technicalErrorEnv.InitializeSession2(
   technicalErrorEnv.ProtocolWebBanking,
-  "Amazon Orders",
+  "Amazon",
   1,
   {"user@example.com", "secret"},
   true)
@@ -124,7 +124,7 @@ credentialErrorEnv.connectShop = function()
 end
 local credentialError = credentialErrorEnv.InitializeSession2(
   credentialErrorEnv.ProtocolWebBanking,
-  "Amazon Orders",
+  "Amazon",
   1,
   {"user@example.com", "wrong"},
   true)
