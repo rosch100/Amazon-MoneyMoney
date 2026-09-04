@@ -950,10 +950,10 @@ local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters). To mark this as an
 -- unofficial build the "(beta)" tag is added to the description instead.
-WebBanking{version  = 2.0,
+WebBanking{version  = 2.01,
   url         = baseurl,
   services    = const.services,
-  description = const.description.." (beta v2.0)"}
+  description = const.description.." (beta v2.01)"}
 
 function debugBuffer.tablePrint(tbl)
   local t={}
@@ -1036,6 +1036,10 @@ function connectShop(method, url, postContent, postContentType, headers)
 end
 
 function connectShopRaw(method, url, postContent, postContentType, headers)
+  -- All string request URLs must stay on www.amazon.de (MoneyMoney whitelist).
+  if type(url) == 'string' and url ~= '' then
+    url = absoluteAmazonUrl(url)
+  end
   -- postContentType=postContentType or "application/json"
   if headers == nil then
     headers={
@@ -1047,9 +1051,15 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
   end
 
   if method == 'POST' then
-    if config.debug then
+    if config.debug and type(postContent) == 'string' then
       for i in string.gmatch(postContent, "([^&]+)") do
-        print("post='"..i.."'")
+        local name=i:match("^([^=]+)") or ""
+        if name:lower():find("pass", 1, true) or name:lower():find("pwd", 1, true)
+            or name:lower():find("otp", 1, true) or name:lower():find("secret", 1, true) then
+          print("post='"..name.."=<redacted>'")
+        else
+          print("post='"..i.."'")
+        end
       end
     end
   end
@@ -1153,7 +1163,7 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
 
     if config.debug then
       if LocalStorage.cookies~=connection:getCookies() then
-        print("store cookies=",connection:getCookies())
+        print("store cookies=<redacted>")
       end
     end
 
@@ -4490,7 +4500,7 @@ function extractAbaDownloadUrls(raw)
       table.insert(urls, abs)
     end
   end
-  for abs in raw:gmatch('"(https://www%.amazon%.[^/]+/b2b/aba/[^"]+download[^"]*)"') do
+  for abs in raw:gmatch('"(https://www%.amazon%.de[^"]*/b2b/aba/[^"]+download[^"]*)"') do
     if not seen[abs] and isAbaDownloadUrl(abs) then
       seen[abs]=true
       table.insert(urls, abs)
@@ -5867,8 +5877,22 @@ function applyAccountAttribute(k, v, allowConfigStrings)
   end
   if type(const[canonical]) == 'string' then
     print("const k=",v)
+    if canonical == 'orderDetailsUrl' and type(v) == 'string' and v:match("^https?://") then
+      absoluteAmazonUrl(v) -- reject foreign hosts for account-note overrides
+    end
     const[canonical]=v
   end
+end
+
+function connectShopForm(formNode)
+  if formNode == nil or formNode:length() == 0 then
+    return nil
+  end
+  local action = formNode:attr("action")
+  if type(action) == 'string' and action ~= '' then
+    absoluteAmazonUrl(action)
+  end
+  return connectShop(formNode:submit())
 end
 
 function failMissingLoginPage(stage)
