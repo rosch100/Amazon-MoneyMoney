@@ -6,6 +6,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-orders.lua")
+env.secUsername = "test@example.com"
 local now = os.time()
 
 env.connectShop = function()
@@ -81,7 +82,7 @@ env.LocalStorage.lastHarvestSince = 0
 env.clearPendingInitialSync()
 env.clearAccountSetupState()
 harvestCalled = false
-env.ListAccounts({ "mix" })
+env.ListAccounts({ "test@example.com" })
 assert(env.isAccountSetupSession() == true)
 assert(env.isPendingInitialSync() == false, "account search must not start Erstimport")
 assert(env.shouldRunAccountHarvest(now - 86400, now) == false, "account search must not harvest")

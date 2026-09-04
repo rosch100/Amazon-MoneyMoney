@@ -5089,7 +5089,7 @@ function subAccountNumberForKind(kind)
       end
     end
   end
-  return "sub:"..kind
+  return nil
 end
 
 function subAccountKindDisplayLabel(kind)
@@ -5125,12 +5125,17 @@ function listAccountDisplayLabel(accountNumber, discoveredSub)
   if accountNumber == "mix" then
     return combinedAccountListLabel()
   end
+  if type(discoveredSub) == 'table' then
+    if discoveredSub.kind == "personal" then
+      return discoveredSub.customerName
+    end
+    if discoveredSub.kind == "business" then
+      return discoveredSub.businessName
+    end
+  end
   local kind=harvestPriorityKindFromAccountNumber(accountNumber)
   if kind ~= nil then
     return subAccountKindDisplayLabel(kind)
-  end
-  if type(discoveredSub) == 'table' and type(discoveredSub.kind) == 'string' then
-    return subAccountKindDisplayLabel(discoveredSub.kind)
   end
   if type(accountNumber) == 'string' and accountNumber ~= '' then
     return accountNumber
@@ -5144,8 +5149,12 @@ function rememberDiscoveredSubAccounts(options)
     return
   end
   for _,opt in ipairs(options) do
-    local accountNumber=subAccountNumberForKind(opt.kind)
-    if accountNumber ~= nil and type(opt.label) == 'string' and opt.label ~= '' then
+    if type(opt) == 'table' and type(opt.kind) == 'string' and opt.kind ~= '' then
+      local accountNumber=opt.accountNumber or opt.customerId
+      local displayName=opt.kind == "personal" and opt.customerName
+        or opt.kind == "business" and opt.businessName
+      if type(accountNumber) == 'string' and accountNumber ~= ''
+          and type(displayName) == 'string' and displayName ~= '' then
       table.insert(LocalStorage.discoveredSubAccounts, {
         kind=opt.kind,
         label=opt.label,
@@ -5154,6 +5163,7 @@ function rememberDiscoveredSubAccounts(options)
         customerName=opt.customerName,
         accountNumber=accountNumber,
       })
+      end
     end
   end
 end
@@ -6372,9 +6382,9 @@ function buildAccountAttributes(knownAccounts, accountNumber)
   return buildListAccountAttributes(knownAccounts, accountNumber)
 end
 
-function makeListAccountEntry(labelSuffix, owner, accountNumber, knownAccounts)
+function makeListAccountEntry(name, owner, accountNumber, knownAccounts)
   return {
-    name="Amazon "..labelSuffix,
+    name=name,
     owner=owner,
     accountNumber=accountNumber,
     type=AccountTypeOther,
@@ -6409,14 +6419,18 @@ function ListAccounts (knownAccounts)
   -- RefreshAccount after EndSession (Kontenrundruf / Aktualisieren).
   local enableInitialSync=type(LocalStorage.lastHarvestSince) ~= 'number'
   beginAccountSetupSession(enableInitialSync)
-  local owner=secUsername or resolveListAccountsDisplayName()
-  local accounts={makeListAccountEntry(combinedAccountListLabel(), owner, "mix", knownAccounts)}
+  if type(secUsername) ~= 'string' or secUsername == '' then
+    error("ListAccounts requires secUsername")
+  end
+  local owner=secUsername
+  local accounts={makeListAccountEntry("Amazon", owner, secUsername, knownAccounts)}
 
   local discovered=LocalStorage.discoveredSubAccounts
   if type(discovered) == 'table' and #discovered > 1 then
     for _,sub in ipairs(discovered) do
       table.insert(accounts, makeListAccountEntry(
-        listAccountDisplayLabel(sub.accountNumber, sub), owner, sub.accountNumber, knownAccounts))
+        "Amazon "..listAccountDisplayLabel(sub.accountNumber, sub),
+        owner, sub.accountNumber, knownAccounts))
     end
   end
   return accounts

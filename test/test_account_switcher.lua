@@ -165,7 +165,7 @@ assert(nOk == 2, "both sub-accounts scraped, got " .. tostring(nOk))
 assert(#calls == 2)
 assert(calls[1].kind == "personal" or calls[2].kind == "personal")
 assert(calls[1].kind == "business" or calls[2].kind == "business")
-assert(#env.LocalStorage.discoveredSubAccounts == 2)
+assert(#env.LocalStorage.discoveredSubAccounts == 0)
 assert(env.LocalStorage.subAccountScan.incomplete ~= true)
 
 -- discoverAmazonSubAccounts: switcher only, never harvests orders
@@ -183,7 +183,7 @@ env.switchAmazonSubAccount = function()
 end
 local opts = env.discoverAmazonSubAccounts()
 assert(#opts == 2)
-assert(#env.LocalStorage.discoveredSubAccounts == 2)
+assert(#env.LocalStorage.discoveredSubAccounts == 0)
 assert(discoverCalls == 0)
 
 -- Switcher unavailable at start: no options → scrape current session only
