@@ -36,8 +36,10 @@ env.LocalStorage.discoveredSubAccounts = {
   { kind = "personal", accountNumber = "", customerName = "Incomplete" },
   { kind = "business", accountNumber = "JUNK-NO-NAME" },
   { kind = "other", accountNumber = "JUNK-UNKNOWN-KIND", label = "Junk" },
-  { kind = "personal", accountNumber = "A3PERSONALID01", label = "Test User" },
-  { kind = "business", accountNumber = "A3BUSINESSID02", label = "Example GmbH" },
+  { kind = "personal", accountNumber = "sub:personal", customerName = "Legacy Sub" },
+  { kind = "personal", accountNumber = "A3PERSONALID01", label = "Label Only" },
+  { kind = "personal", accountNumber = "A3PERSONALID01", customerName = "Test User" },
+  { kind = "business", accountNumber = "A3BUSINESSID02", businessName = "Example GmbH" },
 }
 local listedWithJunk = env.ListAccounts({})
 assert(#listedWithJunk == 3, "only complete discovered entries may be offered")
@@ -47,8 +49,15 @@ for _, account in ipairs(listedWithJunk) do
 end
 assert(junkNumbers["JUNK-NO-NAME"] == nil)
 assert(junkNumbers["JUNK-UNKNOWN-KIND"] == nil)
+assert(junkNumbers["sub:personal"] == nil)
 assert(junkNumbers["A3PERSONALID01"] == true)
 assert(junkNumbers["A3BUSINESSID02"] == true)
+assert(env.isCompleteDiscoveredSubAccount({
+  kind = "personal", accountNumber = "sub:personal", customerName = "X",
+}) == false, "legacy sub:* must not count as complete")
+assert(env.isCompleteDiscoveredSubAccount({
+  kind = "personal", accountNumber = "A3PERSONALID01", label = "Only Label",
+}) == false, "customerName required, label alone is not enough")
 
 env.LocalStorage.discoveredSubAccounts = {
   { kind = "personal", accountNumber = "A3PERSONALID01", customerName = "Test User" },
@@ -138,5 +147,6 @@ assert(#env.ListAccounts({}) == 1)
 env.secUsername = nil
 local ok, err = pcall(env.ListAccounts, {})
 assert(ok == false and err ~= nil, "ListAccounts must fail without secUsername")
+assert(tostring(err):find("Anmeldenamen", 1, true), tostring(err))
 
 print("test_list_accounts OK")
