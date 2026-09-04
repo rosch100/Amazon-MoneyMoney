@@ -18,7 +18,6 @@
 
 local connection=nil
 local secPassword
-local secUsername
 local captcha1run
 local mfa1run
 local aName
@@ -5163,7 +5162,34 @@ function isCombinedMoneyMoneyAccount(accountNumber)
   if accountNumber == nil or accountNumber == '' then
     return true
   end
-  return string.sub(tostring(accountNumber), 1, 4) ~= "sub:"
+  local num=tostring(accountNumber)
+  if num == "mix" then
+    return true
+  end
+  if type(secUsername) == 'string' and secUsername ~= '' and num == secUsername then
+    return true
+  end
+  return false
+end
+
+function moneyMoneyAccountKind(accountNumber)
+  if type(accountNumber) ~= 'string' or accountNumber == '' then
+    return nil
+  end
+  local legacy=string.match(accountNumber, "^sub:(.+)$")
+  if legacy == "personal" or legacy == "business" then
+    return legacy
+  end
+  local discovered=LocalStorage and LocalStorage.discoveredSubAccounts
+  if type(discovered) == 'table' then
+    for _,sub in ipairs(discovered) do
+      if type(sub) == 'table' and sub.accountNumber == accountNumber
+          and (sub.kind == "personal" or sub.kind == "business") then
+        return sub.kind
+      end
+    end
+  end
+  return nil
 end
 
 --- @function backfillSubAccountKind
@@ -5199,9 +5225,12 @@ function orderMatchesMoneyMoneyAccount(order, accountNumber)
   if isCombinedMoneyMoneyAccount(accountNumber) then
     return true
   end
-  local wantKind=string.match(tostring(accountNumber), "^sub:(.+)$")
-  if wantKind == nil then
+  if accountNumber == "inverse" or accountNumber == "monthly" or accountNumber == "yearly" then
     return true
+  end
+  local wantKind=moneyMoneyAccountKind(accountNumber)
+  if wantKind == nil then
+    return false
   end
   backfillSubAccountKind(order)
   return order.subAccountKind == wantKind
@@ -5478,7 +5507,7 @@ function harvestPriorityKindFromAccountNumber(accountNumber)
   if isCombinedMoneyMoneyAccount(accountNumber) then
     return nil
   end
-  return string.match(tostring(accountNumber), "^sub:(.+)$")
+  return moneyMoneyAccountKind(accountNumber)
 end
 
 function reportEmptyEmitIfMisaligned(accountNumber, transactions, now)
