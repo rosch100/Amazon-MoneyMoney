@@ -13,3 +13,6 @@ HAR/
 # Regression-test artifacts (written into MoneyMoney's Data dir at runtime)
 *_transactions.json
 *_transactions_master.json
+
+# Local agent workflow artifacts
+.superpowers/

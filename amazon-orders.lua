@@ -3143,6 +3143,9 @@ function openAccountSwitcherEmbed()
     embedSrc=accountSwitcherEmbedUrl(arb, cvfEmbedVersionQuery(signin)) or ''
   end
   if embedSrc == '' then
+    if switchAuthBlockReason(signin) ~= nil then
+      return signin
+    end
     print("account switcher embed not found")
     return nil
   end
@@ -3201,6 +3204,17 @@ end
 function isAmazonPasswordSignInPage(htmlNode)
   return htmlNode ~= nil
     and htmlNode:xpath('//form[contains(@name,"signIn")]//*[@name="password"]'):length() > 0
+end
+
+function isAmazonAuthenticationChallengePage(htmlNode)
+  if htmlNode == nil then
+    return false
+  end
+  return htmlNode:xpath('//form[@id="pollingForm"]'):length() > 0
+    or htmlNode:xpath('//form[@id="auth-select-device-form"]'):length() > 0
+    or htmlNode:xpath('//img[@id="auth-captcha-image"]'):length() > 0
+    or htmlNode:xpath('//form[@name="claimspicker"]'):length() > 0
+    or htmlNode:xpath('//form[@action="verify"]'):length() > 0
 end
 
 function mfaChallengeFromHtml(htmlNode)
@@ -3311,6 +3325,12 @@ function switchAuthBlockReason(htmlNode)
   end
   if isAmazonPasswordSignInPage(htmlNode) then
     return "interactive login"
+  end
+  if isAmazonAuthenticationChallengePage(htmlNode) then
+    return "authentication challenge"
+  end
+  if isAkamaiInterstitial(htmlNode) then
+    return "security challenge"
   end
   return nil
 end
@@ -5845,6 +5865,13 @@ function discoverAmazonSubAccounts(statusText)
   end
   MM.printStatus(msg)
   local switcherHtml=openAccountSwitcherEmbed()
+  local authBlock=switchAuthBlockReason(switcherHtml or html)
+  if authBlock ~= nil then
+    if authBlock == "MFA" then
+      authBlock="2FA"
+    end
+    return nil, "Amazon-Unterkonto-Ermittlung erfordert "..authBlock
+  end
   local options={}
   if switcherHtml ~= nil then
     options=parseAccountSwitcher(switcherHtml)
