@@ -33,6 +33,142 @@ function rememberShopCredentials(username, password)
     secPassword=password
   end
 end
+
+-- Keys persisted per Amazon login in LocalStorage.logins[loginKey] (multi-login).
+local AMAZON_LOGIN_STATE_KEYS = {
+  'OrderCache',
+  'getOrders',
+  'invalidCache',
+  'cookies',
+  'orderFilterCache',
+  'orderFilterCacheByAccount',
+  'orderListHarvestIncompleteByAccount',
+  'floatingBalanceAnchorByAccount',
+  'discoveredSubAccounts',
+  'subAccountScan',
+  'pendingInitialSync',
+  'initialSyncHarvestDone',
+  'initialSyncRefreshedAccounts',
+  'accountSetupSession',
+  'lastHarvestSince',
+  'refreshSince',
+  'lastLoginCounter',
+  'loginCounter',
+  'requireFullReimport',
+  'cacheVersion',
+  'abaRollupHarvestIncomplete',
+  'abaFullHarvestJobs',
+  'abaFullHarvestJobIndex',
+  'abaFullHarvestHasMore',
+  'abaFullHarvestHarvestSince',
+  'abaFullHarvestCompleteKey',
+  'abaFullHarvestReplayRequired',
+  'abaRollupPaginationVersion',
+  'harvestPriorityKind',
+  'patcher',
+  'resetCache',
+}
+
+function normalizeAmazonLoginKey(username)
+  if type(username) ~= 'string' then
+    return ''
+  end
+  return (username:gsub('^%s*(.-)%s*$', '%1')):lower()
+end
+
+function hasAmazonLoginState(storage)
+  if type(storage) ~= 'table' then
+    return false
+  end
+  for _, key in ipairs(AMAZON_LOGIN_STATE_KEYS) do
+    if storage[key] ~= nil then
+      return true
+    end
+  end
+  return false
+end
+
+function captureAmazonLoginState(storage)
+  local bucket = {}
+  if type(storage) ~= 'table' then
+    return bucket
+  end
+  for _, key in ipairs(AMAZON_LOGIN_STATE_KEYS) do
+    bucket[key] = storage[key]
+  end
+  return bucket
+end
+
+function applyAmazonLoginState(storage, bucket)
+  if type(storage) ~= 'table' then
+    return
+  end
+  bucket = bucket or {}
+  for _, key in ipairs(AMAZON_LOGIN_STATE_KEYS) do
+    storage[key] = bucket[key]
+  end
+end
+
+function suspendAmazonLoginState(storage)
+  if type(storage) ~= 'table' then
+    return
+  end
+  local key = storage._activeLoginKey
+  if type(key) ~= 'string' or key == '' then
+    return
+  end
+  storage.logins = storage.logins or {}
+  storage.logins[key] = captureAmazonLoginState(storage)
+end
+
+--- True when EndSession must keep cookies (no remote logout): another login
+--- bucket already exists besides the active one (real multi-login).
+function shouldPersistAmazonLoginSession(storage)
+  if type(storage) ~= 'table' then
+    return false
+  end
+  local active = storage._activeLoginKey
+  if type(active) ~= 'string' or active == '' then
+    return false
+  end
+  local logins = storage.logins
+  if type(logins) ~= 'table' then
+    return false
+  end
+  for key in pairs(logins) do
+    if key ~= active then
+      return true
+    end
+  end
+  return false
+end
+
+--- Bind flat LocalStorage harvest/cache fields to one login identity.
+function activateAmazonLoginStorage(username)
+  if type(LocalStorage) ~= 'table' then
+    return
+  end
+  local storage = LocalStorage
+  local loginKey = normalizeAmazonLoginKey(username)
+  if loginKey == '' then
+    return
+  end
+  if storage._activeLoginKey == loginKey then
+    return
+  end
+
+  storage.logins = storage.logins or {}
+  if storage._activeLoginKey ~= nil then
+    suspendAmazonLoginState(storage)
+    connection = nil
+  elseif hasAmazonLoginState(storage) and storage.logins[loginKey] == nil then
+    storage.logins[loginKey] = captureAmazonLoginState(storage)
+  end
+
+  applyAmazonLoginState(storage, storage.logins[loginKey] or {})
+  storage._activeLoginKey = loginKey
+end
+
 local html
 local configDirty=false
 local webCache=false
@@ -166,9 +302,9 @@ local const={
   subAccountListNamePersonal="Persönlich",
   subAccountListNameBusiness="Geschäftlich",
   -- MoneyMoney-Kontonummer = Prefix + customerId ohne führendes „A“.
-  -- Weder nackte customerId noch „AB-“+customerId: die persönliche ID bleibt
-  -- sonst als Substring erkennbar und MoneyMoney legt das Konto als
-  -- Amazon-Kreditkarte an (Live: „Amazon Roland“ trotz type=AccountTypeOther).
+  -- Nackte customerId und „AB-“+customerId enthalten die ID als Substring und
+  -- sind obsolete. Encoding verhindert den Substring-Leak; die Kontoart setzt
+  -- dennoch nur der Host (bekannter MoneyMoney-Bug: AccountTypeOther → oft KK).
   moneyMoneyCustomerIdAccountPrefix="AO.",
   daysByMonth={31,28,31,30,31,30,31,31,30,31,30,31},
   -- Obsolete MoneyMoney accountNumbers (pre email/customerId). Refresh rejects these.
@@ -784,10 +920,10 @@ local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters). To mark this as an
 -- unofficial build the "(beta)" tag is added to the description instead.
-WebBanking{version  = 2.0,
+WebBanking{version  = 2.01,
   url         = baseurl,
   services    = const.services,
-  description = const.description.." (beta v2.0)"}
+  description = const.description.." (beta v2.01)"}
 
 function debugBuffer.tablePrint(tbl)
   local t={}
@@ -6011,6 +6147,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
   end
 
   if step==1 then
+    activateAmazonLoginStorage(credentials[1])
     rememberShopCredentials(credentials[1], credentials[2])
     captcha1run=true
     mfa1run=true
@@ -6386,10 +6523,10 @@ function buildAccountAttributes(knownAccounts, accountNumber)
 end
 
 function makeListAccountEntry(name, owner, accountNumber, knownAccounts)
-  -- Explizit Sonstige: MoneyMoney setzt die Kontoart nur bei Neu-Anlage;
-  -- Refresh ändert sie nicht. AccountTypeOther muss aus der Host-Laufzeit kommen.
-  -- Unterkonten: accountNumber = AO.<customerId ohne führendes A> — weder nackte
-  -- customerId noch AB-<customerId> (Substring → Amazon-Kreditkarte).
+  -- Explizit Sonstige über Host-Konstante AccountTypeOther.
+  -- MoneyMoney setzt die Kontoart nur bei Neu-Anlage; Refresh ändert sie nicht.
+  -- Bekannter Host-Bug: trotz AccountTypeOther werden Konten oft als Kreditkarte
+  -- angelegt (siehe docs/bug-reports/…). Unterkonten: AO.<customerId ohne A>.
   local accountType=AccountTypeOther
   if accountType == nil then
     error("Amazon: AccountTypeOther fehlt in der MoneyMoney-Laufzeit")
@@ -6715,10 +6852,10 @@ end
 function EndSession ()
   clearAccountSetupState()
   tryCompleteInitialSync(os.time())
-  secPassword=nil
-  secUsername=nil
-  -- Logout.
-  if config.reallyLogout and html ~= nil then
+  local persistLogin = shouldPersistAmazonLoginSession(LocalStorage)
+  -- Multi-login: keep cookies in LocalStorage.logins[loginKey]; remote logout
+  -- would invalidate the persisted jar for the next sync of this login.
+  if config.reallyLogout and html ~= nil and not persistLogin then
     local logoutElement=html:xpath('//a[contains(@id,"nav-item-signout") or contains(@href,"sign-out")]')
     if logoutElement ~= nil then
       print("Logout")
@@ -6730,5 +6867,11 @@ function EndSession ()
       print("error: logout link not found")
     end
   end
+  if type(LocalStorage) == 'table' then
+    suspendAmazonLoginState(LocalStorage)
+  end
+  connection = nil
+  secPassword=nil
+  secUsername=nil
 end
 

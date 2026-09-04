@@ -2,7 +2,7 @@
 
 Bestellungen von amazon.de als Umsätze in MoneyMoney.
 
-Version: **2.0**
+Version: **2.01**
 Service: **Amazon Bestellungen**
 Auth: Username/Passwort (Amazon-Login; kein Cookie-Import)
 Repository: https://github.com/rosch100/Amazon-MoneyMoney
@@ -29,6 +29,10 @@ Unsignierte Plugins laufen nur in der **Beta** von MoneyMoney, und die Signaturp
 ## Konten anlegen
 
 *Konto hinzufügen* → *Andere* → *Amazon Bestellungen*.
+
+Mehrere Amazon-Logins parallel: jeweils einen eigenen MoneyMoney-Bankzugang
+mit eigener E-Mail anlegen. Order-Cache und Harvest-State sind pro Login
+isoliert.
 
 Das gemeinsame Konto heißt **Amazon**; die Kontonummer ist die Login-E-Mail.
 Sind ein persönliches und ein geschäftliches Amazon-Konto verbunden, werden
