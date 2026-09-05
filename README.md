@@ -202,7 +202,10 @@ Fork von [Michael Beutling](https://github.com/Michael-Beutling/Amazon-MoneyMone
   Rollup-Pagination mit klassischem Jahresfilter als Lückenabdeckung.
 - Erstattungen und Rückgaben aus den **Bestelldetails**, nicht mehr aus dem Nachrichten-Center.
 - **Erneute Detailprüfung:** Altersabhängige Termine und gezieltes
-  `rescanOrder`; leere oder fehlgeschlagene Detailantworten bleiben offen.
+  `rescanOrder`; leere Detailantworten bleiben offen. Storno-Stubs ohne
+  Bestelldatum (nur „storniert“-Banner) gelten als nicht berechnete Stornierung
+  und blockieren den Abruf nicht. Nicht ladbare Detailseiten bekommen einen
+  erneuten Termin statt sofortigem Dauer-Retry.
 - Volle Erstattung, volle Rückgabe und nicht berechnete Stornierung: Buchung und Storno standardmäßig **weglassen** (`keepStorno` zum Anzeigen).
 - Teilrückgabe und Rückgabe mit restlichem Versand als **Rücksendekosten**.
 - Versand, Verpackung, Geschenkverpackung und **Bestelldifferenz** als eigene Buchungen.
