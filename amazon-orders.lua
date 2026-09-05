@@ -2191,6 +2191,54 @@ function isUnbilledCancellation(orderDetails)
     or status:find('was not charged') ~= nil
 end
 
+--- Cancelled order-details stub: SSR banner only, no orderDate/positions (2026+).
+function isCancelledOrderDetailsStub(orderDetails)
+  if orderDetails == nil then
+    return false
+  end
+  if orderDetails:xpath('.//*[@data-component="cancelledOrderBanner"]'):length() > 0 then
+    return true
+  end
+  local text=trim(orderDetails:text())
+  return text:find('Diese Bestellung wurde storniert', 1, true) ~= nil
+    or text:find('This order was cancelled', 1, true) ~= nil
+end
+
+--- Amazon error shell: details cannot be loaded (wrong account / digital / transient).
+function isUnloadableOrderDetailsPage(orderDetails)
+  if orderDetails == nil then
+    return false
+  end
+  if orderDetails:xpath('.//*[@data-component="errorbanner"]'):length() > 0 then
+    return true
+  end
+  local text=trim(orderDetails:text())
+  return text:find('Bestelldetails nicht laden', 1, true) ~= nil
+    or text:find('cannot load your order details', 1, true) ~= nil
+    or text:find("can't load your order details", 1, true) ~= nil
+end
+
+--- Treat cancelled SSR stub as completed unbilled cancel so harvest does not loop.
+function completeCancelledOrderDetailsStub(order, now)
+  if type(order) ~= 'table' then
+    return
+  end
+  if type(now) ~= 'number' then
+    now=os.time()
+  end
+  order.unbilledCancel=true
+  order.orderTotal=0
+  order.orderPositions={}
+  order.returnedPositions={}
+  order.orderSum=0
+  order.summaryExtras={}
+  if type(order.bookingDate) ~= 'number' or order.bookingDate == invalidDate then
+    order.bookingDate=now
+  end
+  order.detailsParsed=true
+  scheduleNextDetailsDate(order, now)
+end
+
 --- @function getSummaryExtrasFromDetails
 -- Bookable Bestellübersicht rows (shipping, coupon, gift wrap, …), signed cents.
 function getSummaryExtrasFromDetails(orderDetails)
@@ -2460,6 +2508,18 @@ function getOrderDetails(order)
     local hadPositionsBeforeParse=orderHasPositions(order)
     local date=getDate(orderDetails:xpath('.//*[@data-component="orderDate"]'):text())
     if date == invalidDate then
+      local now=os.time()
+      if isCancelledOrderDetailsStub(orderDetails) then
+        completeCancelledOrderDetailsStub(order, now)
+        debugBuffer.context=''
+        return true
+      end
+      if isUnloadableOrderDetailsPage(orderDetails) then
+        scheduleNextDetailsDate(order, now)
+        debugBuffer.print("getOrderDetails unloadable page",order.orderCode)
+        debugBuffer.context=''
+        return false
+      end
       debugBuffer.print("getOrderDetails missing order date",order.orderCode)
       debugBuffer.context=''
       return false
@@ -4883,6 +4943,25 @@ function runOrderFilterHarvest(orderFilterVal, statusLabel, orderFilterCache, su
   return newCount
 end
 
+--- Mark GET year filters done after SSR years stay unready (fullHarvest only).
+function markGetYearFiltersAbandoned(orderFilterCache, filters)
+  if type(filters) ~= 'table' or type(orderFilterCache) ~= 'table' then
+    return
+  end
+  for _, item in ipairs(filters) do
+    local val=type(item) == 'table' and item.val or nil
+    if type(val) == 'string' and val ~= '' then
+      markOrderFilterCacheIfComplete(orderFilterCache, val, false)
+    end
+  end
+end
+
+--- After SSR year filters stay unready, stop sticky incomplete harvest loops.
+function abandonUnreadyGetYearFilters(subAccountLabel, orderFilterCache, filters)
+  markGetYearFiltersAbandoned(orderFilterCache, filters)
+  setOrderListHarvestIncomplete(subAccountLabel, false)
+end
+
 --- @function collectOrdersViaYourOrdersGet
 -- Harvest orders with GET timeFilter URLs. Used when Business lands on the SPA
 -- shell: POST /ab/your-orders/orderHistory returns Forbidden in MoneyMoney and
@@ -4904,6 +4983,7 @@ function collectOrdersViaYourOrdersGet(subAccountLabel, kind, refreshSince, opts
   local newCount=0
   local readyCount=0
   local unreadyStreak=0
+  local abandonedUnready=false
   local getHarvestOpts={
     loadPage=loadYourOrdersFilterPage,
     requireReady=true,
@@ -4921,6 +5001,7 @@ function collectOrdersViaYourOrdersGet(subAccountLabel, kind, refreshSince, opts
         unreadyStreak=unreadyStreak+1
         if unreadyStreak >= const.getFilterUnreadyHorizon then
           print("GET timeFilter unready horizon; skip remaining year filters")
+          abandonedUnready=true
           break
         end
       end
@@ -4930,6 +5011,10 @@ function collectOrdersViaYourOrdersGet(subAccountLabel, kind, refreshSince, opts
   end
   if opts.fullHarvest and readyCount == 0 then
     MM.printStatus("Amazon Business: Bestellübersicht online nicht verfügbar – ältere Bestellungen nur über Business Analytics")
+  end
+  -- fullHarvest ABA-gap path: stop sticky incomplete once SSR years are abandoned.
+  if opts.fullHarvest and (readyCount == 0 or abandonedUnready) then
+    abandonUnreadyGetYearFilters(subAccountLabel, orderFilterCache, filters)
   end
   return newCount
 end
