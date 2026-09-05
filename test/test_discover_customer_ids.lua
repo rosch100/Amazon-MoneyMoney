@@ -232,6 +232,11 @@ env.LocalStorage = {
   },
 }
 env.bindActiveHtml(accountPage("personal", "A3STARTPERSONAL"))
+local openedSwitcher = false
+env.openAccountSwitcherEmbed = function()
+  openedSwitcher = true
+  error("warm discovery cache must not open the account switcher")
+end
 local reuseSwitches = {}
 env.ensureAmazonSubAccountSession = function(kind)
   reuseSwitches[#reuseSwitches + 1] = kind
@@ -242,6 +247,7 @@ local reused, reuseErr = env.discoverAmazonSubAccounts(
   {reuseCustomerIds = true})
 assert(reuseErr == nil, tostring(reuseErr))
 assert(#reused == 2)
+assert(openedSwitcher == false, "must print (reused, no switcher) path")
 assert(#reuseSwitches == 0, "stored customerIds must skip enrichment switches")
 assert(reused[1].accountNumber == "A3PERSONALID01" or reused[2].accountNumber == "A3PERSONALID01")
 assert(#env.LocalStorage.discoveredSubAccounts == 2)

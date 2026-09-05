@@ -50,7 +50,6 @@ end
 
 env.HTML = mm.HTML
 env.isAkamaiInterstitial = function() return false end
-env.businessGetHarvestBlockedBySpaShell = function() return false end
 env.orderListPageReady = function(htmlNode)
   return htmlNode ~= nil and htmlNode:xpath('//div[contains(@class,"order-card")]'):length() > 0
 end
