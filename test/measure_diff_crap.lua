@@ -1,6 +1,7 @@
 -- Minimal Diff-CRAP proxy for this Lua plugin (no luacov in the tree).
--- Complexity = decision points (if/elseif/for/while/until/and/or/?) in named functions.
--- With dedicated tests covering the units, coverage is treated as 100% → CRAP ≈ C.
+-- Complexity = control-flow decision points (if/elseif/for/while/until) in named functions.
+-- Coverage is not instrumented here: dedicated tests must cover the listed units;
+-- then CRAP is approximated as complexity (cov=100% assumption).
 -- Gate default 5 (feature-dev / coverage-analysis-and-crap).
 -- Usage: test/run.sh test/measure_diff_crap.lua
 

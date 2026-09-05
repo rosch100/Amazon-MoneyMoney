@@ -42,4 +42,51 @@ assert(env.isOrderListHarvestIncomplete(label) ~= true,
 assert(env.hasMoreBusinessOrdersToHarvest(label, 0, os.time()) ~= true,
   "abandoned unready year filters must not report more business harvest work")
 
+-- Mixed path: at least one ready year, then unready horizon — remaining years abandoned.
+env.LocalStorage = {
+  OrderCache = {},
+  orderFilterCacheByAccount = {},
+  orderListHarvestIncompleteByAccount = {},
+}
+local readyShell = mm.HTML([[
+<html><body>
+  <div class="order-card" data-csa-c-slot-id="amzn1.yourorders.order-card.303-0000000-0000001"></div>
+</body></html>
+]])
+local loads = 0
+env.loadYourOrdersFilterPage = function()
+  loads = loads + 1
+  if loads == 1 then
+    return readyShell
+  end
+  return spaShell
+end
+env.orderListPageReady = function(page)
+  return page == readyShell
+end
+env.scanOrderFilterPages = function(orderFilterVal, orderCache, orderFilterCache)
+  orderFilterCache[orderFilterVal] = true
+  return 1, 1, 1, true
+end
+env.enumerateYourOrdersGetFiltersForAbaGap = function()
+  return {
+    { val = "year-2024", label = "2024" },
+    { val = "year-2023", label = "2023" },
+    { val = "year-2022", label = "2022" },
+  }
+end
+
+local mixedLabel = "Example GmbH"
+local mixedCount = env.collectOrdersViaYourOrdersGet(mixedLabel, "business", 0, {
+  fullHarvest = true,
+  abaGapOnly = true,
+})
+assert(mixedCount == 1, "mixed path must keep the ready-year harvest count")
+assert(env.isOrderListHarvestIncomplete(mixedLabel) ~= true,
+  "fullHarvest unready horizon must clear sticky incomplete even if some years were ready")
+local mixedCache = env.filterCacheForSubAccount(mixedLabel)
+assert(mixedCache["year-2024"] == true, "ready year must stay marked complete")
+assert(mixedCache["year-2023"] == true, "unready year after horizon must be abandoned")
+assert(mixedCache["year-2022"] == true, "remaining year filters must be abandoned")
+
 print("test_business_get_unready_horizon OK")

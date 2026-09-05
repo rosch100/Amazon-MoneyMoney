@@ -16,3 +16,4 @@ HAR/
 
 # Local agent workflow artifacts
 .superpowers/
+.worktrees/

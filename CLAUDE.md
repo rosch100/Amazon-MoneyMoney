@@ -146,5 +146,10 @@ repeat runs stay fast. detailsUrl built via const.orderDetailsUrl + code.
   batches of six per refresh. Rollup pagination is resumable.
 - `AMAZON-INCOMPLETE-HARVEST` is emitted only for an incomplete scan/report or
   truncated/failed due-detail batch, never during account setup.
+- Cancelled order-details SSR stubs without `orderDate` (banner only) are
+  completed as unbilled cancels so they do not keep the details queue due.
+  Unloadable detail shells schedule a rescan delay instead of staying
+  immediately due. Business `fullHarvest` GET year filters that stay SPA-unready
+  are abandoned so sticky incomplete harvest can clear.
 - Login response failures are transient unless Amazon explicitly rejects the
   credentials; transient errors preserve persisted cookies.
