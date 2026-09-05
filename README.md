@@ -2,7 +2,7 @@
 
 Bestellungen von amazon.de als Umsätze in MoneyMoney.
 
-Version: **2.01**
+Version: **2.00**
 Repository: https://github.com/rosch100/Amazon-MoneyMoney
 Gemeinsame Infos: https://github.com/rosch100/moneymoney-extensions
 

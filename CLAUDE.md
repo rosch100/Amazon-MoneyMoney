@@ -146,10 +146,28 @@ repeat runs stay fast. detailsUrl built via const.orderDetailsUrl + code.
   batches of six per refresh. Rollup pagination is resumable.
 - `AMAZON-INCOMPLETE-HARVEST` is emitted only for an incomplete scan/report or
   truncated/failed due-detail batch, never during account setup.
+- After a completed initial full harvest, incremental refreshes use cutoff
+  `max(MoneyMoney since, newest OrderCache bookingDate) − 14 days` for list/filter
+  scan width. Refund/return detail re-checks are limited to emitted orders in the
+  last **90 days**, skipping `unbilledCancel` and fully settled refunds; scheduled
+  `detailsDate` in the future is still respected.
+- Incremental session optimizations: reuse complete `discoveredSubAccounts` without
+  opening the account switcher; skip list harvest (and switches) when the last list
+  scan wall-clock (`lastListHarvestAt`) is still within `incrementalListMinRescanSec`
+  (default 4h) and only details are due — including after re-login;
+  `lastHarvestSince` remains the MoneyMoney since watermark. With a 1-month scan
+  window skip `months-3` / „letzten 3 Monaten“; Business incremental goes straight
+  to ABA (no SPA order-history probes); skip `ensureAmazonSubAccountSession` when
+  the current HTML already matches the kind.
 - Cancelled order-details SSR stubs without `orderDate` (banner only) are
-  completed as unbilled cancels so they do not keep the details queue due.
+  completed so they do not keep the details queue due; `unbilledCancel` is set
+  only when the stub states the cancel was not billed.
   Unloadable detail shells schedule a rescan delay instead of staying
   immediately due. Business `fullHarvest` GET year filters that stay SPA-unready
-  are abandoned so sticky incomplete harvest can clear.
+  are abandoned without sticky-marking incomplete on not-ready years; when no
+  year is ready, sticky incomplete is cleared.
+- Akamai interstitials prefer the meta-refresh `bm-verify` GET first; POST
+  `/_sec/verify` is only used if the refresh still leaves an interstitial
+  (MoneyMoney may abort the session on HTTP 400 from that POST).
 - Login response failures are transient unless Amazon explicitly rejects the
   credentials; transient errors preserve persisted cookies.

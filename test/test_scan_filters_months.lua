@@ -13,7 +13,8 @@ assert(env.orderFilterWithinScanMonths("year-2015", nil) == true)
 -- 3 months: recent windows + current/overlapping years only
 assert(env.orderFilterWithinScanMonths("last30", 3) == true)
 assert(env.orderFilterWithinScanMonths("months-3", 3) == true)
-assert(env.orderFilterWithinScanMonths("months-3", 1) == true, "months-3 kept as fallback when last30 is broken")
+assert(env.orderFilterWithinScanMonths("months-3", 1) == false,
+  "months-3 is outside a 1-month incremental window (last30 covers it)")
 
 local now = os.date("*t")
 assert(env.orderFilterWithinScanMonths("year-" .. now.year, 3) == true)

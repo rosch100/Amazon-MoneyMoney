@@ -36,13 +36,36 @@ local cancelled = {
 assert(env.getOrderDetails(cancelled) == true,
   "cancelled stub without orderDate must complete details fetch")
 assert(cancelled.detailsParsed == true, "cancelled stub must be marked parsed")
-assert(cancelled.unbilledCancel == true, "cancelled stub must be unbilled cancel")
-assert(type(cancelled.bookingDate) == "number" and cancelled.bookingDate ~= 1e99,
-  "cancelled stub must receive a usable bookingDate")
+assert(cancelled.unbilledCancel ~= true,
+  "banner-only stub without unbilled wording must not force unbilledCancel")
+assert(cancelled.bookingDate == (env.invalidDate or 1e99),
+  "cancelled stub without orderDate must keep invalidDate (no cutoff skew)")
 assert(type(cancelled.detailsDate) == "number" and cancelled.detailsDate > now,
   "cancelled stub must schedule detailsDate into the future")
 assert(env.orderNeedsDetailsForAccount(cancelled, now, "test@example.com") == false,
   "cancelled stub must not stay due for another details fetch this refresh")
+
+local cancelledUnbilledHtml = [[
+<html><body>
+  <div id="orderDetails" class="a-section dynamic-width">
+    <div data-component="cancelledOrderBanner">
+      <h4>Diese Bestellung wurde storniert. Diese Bestellung wurde dir nicht in Rechnung gestellt.</h4>
+    </div>
+  </div>
+</body></html>
+]]
+env.connectShopWithCheck = function()
+  return mm.HTML(cancelledUnbilledHtml)
+end
+local cancelledUnbilled = {
+  orderCode = "303-8179986-7068357",
+  detailsDate = 0,
+  bookingDate = env.invalidDate or 1e99,
+  detailsUrl = "/your-orders/order-details?orderID=303-8179986-7068357",
+}
+assert(env.getOrderDetails(cancelledUnbilled) == true)
+assert(cancelledUnbilled.unbilledCancel == true,
+  "cancelled stub with unbilled wording must set unbilledCancel")
 
 local errorHtml = [[
 <html><body>

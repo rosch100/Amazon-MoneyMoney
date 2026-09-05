@@ -83,7 +83,7 @@ local mixedCount = env.collectOrdersViaYourOrdersGet(mixedLabel, "business", 0, 
 })
 assert(mixedCount == 1, "mixed path must keep the ready-year harvest count")
 assert(env.isOrderListHarvestIncomplete(mixedLabel) ~= true,
-  "fullHarvest unready horizon must clear sticky incomplete even if some years were ready")
+  "fullHarvest must not sticky-mark incomplete for abandoned unready years")
 local mixedCache = env.filterCacheForSubAccount(mixedLabel)
 assert(mixedCache["year-2024"] == true, "ready year must stay marked complete")
 assert(mixedCache["year-2023"] == true, "unready year after horizon must be abandoned")

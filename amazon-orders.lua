@@ -51,6 +51,7 @@ local AMAZON_LOGIN_STATE_KEYS = {
   'initialSyncRefreshedAccounts',
   'accountSetupSession',
   'lastHarvestSince',
+  'lastListHarvestAt',
   'refreshSince',
   'lastLoginCounter',
   'loginCounter',
@@ -290,6 +291,12 @@ local const={
   abaRollupMaxPages=250,
   abaRollupPaginationVersion=3,
   abaIncrementalMaxAgeSec=366 * daySeconds,
+  -- After full harvest: list scan backstop before cutoff; refund-details watch window.
+  incrementalListSafetySec=14 * daySeconds,
+  incrementalRefundWatchMaxAgeSec=90 * daySeconds,
+  -- Skip order-list harvest (and account switches) when a recent incremental
+  -- list scan already covered the cutoff window; details/refund watch still run.
+  incrementalListMinRescanSec=4 * 60 * 60,
   abaLandingMarkers={
     'reportType', 'items_report', 'dateSpanSelection',
     'Business Analytics', 'Geschäftsanalyse', 'Beschaffungsanalysen', 'dashboard',
@@ -490,6 +497,7 @@ function resetImportState(requireFullReimport)
   clearOrderFilterCaches()
   LocalStorage.invalidCache={}
   LocalStorage.lastHarvestSince=nil
+  LocalStorage.lastListHarvestAt=nil
   LocalStorage.subAccountScan=nil
   LocalStorage.pendingInitialSync=nil
   LocalStorage.initialSyncHarvestDone=nil
@@ -920,10 +928,10 @@ local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters). To mark this as an
 -- unofficial build the "(beta)" tag is added to the description instead.
-WebBanking{version  = 2.01,
+WebBanking{version  = 2.00,
   url         = baseurl,
   services    = const.services,
-  description = const.description.." (beta v2.01)"}
+  description = const.description.." (beta v2.00)"}
 
 function debugBuffer.tablePrint(tbl)
   local t={}
@@ -2191,52 +2199,100 @@ function isUnbilledCancellation(orderDetails)
     or status:find('was not charged') ~= nil
 end
 
---- Cancelled order-details stub: SSR banner only, no orderDate/positions (2026+).
-function isCancelledOrderDetailsStub(orderDetails)
-  if orderDetails == nil then
+--- True when a data-component node exists under the order-details root.
+function orderDetailsHasDataComponent(orderDetails, componentName)
+  if orderDetails == nil or type(componentName) ~= 'string' or componentName == '' then
     return false
   end
-  if orderDetails:xpath('.//*[@data-component="cancelledOrderBanner"]'):length() > 0 then
-    return true
+  return orderDetails:xpath('.//*[@data-component="'..componentName..'"]'):length() > 0
+end
+
+--- True when trimmed order-details text contains any of the needles (plain find).
+function orderDetailsTextContainsAny(orderDetails, needles)
+  if orderDetails == nil or type(needles) ~= 'table' then
+    return false
   end
   local text=trim(orderDetails:text())
-  return text:find('Diese Bestellung wurde storniert', 1, true) ~= nil
-    or text:find('This order was cancelled', 1, true) ~= nil
+  if text == '' then
+    return false
+  end
+  for _, needle in ipairs(needles) do
+    if type(needle) == 'string' and needle ~= ''
+        and text:find(needle, 1, true) ~= nil then
+      return true
+    end
+  end
+  return false
+end
+
+--- Component match, else any plain-text needle under order-details.
+function orderDetailsMatchesMarker(orderDetails, componentName, textNeedles)
+  if orderDetailsHasDataComponent(orderDetails, componentName) then
+    return true
+  end
+  return orderDetailsTextContainsAny(orderDetails, textNeedles)
+end
+
+--- Cancelled order-details stub: SSR banner only, no orderDate/positions (2026+).
+function isCancelledOrderDetailsStub(orderDetails)
+  return orderDetailsMatchesMarker(orderDetails, 'cancelledOrderBanner', {
+    'Diese Bestellung wurde storniert',
+    'This order was cancelled',
+  })
 end
 
 --- Amazon error shell: details cannot be loaded (wrong account / digital / transient).
 function isUnloadableOrderDetailsPage(orderDetails)
-  if orderDetails == nil then
-    return false
-  end
-  if orderDetails:xpath('.//*[@data-component="errorbanner"]'):length() > 0 then
-    return true
-  end
-  local text=trim(orderDetails:text())
-  return text:find('Bestelldetails nicht laden', 1, true) ~= nil
-    or text:find('cannot load your order details', 1, true) ~= nil
-    or text:find("can't load your order details", 1, true) ~= nil
+  return orderDetailsMatchesMarker(orderDetails, 'errorbanner', {
+    'Bestelldetails nicht laden',
+    'cannot load your order details',
+    "can't load your order details",
+  })
 end
 
---- Treat cancelled SSR stub as completed unbilled cancel so harvest does not loop.
-function completeCancelledOrderDetailsStub(order, now)
+--- True when cancelled stub text says the cancel was not billed.
+function cancelledStubLooksUnbilled(orderDetails)
+  return orderDetailsTextContainsAny(orderDetails, {
+    'nicht in Rechnung',
+    'not billed',
+    'was not charged',
+  })
+end
+
+--- Complete cancelled SSR stub so harvest does not loop; unbilled only when stated.
+function completeCancelledOrderDetailsStub(order, now, orderDetails)
   if type(order) ~= 'table' then
     return
   end
   if type(now) ~= 'number' then
     now=os.time()
   end
-  order.unbilledCancel=true
+  order.unbilledCancel=cancelledStubLooksUnbilled(orderDetails)
   order.orderTotal=0
   order.orderPositions={}
   order.returnedPositions={}
   order.orderSum=0
   order.summaryExtras={}
-  if type(order.bookingDate) ~= 'number' or order.bookingDate == invalidDate then
-    order.bookingDate=now
-  end
+  -- Keep unknown bookingDate as invalidDate so stubs do not skew cutoff/refund windows.
   order.detailsParsed=true
   scheduleNextDetailsDate(order, now)
+end
+
+--- Handle Bestelldetails HTML that has a root but no parseable orderDate.
+--- @return boolean true when the fetch counts as successfully resolved
+function resolveOrderDetailsWithoutDate(order, orderDetails)
+  local now=os.time()
+  if isCancelledOrderDetailsStub(orderDetails) then
+    completeCancelledOrderDetailsStub(order, now, orderDetails)
+    return true
+  end
+  if isUnloadableOrderDetailsPage(orderDetails) then
+    scheduleNextDetailsDate(order, now)
+    debugBuffer.print("getOrderDetails unloadable page",order.orderCode)
+    return false
+  end
+  debugBuffer.print("getOrderDetails missing order date",order.orderCode)
+  return false
 end
 
 --- @function getSummaryExtrasFromDetails
@@ -2508,21 +2564,9 @@ function getOrderDetails(order)
     local hadPositionsBeforeParse=orderHasPositions(order)
     local date=getDate(orderDetails:xpath('.//*[@data-component="orderDate"]'):text())
     if date == invalidDate then
-      local now=os.time()
-      if isCancelledOrderDetailsStub(orderDetails) then
-        completeCancelledOrderDetailsStub(order, now)
-        debugBuffer.context=''
-        return true
-      end
-      if isUnloadableOrderDetailsPage(orderDetails) then
-        scheduleNextDetailsDate(order, now)
-        debugBuffer.print("getOrderDetails unloadable page",order.orderCode)
-        debugBuffer.context=''
-        return false
-      end
-      debugBuffer.print("getOrderDetails missing order date",order.orderCode)
+      local resolved=resolveOrderDetailsWithoutDate(order, orderDetails)
       debugBuffer.context=''
-      return false
+      return resolved
     end
     order.bookingDate=date
 
@@ -2600,26 +2644,28 @@ function getOrdersFromSummary(html)
 end
 
 --- @function isRecentOrderFilter
--- Short windows must be re-scanned every run. Amazon's last30 view can be empty
--- (error banner) while months-3 still lists the same recent orders.
+-- Short windows re-scanned often. months-3 is only "recent" when the scan window
+-- is at least 3 months (or unlimited); otherwise last30 covers incremental cutoffs.
 -- Business B2B UI uses German values like "Letzte 30.Tage" / "Letzte 3.Monate".
-function isRecentOrderFilter(filterVal)
+function isRecentOrderFilter(filterVal, scanMonths)
   if type(filterVal) ~= 'string' then
     return false
   end
-  if string.match(filterVal, "^last") ~= nil or filterVal == const.recentMonthsFilter then
+  local monthsLimit=tonumber(scanMonths)
+  local includeThreeMonth=monthsLimit == nil or monthsLimit <= 0 or monthsLimit >= 3
+  if string.match(filterVal, "^last") ~= nil then
     return true
   end
-  -- Amazon Business (German) timeFilter option values
-  if string.find(filterVal, "30.Tage", 1, true) or string.find(filterVal, "3.Monate", 1, true) then
+  if filterVal == const.recentMonthsFilter or filterVal == "yoPast3months"
+      or filterVal == "last_3_months" then
+    return includeThreeMonth
+  end
+  if string.find(filterVal, "30.Tage", 1, true) or string.find(filterVal, "30 Tage", 1, true)
+      or filterVal == "yoLast30Days" or filterVal == "last_30_days" then
     return true
   end
-  if string.find(filterVal, "30 Tage", 1, true) or string.find(filterVal, "3 Monate", 1, true) then
-    return true
-  end
-  -- Business SPA / GET timeFilter ids (still used in some sessions)
-  if filterVal == "yoLast30Days" or filterVal == "yoPast3months"
-      or filterVal == "last_30_days" or filterVal == "last_3_months" then
+  if includeThreeMonth and (
+      string.find(filterVal, "3.Monate", 1, true) or string.find(filterVal, "3 Monate", 1, true)) then
     return true
   end
   return false
@@ -2636,7 +2682,7 @@ function orderFilterWithinScanMonths(filterVal, months, asOf)
   if limit == nil or limit <= 0 then
     return true
   end
-  if isRecentOrderFilter(filterVal) then
+  if isRecentOrderFilter(filterVal, months) then
     return true
   end
   local monthsWindow=tonumber(string.match(filterVal, "^months%-(%d+)$"))
@@ -2714,7 +2760,7 @@ function incrementalRefundWatchSince(now)
   if type(now) ~= 'number' then
     return nil
   end
-  return now - const.abaIncrementalMaxAgeSec
+  return now - const.incrementalRefundWatchMaxAgeSec
 end
 
 function scheduleIncrementalRefundWatch(accountNumber, refreshSince, now)
@@ -2732,8 +2778,10 @@ function scheduleIncrementalRefundWatch(accountNumber, refreshSince, now)
   for _,order in pairs(LocalStorage.OrderCache) do
     if type(order) ~= 'table' or not orderMatchesMoneyMoneyAccount(order, accountNumber) then
       -- skip
+    elseif not orderMayNeedIncrementalRefundWatch(order, now) then
+      -- outside 90d window, unbilled, or refund fully settled
     elseif type(order.bookingDate) ~= 'number' or order.bookingDate < watchSince then
-      -- skip orders outside incremental max-age window
+      -- skip (belt-and-suspenders vs orderMayNeedIncrementalRefundWatch)
     elseif type(order.detailsDate) == 'number' and order.detailsDate <= 1 then
       -- already queued
     elseif type(order.detailsDate) == 'number' and order.detailsDate > now then
@@ -3324,60 +3372,162 @@ function isAkamaiInterstitial(htmlNode)
     or string.find(raw, "triggerInterstitialChallenge", 1, true) ~= nil
 end
 
---- @function completeAkamaiInterstitial
--- Completes Amazon/Akamai interstitial without a browser JS engine:
--- POST /_sec/verify with bm-verify + pow, then follow location / meta-refresh.
-function completeAkamaiInterstitial(htmlNode)
-  local raw=htmlNodeRaw(htmlNode)
-  print("Akamai interstitial: completing challenge")
+--- Parse pow / bm-verify / meta-refresh from an Akamai interstitial HTML body.
+function parseAkamaiInterstitialChallenge(raw)
+  if type(raw) ~= 'string' or raw == '' then
+    return nil
+  end
   local iVal=tonumber(string.match(raw, "var%s+i%s*=%s*(%d+)"))
   local n1, n2=string.match(raw, 'Number%s*%(%s*"(%d+)"%s*%+%s*"(%d+)"%s*%)')
+  -- Prefer the JSON.stringify payload token (not the distinct meta-refresh URL token).
   local bmVerify=string.match(raw, 'JSON%.stringify%(%s*{%s*"bm%-verify"%s*:%s*"([^"]+)"')
   if bmVerify == nil then
-    bmVerify=string.match(raw, '"bm%-verify"%s*:%s*"([^"]+)"')
-  end
-  if iVal ~= nil and n1 ~= nil and n2 ~= nil and bmVerify ~= nil then
-    local pow=iVal + tonumber(n1..n2)
-    local body='{"bm-verify":'..jsonQuote(bmVerify)..',"pow":'..tostring(pow)..'}'
-    local ok, content=pcall(function()
-      return connectShopRaw("POST", baseurl.."/_sec/verify?provider=interstitial", body,
-        "application/json", {
-          ["Accept"]="application/json",
-          ["Content-Type"]="application/json",
-        })
-    end)
-    if not ok then
-      return nil, "Akamai verify request failed: "..tostring(content)
+    local last
+    for tok in string.gmatch(raw, '"bm%-verify"%s*:%s*"([^"]+)"') do
+      last=tok
     end
-    if type(content) == 'string' then
-      local location=string.match(content, '"location"%s*:%s*"([^"]+)"')
-      if location ~= nil and location ~= '' then
-        location=location:gsub("\\/", "/")
-        if string.sub(location, 1, 1) == '/' then
-          location=baseurl..location
-        end
-        print("Akamai interstitial: follow location")
-        return connectShop("GET", location), nil
-      end
-      if string.find(content, '"reload"%s*:%s*true') then
-        print("Akamai interstitial: reload after verify")
-        return connectShop("GET", baseurl.."/"), nil
-      end
-    end
+    bmVerify=last
   end
   local refresh=string.match(raw, "[Uu][Rr][Ll]%s*=%s*'([^']+)'")
     or string.match(raw, '[Uu][Rr][Ll]%s*=%s*"([^"]+)"')
-  if refresh ~= nil and refresh ~= '' then
-    refresh=refresh:gsub("&amp;", "&")
-    if string.sub(refresh, 1, 1) == '/' then
-      refresh=baseurl..refresh
-    elseif string.match(refresh, "^https?://") == nil then
-      refresh=baseurl.."/"..refresh
-    end
-    print("Akamai interstitial: follow meta-refresh")
-    return connectShop("GET", refresh), nil
+  local pow=nil
+  if iVal ~= nil and n1 ~= nil and n2 ~= nil then
+    pow=iVal + tonumber(n1..n2)
   end
-  return nil, "Akamai interstitial incomplete"
+  return {
+    bmVerify=bmVerify,
+    pow=pow,
+    refresh=refresh,
+  }
+end
+
+function absoluteAmazonShopUrl(pathOrUrl)
+  if type(pathOrUrl) ~= 'string' or pathOrUrl == '' then
+    return nil
+  end
+  local url=pathOrUrl:gsub("&amp;", "&")
+  if string.sub(url, 1, 1) == '/' then
+    return baseurl..url
+  end
+  if string.match(url, "^https?://") == nil then
+    return baseurl.."/"..url
+  end
+  return url
+end
+
+--- Follow noscript/meta-refresh bm-verify URL (safe when POST verify returns HTTP 400).
+function followAkamaiMetaRefresh(challenge)
+  if type(challenge) ~= 'table' or type(challenge.refresh) ~= 'string' or challenge.refresh == '' then
+    return nil, "Akamai meta-refresh missing"
+  end
+  local refresh=absoluteAmazonShopUrl(challenge.refresh)
+  if refresh == nil then
+    return nil, "Akamai meta-refresh missing"
+  end
+  print("Akamai interstitial: follow meta-refresh")
+  return connectShop("GET", refresh), nil
+end
+
+--- POST /_sec/verify; may be aborted by MoneyMoney on HTTP 400 — callers must prefer meta-refresh.
+function postAkamaiInterstitialVerify(challenge)
+  if type(challenge) ~= 'table'
+      or type(challenge.bmVerify) ~= 'string' or challenge.bmVerify == ''
+      or type(challenge.pow) ~= 'number' then
+    return nil, "Akamai verify payload incomplete"
+  end
+  local body='{"bm-verify":'..jsonQuote(challenge.bmVerify)..',"pow":'..tostring(challenge.pow)..'}'
+  local ok, content=pcall(function()
+    return connectShopRaw("POST", baseurl.."/_sec/verify?provider=interstitial", body,
+      "application/json", {
+        ["Accept"]="application/json",
+      })
+  end)
+  if not ok then
+    return nil, "Akamai verify request failed: "..tostring(content)
+  end
+  return content, nil
+end
+
+function followAkamaiVerifyResponse(content)
+  if type(content) ~= 'string' then
+    return nil
+  end
+  local location=string.match(content, '"location"%s*:%s*"([^"]+)"')
+  if location ~= nil and location ~= '' then
+    location=location:gsub("\\/", "/")
+    location=absoluteAmazonShopUrl(location)
+    print("Akamai interstitial: follow location")
+    return connectShop("GET", location)
+  end
+  if string.find(content, '"reload"%s*:%s*true') then
+    print("Akamai interstitial: reload after verify")
+    return connectShop("GET", baseurl.."/")
+  end
+  return nil
+end
+
+function clearAkamaiViaVerifyPost(challenge)
+  local content, postErr=postAkamaiInterstitialVerify(challenge)
+  if content == nil then
+    return nil, postErr
+  end
+  local followed=followAkamaiVerifyResponse(content)
+  if followed ~= nil then
+    return followed, nil
+  end
+  return nil, "Akamai verify response incomplete"
+end
+
+function refreshAkamaiChallengeAfterStickyPage(challenge, page)
+  if page == nil or not isAkamaiInterstitial(page) then
+    return challenge
+  end
+  return parseAkamaiInterstitialChallenge(htmlNodeRaw(page)) or challenge
+end
+
+function firstClearedAkamaiPage(page)
+  if page ~= nil and not isAkamaiInterstitial(page) then
+    return page
+  end
+  return nil
+end
+
+function metaRefreshOrKeepSticky(challenge, page, refreshErr)
+  if page ~= nil then
+    return page, refreshErr
+  end
+  return followAkamaiMetaRefresh(challenge)
+end
+
+function resolveParsedAkamaiChallenge(challenge)
+  local page, refreshErr=followAkamaiMetaRefresh(challenge)
+  if firstClearedAkamaiPage(page) then
+    return page, nil
+  end
+  challenge=refreshAkamaiChallengeAfterStickyPage(challenge, page)
+  local cleared, postErr=clearAkamaiViaVerifyPost(challenge)
+  if cleared ~= nil then
+    return cleared, nil
+  end
+  page, refreshErr=metaRefreshOrKeepSticky(challenge, page, refreshErr)
+  if firstClearedAkamaiPage(page) then
+    return page, nil
+  end
+  return nil, postErr or refreshErr or "Akamai interstitial incomplete"
+end
+
+--- @function completeAkamaiInterstitial
+-- Completes Amazon/Akamai interstitial without a browser JS engine.
+-- Prefer meta-refresh GET first: MoneyMoney may abort the whole session on HTTP 400
+-- from POST /_sec/verify (see MoneyMoney-202609051525.log).
+function completeAkamaiInterstitial(htmlNode)
+  local raw=htmlNodeRaw(htmlNode)
+  print("Akamai interstitial: completing challenge")
+  local challenge=parseAkamaiInterstitialChallenge(raw)
+  if challenge == nil then
+    return nil, "Akamai interstitial incomplete"
+  end
+  return resolveParsedAkamaiChallenge(challenge)
 end
 
 function ensureOrderFilterCacheRoot()
@@ -3418,7 +3568,7 @@ function shouldHarvestOrderFilter(orderFilterVal, orderFilterCache, numbersOfNew
   if not orderFilterWithinScanMonths(orderFilterVal, scanMonths, os.date('*t', now)) then
     return false
   end
-  return isRecentOrderFilter(orderFilterVal)
+  return isRecentOrderFilter(orderFilterVal, scanMonths)
     or (orderFilterCache[orderFilterVal] == nil and numbersOfNewOrders < config.limitOrders + 1)
 end
 
@@ -3674,6 +3824,89 @@ function requiresFullMoneyMoneyHarvest(refreshSince, now)
     return true
   end
   return isStaleMoneyMoneyRefresh(refreshSince, now)
+end
+
+--- Newest plausible bookingDate in OrderCache (any sub-account).
+function newestOrderBookingDate()
+  if LocalStorage == nil or type(LocalStorage.OrderCache) ~= 'table' then
+    return nil
+  end
+  local newest=nil
+  for _,order in pairs(LocalStorage.OrderCache) do
+    if type(order) == 'table'
+        and type(order.bookingDate) == 'number'
+        and order.bookingDate ~= invalidDate then
+      if newest == nil or order.bookingDate > newest then
+        newest=order.bookingDate
+      end
+    end
+  end
+  return newest
+end
+
+--- Cutoff C: max(MoneyMoney since, newest cache booking) minus list safety window.
+function incrementalHarvestCutoff(refreshSince, now)
+  if type(now) ~= 'number' then
+    return nil
+  end
+  local base=nil
+  if type(refreshSince) == 'number' and refreshSince > 0 then
+    base=refreshSince
+  end
+  local newest=newestOrderBookingDate()
+  if type(newest) == 'number' and (base == nil or newest > base) then
+    base=newest
+  end
+  if base == nil then
+    return nil
+  end
+  return base - const.incrementalListSafetySec
+end
+
+function registeredRefundCents(order)
+  local total=0
+  forEachRefundLeaf(order, function(_, _, amount)
+    if type(amount) == 'number' and amount > 0 then
+      total=total + amount
+    end
+  end)
+  return total
+end
+
+--- True when return goods are fully covered by registered refund leaves.
+function orderRefundFullySettled(order)
+  if not orderHasReturnActivity(order) then
+    return false
+  end
+  local returned=effectiveReturnedCents(order)
+  if returned <= 0 then
+    return false
+  end
+  return registeredRefundCents(order) >= returned
+end
+
+function orderBookingInRefundWatchWindow(order, now)
+  if type(order) ~= 'table' or type(now) ~= 'number' then
+    return false
+  end
+  if type(order.bookingDate) ~= 'number' or order.bookingDate == invalidDate then
+    return false
+  end
+  return order.bookingDate >= now - const.incrementalRefundWatchMaxAgeSec
+end
+
+--- Selective refund-watch candidate (90d window; skip unbilled / fully settled).
+function orderMayNeedIncrementalRefundWatch(order, now)
+  if order == nil or order.unbilledCancel == true then
+    return false
+  end
+  if not orderBookingInRefundWatchWindow(order, now) then
+    return false
+  end
+  if orderRefundFullySettled(order) then
+    return false
+  end
+  return true
 end
 
 function unixToAbaDateParts(unixTime)
@@ -4002,7 +4235,12 @@ function effectiveScanFiltersMonths(refreshSince, now)
   if not isIncrementalMoneyMoneyRefresh(refreshSince, now) then
     return configured
   end
-  local days=math.ceil((now - refreshSince) / const.daySeconds)
+  local cutoff=incrementalHarvestCutoff(refreshSince, now)
+  local since=refreshSince
+  if type(cutoff) == 'number' then
+    since=cutoff
+  end
+  local days=math.ceil((now - since) / const.daySeconds)
   local months=math.max(1, math.ceil(days / 31))
   if configured == nil or configured <= 0 then
     return months
@@ -4047,6 +4285,50 @@ function subAccountHarvestHasMore(label, kind, refreshSince, now)
   return hasMoreOrderListFiltersToHarvest(label, refreshSince, now)
 end
 
+function anyOrderListHarvestIncomplete()
+  local byAccount=LocalStorage and LocalStorage.orderListHarvestIncompleteByAccount
+  if type(byAccount) ~= 'table' then
+    return false
+  end
+  for _, incomplete in pairs(byAccount) do
+    if incomplete then
+      return true
+    end
+  end
+  return false
+end
+
+--- True when the last list scan wall-clock is older than the periodic rescan window.
+function listHarvestDueForPeriodicRescan(lastListHarvestAt, now)
+  if type(now) ~= 'number' then
+    return true
+  end
+  if type(lastListHarvestAt) ~= 'number' or lastListHarvestAt <= 0 then
+    return true
+  end
+  return now - lastListHarvestAt >= const.incrementalListMinRescanSec
+end
+
+--- True when MoneyMoney since moved past the last scan watermark by more than the list safety window.
+function listHarvestStaleVersusRefreshSince(refreshSince, lastHarvestSince)
+  return type(refreshSince) == 'number'
+      and type(lastHarvestSince) == 'number'
+      and refreshSince - lastHarvestSince > const.incrementalListSafetySec
+end
+
+--- True when incremental refresh still needs order-list / ABA harvest (not details-only).
+function incrementalListHarvestNeeded(refreshSince, now)
+  if anyOrderListHarvestIncomplete() or abaHarvestStillOpen() then
+    return true
+  end
+  local lastListAt=LocalStorage and LocalStorage.lastListHarvestAt
+  if listHarvestDueForPeriodicRescan(lastListAt, now) then
+    return true
+  end
+  local lastHarvestSince=LocalStorage and LocalStorage.lastHarvestSince
+  return listHarvestStaleVersusRefreshSince(refreshSince, lastHarvestSince)
+end
+
 function shouldRunAccountHarvest(refreshSince, now)
   if config.noRefresh then
     return false
@@ -4061,6 +4343,12 @@ function shouldRunAccountHarvest(refreshSince, now)
     return true
   end
   if isPendingInitialSync() then
+    return false
+  end
+  -- Details-only wins over a fresh login when the last list scan is still warm.
+  if isIncrementalMoneyMoneyRefresh(refreshSince, now)
+      and not incrementalListHarvestNeeded(refreshSince, now) then
+    print("skip incremental list harvest (details-only; last list scan still fresh)")
     return false
   end
   if LocalStorage.loginCounter ~= LocalStorage.lastLoginCounter then
@@ -4082,6 +4370,14 @@ function logHarvestMode(refreshSince, now, incrementalMsg, fullMsg)
 end
 
 function logMoneyMoneyRefreshMode(refreshSince, now)
+  if isIncrementalMoneyMoneyRefresh(refreshSince, now) then
+    local cutoff=incrementalHarvestCutoff(refreshSince, now)
+    if type(cutoff) == 'number' then
+      print("incremental refresh since "..formatAbaDateLabel(refreshSince)
+        .." (list cutoff "..formatAbaDateLabel(cutoff)..")")
+      return
+    end
+  end
   logHarvestMode(refreshSince, now,
     "incremental refresh since "..formatAbaDateLabel(refreshSince),
     "full refresh: harvest all order history (empty cache, since=0, or since > 366 days)")
@@ -4552,7 +4848,12 @@ function abaPrimaryReportJob(refreshSince, now, reportType)
   now=now or os.time()
   reportType=reportType or const.abaItemsReportType
   if isIncrementalMoneyMoneyRefresh(refreshSince, now) then
-    local fromParts=unixToAbaDateParts(refreshSince)
+    local fromUnix=refreshSince
+    local cutoff=incrementalHarvestCutoff(refreshSince, now)
+    if type(cutoff) == 'number' then
+      fromUnix=cutoff
+    end
+    local fromParts=unixToAbaDateParts(fromUnix)
     local toParts=unixToAbaDateParts(now)
     if fromParts == nil or toParts == nil then
       return nil
@@ -4562,7 +4863,7 @@ function abaPrimaryReportJob(refreshSince, now, reportType)
       span=const.abaCustomRangeSpan,
       fromDate=fromParts,
       toDate=toParts,
-      fromUnix=refreshSince,
+      fromUnix=fromUnix,
       toUnix=now,
     }
   end
@@ -4804,11 +5105,15 @@ function buildOrderHistoryUrl(kind, filterVal)
   return nil
 end
 
-function recentYourOrdersGetFilters()
-  return {
+function recentYourOrdersGetFilters(scanMonths)
+  local list={
     {val='last30', label='den letzten 30 Tagen'},
-    {val=const.recentMonthsFilter, label='den letzten 3 Monaten'},
   }
+  local monthsLimit=tonumber(scanMonths)
+  if monthsLimit == nil or monthsLimit <= 0 or monthsLimit >= 3 then
+    table.insert(list, {val=const.recentMonthsFilter, label='den letzten 3 Monaten'})
+  end
+  return list
 end
 
 function appendYearGetFilters(list, now, includeYear)
@@ -4833,7 +5138,7 @@ end
 function enumerateYourOrdersGetFilters(refreshSince, now)
   now=now or os.time()
   local scanMonths=effectiveScanFiltersMonths(refreshSince, now)
-  local list=recentYourOrdersGetFilters()
+  local list=recentYourOrdersGetFilters(scanMonths)
   appendYearGetFilters(list, now, function(val, asOf)
     return orderFilterWithinScanMonths(val, scanMonths, asOf)
   end)
@@ -4932,7 +5237,9 @@ function runOrderFilterHarvest(orderFilterVal, statusLabel, orderFilterCache, su
   end
   if opts.requireReady and not orderListPageReady(html) then
     print(opts.notReadyLog or "filter not ready", orderFilterVal)
-    setOrderListHarvestIncomplete(subAccountLabel, true)
+    if not opts.skipIncompleteOnNotReady then
+      setOrderListHarvestIncomplete(subAccountLabel, true)
+    end
     return 0
   end
   local orderCache=ensureOrderCache()
@@ -4987,6 +5294,7 @@ function collectOrdersViaYourOrdersGet(subAccountLabel, kind, refreshSince, opts
   local getHarvestOpts={
     loadPage=loadYourOrdersFilterPage,
     requireReady=true,
+    skipIncompleteOnNotReady=opts.fullHarvest == true,
     failLog="GET timeFilter failed",
     notReadyLog="GET timeFilter not ready",
   }
@@ -5009,12 +5317,15 @@ function collectOrdersViaYourOrdersGet(subAccountLabel, kind, refreshSince, opts
       unreadyStreak=0
     end
   end
-  if opts.fullHarvest and readyCount == 0 then
-    MM.printStatus("Amazon Business: Bestellübersicht online nicht verfügbar – ältere Bestellungen nur über Business Analytics")
-  end
-  -- fullHarvest ABA-gap path: stop sticky incomplete once SSR years are abandoned.
-  if opts.fullHarvest and (readyCount == 0 or abandonedUnready) then
-    abandonUnreadyGetYearFilters(subAccountLabel, orderFilterCache, filters)
+  if opts.fullHarvest then
+    if readyCount == 0 then
+      MM.printStatus("Amazon Business: Bestellübersicht online nicht verfügbar – ältere Bestellungen nur über Business Analytics")
+      -- No ready year: abandon SSR years and clear sticky incomplete from this path.
+      abandonUnreadyGetYearFilters(subAccountLabel, orderFilterCache, filters)
+    elseif abandonedUnready then
+      -- Keep incomplete if a ready year set it (e.g. pagination); only mark remaining filters done.
+      markGetYearFiltersAbandoned(orderFilterCache, filters)
+    end
   end
   return newCount
 end
@@ -5024,6 +5335,12 @@ end
 -- @return newCount, errString
 function collectOrdersFromOrderList(subAccountLabel, kind, refreshSince)
   setOrderListHarvestIncomplete(subAccountLabel, false)
+  local now=os.time()
+  -- Incremental Business: skip SPA order-history probes; ABA uses the cutoff window.
+  if kind == 'business' and isIncrementalMoneyMoneyRefresh(refreshSince, now) then
+    print("Business incremental: ABA cutoff harvest (skip order-list SPA probes)")
+    return collectBusinessSpaOrders(subAccountLabel, kind, refreshSince)
+  end
   enterOrderList()
   if html == nil then
     print("collectOrdersFromOrderList: no order list html for", tostring(subAccountLabel))
@@ -5037,7 +5354,6 @@ function collectOrdersFromOrderList(subAccountLabel, kind, refreshSince)
   local orderFilterSelect=html:xpath(const.xpathOrderMonthSelect):children()
   local newCount=0
   local scannedFilters={}
-  local now=os.time()
   local scanMonths=effectiveScanFiltersMonths(refreshSince, now)
   if scanMonths ~= nil and scanMonths > 0 then
     print("scanFiltersMonths=", scanMonths)
@@ -5084,6 +5400,9 @@ end
 --- @return nil on success, error string on failure
 function ensureAmazonSubAccountSession(kind)
   if type(kind) ~= 'string' or kind == '' then
+    return nil
+  end
+  if sessionMatchesSubAccountKind(kind) then
     return nil
   end
   local page=openAccountSwitcherEmbed()
@@ -5263,14 +5582,20 @@ function rememberDiscoveredSubAccounts(options)
         or opt.kind == "business" and opt.businessName
       if type(accountNumber) == 'string' and accountNumber ~= ''
           and type(displayName) == 'string' and displayName ~= '' then
-      table.insert(LocalStorage.discoveredSubAccounts, {
+      local entry={
         kind=opt.kind,
         label=opt.label,
         accountType=opt.accountType,
         businessName=opt.businessName,
         customerName=opt.customerName,
         accountNumber=accountNumber,
-      })
+      }
+      if isAmazonCustomerId(accountNumber) then
+        entry.customerId=accountNumber
+      elseif type(opt.customerId) == 'string' and isAmazonCustomerId(opt.customerId) then
+        entry.customerId=opt.customerId
+      end
+      table.insert(LocalStorage.discoveredSubAccounts, entry)
       end
     end
   end
@@ -5970,13 +6295,52 @@ function attachStoredCustomerIds(options)
   end
 end
 
+--- True when LocalStorage already has a complete personal+business discovery set.
+function canReuseDiscoveredSubAccountsWithoutSwitcher()
+  local discovered=LocalStorage and LocalStorage.discoveredSubAccounts
+  if type(discovered) ~= 'table' or #discovered < 2 then
+    return false
+  end
+  local kinds={}
+  for _,sub in ipairs(discovered) do
+    if not isCompleteDiscoveredSubAccount(sub) then
+      return false
+    end
+    kinds[sub.kind]=true
+  end
+  return kinds.personal == true and kinds.business == true
+end
+
+function optionsFromDiscoveredSubAccounts()
+  local discovered=LocalStorage.discoveredSubAccounts
+  local options={}
+  if type(discovered) ~= 'table' then
+    return options
+  end
+  for _,sub in ipairs(discovered) do
+    if type(sub) == 'table' then
+      local customerId=sub.customerId or sub.accountNumber
+      table.insert(options, {
+        kind=sub.kind,
+        label=sub.label,
+        customerId=customerId,
+        accountNumber=customerId or sub.accountNumber,
+        accountType=sub.accountType,
+        businessName=sub.businessName,
+        customerName=sub.customerName,
+      })
+    end
+  end
+  return options
+end
+
 --- @function discoverAmazonSubAccounts
 -- ListAccounts / "Nach neuen Konten suchen": read each sub-account customerId
 -- via short session switches, then restore the session active at entry.
 -- Does not harvest orders (no Umsätze); the customerId fallback loads the
 -- order-history shell only.
--- opts.reuseCustomerIds: when true (Refresh harvest), skip switch enrichment if
--- LocalStorage already holds complete customerIds for every switcher option.
+-- opts.reuseCustomerIds: when true, skip switcher+enrichment if LocalStorage
+-- already holds complete personal+business customerIds.
 -- @return #table|nil switcher options (may be empty), error string on failure
 function discoverAmazonSubAccounts(statusText, opts)
   opts=type(opts) == 'table' and opts or {}
@@ -5984,6 +6348,13 @@ function discoverAmazonSubAccounts(statusText, opts)
   if type(msg) ~= 'string' or msg == '' then
     msg="Amazon: Unterkonten werden ermittelt…"
   end
+
+  if opts.reuseCustomerIds and canReuseDiscoveredSubAccountsWithoutSwitcher() then
+    local options=optionsFromDiscoveredSubAccounts()
+    print("discovered Amazon sub-accounts=", #options, "(reused, no switcher)")
+    return options, nil
+  end
+
   MM.printStatus(msg)
   local switcherHtml=openAccountSwitcherEmbed()
   local authBlock=switchAuthBlockReason(switcherHtml or html)
@@ -6561,7 +6932,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
 
   -- Account search: discover sub-accounts only (no order harvest / no Umsätze).
   -- Harvest runs later in RefreshAccount after the user chose an account.
-  local _, discoveryErr=discoverAmazonSubAccounts()
+  local _, discoveryErr=discoverAmazonSubAccounts(nil, {reuseCustomerIds=true})
   if discoveryErr ~= nil then
     return discoveryErr
   end
@@ -6861,6 +7232,7 @@ function RefreshAccount (account, since)
     elseif scanComplete then
       LocalStorage.lastLoginCounter = LocalStorage.loginCounter
       LocalStorage.lastHarvestSince=refreshSince
+      LocalStorage.lastListHarvestAt=now
       if isPendingInitialSync() then
         markInitialSyncHarvestDone()
       end
@@ -6869,6 +7241,14 @@ function RefreshAccount (account, since)
     end
   else
     print("skip account scan")
+    -- Details-only refresh still settles the login watermark so later gates stay consistent.
+    if not isAccountSetupSession()
+        and not isPendingInitialSync()
+        and LocalStorage.loginCounter ~= LocalStorage.lastLoginCounter
+        and isIncrementalMoneyMoneyRefresh(refreshSince, now)
+        and not incrementalListHarvestNeeded(refreshSince, now) then
+      LocalStorage.lastLoginCounter=LocalStorage.loginCounter
+    end
   end
 
   local refundWatch=scheduleIncrementalRefundWatch(account.accountNumber, refreshSince, now)
