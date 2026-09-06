@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="de-DE">
+<head><meta charset="utf-8"/><title>Amazon</title></head>
+<body>
+  <!-- Minimal sanitized CVF transactionapproval: SMS OTP + app polling coexist. -->
+  <form id="verification-code-form" method="post" action="/ap/cvf/approval/verifyOtp">
+    <span>Bestätigungscode eingeben</span>
+    <span>Zu deiner Sicherheit haben wir den Code an dein Telefon ***-***-**00 gesendet.</span>
+    <input type="text" name="otpCode" value=""/>
+    <input type="hidden" name="otpCodeHidden" value=""/>
+    <input type="hidden" name="csrfToken" value="DUMMY_CSRF"/>
+  </form>
+  <form id="pollingForm" method="post" action="/ap/cvf/approval/poll">
+    <input type="hidden" name="transactionApprovalStatus" value="TransactionPending"/>
+    <span>Genehmigen Sie die an Ihre Amazon-App gesendete Benachrichtigung</span>
+  </form>
+</body>
+</html>
