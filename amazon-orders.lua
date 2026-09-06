@@ -3220,11 +3220,11 @@ function switchAmazonSubAccount(option)
 end
 
 --- Amazon login/switch auth challenges (priority for enterable codes):
--- 1) Enterable OTP: classic auth-mfa-form, CVF verification-code-form (SMS/TOTP)
+-- 1) Enterable OTP: classic auth-mfa-form, CVF verification-code-form (SMS/TOTP/Email/WhatsApp)
 -- 2) Claims channel picker: claimspicker
 -- 3) Claims verify OTP: form[@action="verify"] (field name=code)
--- 4) Device select: auth-select-device-form (TOTP/SMS/EMAIL/VOICE)
--- 5) App approval polling: pollingForm without enterable OTP
+-- 4) Device select: auth-select-device-form (TOTP/SMS/WhatsApp/EMAIL/VOICE)
+-- 5) App approval polling: pollingForm without enterable OTP (Amazon-App-Freigabe)
 -- 6) Captcha / password (handled in login loop)
 
 local AMAZON_DEFAULT_OTP_PROMPT='Bitte den Bestätigungscode eingeben.'
@@ -3302,22 +3302,27 @@ function isAmazonAuthenticationChallengePage(htmlNode)
 end
 
 --- Prefer channels MoneyMoney can complete with a typed code.
--- TOTP > SMS > EMAIL > unknown > VOICE (cannot hear a call).
+-- TOTP > SMS > WhatsApp > EMAIL > VOICE > unknown (suffix match, case-insensitive).
 function amazonAuthDeviceChannelScore(deviceValue)
   if type(deviceValue) ~= 'string' or deviceValue == '' then
     return 0
   end
-  if endsWith(deviceValue, 'TOTP') then
+  local upper=deviceValue:upper()
+  if endsWith(upper, 'TOTP') then
     return 30
   end
-  if endsWith(deviceValue, 'SMS') then
+  -- WHATSAPP before SMS: avoid any future suffix ambiguity.
+  if endsWith(upper, 'WHATSAPP') then
+    return 18
+  end
+  if endsWith(upper, 'SMS') then
     return 20
   end
-  if endsWith(deviceValue, 'EMAIL') then
+  if endsWith(upper, 'EMAIL') then
     return 15
   end
-  if endsWith(deviceValue, 'VOICE') then
-    return -20
+  if endsWith(upper, 'VOICE') then
+    return 5
   end
   return 0
 end
@@ -3341,7 +3346,7 @@ function applyPreferredAmazonAuthDeviceSelection(authSelectForm)
   authSelectForm:xpath('.//input[@type="radio"]'):each(function(_, element)
     if element:attr('value') == otpDeviceContext then
       element:attr('checked', 'checked')
-      print("select "..element:xpath('..'):text())
+      print("select device channel "..tostring(otpDeviceContext))
     else
       element:attr('checked', '')
     end
@@ -3395,6 +3400,10 @@ function amazonMfaChallengePrompt(htmlNode)
     or string.find(raw, "Zwei-Schritt-App", 1, true) ~= nil
     or string.find(raw, "authenticator app", 1, true) ~= nil then
     return 'Bitte den Code aus der Authenticator-App eingeben.'
+  end
+  local rawLower=raw:lower()
+  if string.find(rawLower, "whatsapp", 1, true) ~= nil then
+    return 'Bitte den Bestätigungscode aus WhatsApp eingeben.'
   end
   return AMAZON_DEFAULT_OTP_PROMPT
 end
@@ -3548,7 +3557,11 @@ function submitSwitchAuthPrompt(htmlNode)
   end
   htmlNode:xpath('//*[@name="password"]'):attr("value", secPassword)
   print("switch auth_prompt: submitting password")
-  return connectShopForm(form), nil
+  local nextPage=connectShopForm(form)
+  if nextPage == nil then
+    return nil, "auth_prompt submit failed"
+  end
+  return nextPage, nil
 end
 
 --- @function finishAccountSwitchLanding
@@ -7008,7 +7021,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       end
     end
 
-    -- Device select (TOTP / SMS / EMAIL / VOICE) before app-approval polling.
+    -- Device select (TOTP / SMS / WhatsApp / EMAIL / VOICE) before app-approval polling.
     if isAmazonAuthDeviceSelectPage(html) then
       print("auth selector")
       leaveLoginLoop=false
@@ -7027,7 +7040,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       local waitUntil=os.time()+300
       local poll
       repeat
-        MM.printStatus("Warte auf Anmeldebestätigung, noch "
+        MM.printStatus("Bitte in der Amazon-App freigeben, noch "
           ..tostring(math.floor(waitUntil-os.time())).." Sekunden")
         MM.sleep(3)
         local pollPage=connectShopForm(authLink)

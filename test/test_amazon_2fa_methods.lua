@@ -13,11 +13,16 @@ local function loadFixture(name)
   return mm.HTML(body)
 end
 
--- Channel preference: typed codes over voice
+-- Channel preference: typed codes; all Amazon device channels supported
 assert(env.amazonAuthDeviceChannelScore("x.TOTP") > env.amazonAuthDeviceChannelScore("x.SMS"))
-assert(env.amazonAuthDeviceChannelScore("x.SMS") > env.amazonAuthDeviceChannelScore("x.EMAIL"))
+assert(env.amazonAuthDeviceChannelScore("x.SMS") > env.amazonAuthDeviceChannelScore("x.WHATSAPP"))
+assert(env.amazonAuthDeviceChannelScore("x.WHATSAPP") > env.amazonAuthDeviceChannelScore("x.EMAIL"))
 assert(env.amazonAuthDeviceChannelScore("x.EMAIL") > env.amazonAuthDeviceChannelScore("x.OTHER"))
-assert(env.amazonAuthDeviceChannelScore("x.VOICE") < 0)
+assert(env.amazonAuthDeviceChannelScore("x.EMAIL") > env.amazonAuthDeviceChannelScore("x.VOICE"))
+assert(env.amazonAuthDeviceChannelScore("x.VOICE") > 0)
+assert(env.amazonAuthDeviceChannelScore("a.sms") == env.amazonAuthDeviceChannelScore("a.SMS"))
+assert(env.amazonAuthDeviceChannelScore("a.whatsapp") == env.amazonAuthDeviceChannelScore("a.WHATSAPP"))
+assert(env.amazonAuthDeviceChannelScore("a.SMS") > env.amazonAuthDeviceChannelScore("a.whatsapp"))
 
 local devicePage = mm.HTML([[<html><body>
   <form id="auth-select-device-form">
@@ -86,7 +91,7 @@ submitted = nil
 assert(env.submitAmazonMfa(classic, "999888"))
 assert(submitted:attr("id") == "auth-mfa-form")
 
--- App-approval-only page
+-- App-approval-only page (Amazon-App-Freigabe; no speculative SMS/WhatsApp redirect)
 local pollOnly = mm.HTML([[<html><body>
   <form id="pollingForm" action="/ap/cvf/approval/poll">
     <input type="hidden" name="transactionApprovalStatus" value="TransactionPending"/>
@@ -97,6 +102,22 @@ assert(env.isAmazonEnterableOtpPage(pollOnly) == false)
 assert(env.isAmazonAuthenticationChallengePage(pollOnly) == true)
 assert(env.loginOtpChallengeFromHtml(pollOnly) == nil)
 assert(env.mfaChallengeFromHtml(pollOnly) == nil)
+
+-- App approval + WhatsApp alternate (2026-09-06): stay on app-poll path
+local appWa = loadFixture("cvf_transactionapproval_app_only_whatsapp_20260906.html")
+assert(env.isAmazonAppApprovalPollingPage(appWa) == true)
+assert(env.isAmazonEnterableOtpPage(appWa) == false)
+assert(env.loginOtpChallengeFromHtml(appWa) == nil)
+assert(env.isAmazonAuthenticationChallengePage(appWa) == true)
+
+-- VOICE-only device select is still supported
+local voiceOnly = mm.HTML([[<html><body>
+  <form id="auth-select-device-form">
+    <input type="radio" name="otpDeviceContext" value="a.VOICE"/>
+  </form>
+</body></html>]])
+assert(env.applyPreferredAmazonAuthDeviceSelection(
+  voiceOnly:xpath('//form[@id="auth-select-device-form"]')) == "a.VOICE")
 
 -- Claims picker + verify
 local claims = mm.HTML([[<html><body>
@@ -162,5 +183,24 @@ local totpHint = mm.HTML([[<html><body>
   </form>
 </body></html>]])
 assert(env.amazonMfaChallengePrompt(totpHint):find("Authenticator", 1, true))
+
+local waHint = mm.HTML([[<html><body>
+  <form id="verification-code-form" action="/ap/cvf/approval/verifyOtp">
+    <span>Code per WhatsApp gesendet</span>
+    <input name="otpCode" type="text"/>
+  </form>
+</body></html>]])
+assert(env.amazonMfaChallengePrompt(waHint):find("WhatsApp", 1, true))
+local waHintLower = mm.HTML([[<html><body>
+  <form id="verification-code-form">
+    <span>code via whatsapp</span>
+    <input name="otpCode" type="text"/>
+  </form>
+</body></html>]])
+assert(env.amazonMfaChallengePrompt(waHintLower):find("WhatsApp", 1, true))
+
+-- VOICE preferred over unknown device suffix
+assert(env.amazonAuthDeviceChannelScore("a.VOICE")
+  > env.amazonAuthDeviceChannelScore("a.OTHER"))
 
 print("test_amazon_2fa_methods OK")
