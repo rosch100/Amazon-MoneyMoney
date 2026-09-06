@@ -20,6 +20,7 @@ local connection=nil
 local secPassword
 local captcha1run
 local mfa1run
+local claimsVerify1run
 local aName
 
 --- @function rememberShopCredentials
@@ -3218,10 +3219,68 @@ function switchAmazonSubAccount(option)
   return finishAccountSwitchLanding(html, {switchKind=option.kind})
 end
 
-function isAmazonMfaPage(htmlNode)
+--- Amazon login/switch auth challenges (priority for enterable codes):
+-- 1) Enterable OTP: classic auth-mfa-form, CVF verification-code-form (SMS/TOTP)
+-- 2) Claims channel picker: claimspicker
+-- 3) Claims verify OTP: form[@action="verify"] (field name=code)
+-- 4) Device select: auth-select-device-form (TOTP/SMS/EMAIL/VOICE)
+-- 5) App approval polling: pollingForm without enterable OTP
+-- 6) Captcha / password (handled in login loop)
+
+local AMAZON_DEFAULT_OTP_PROMPT='Bitte den Bestätigungscode eingeben.'
+local AMAZON_LOGIN_OTP_TITLE='Zwei-Faktor-Authentifizierung'
+local AMAZON_SWITCH_OTP_TITLE='Amazon Konto wechseln – 2FA'
+
+function isCvfVerificationCodeOtpPage(htmlNode)
   return htmlNode ~= nil
-    and (htmlNode:xpath('//form[@id="auth-mfa-form"]'):length() > 0
-      or htmlNode:xpath('//*[@name="otpCode"]'):length() > 0)
+    and htmlNode:xpath('//form[@id="verification-code-form"]'):length() > 0
+end
+
+--- SSOT: form that accepts an otpCode typed in MoneyMoney.
+function amazonEnterableOtpForm(htmlNode)
+  if htmlNode == nil then
+    return nil
+  end
+  local classic=htmlNode:xpath('//form[@id="auth-mfa-form"]')
+  if classic:length() > 0 then
+    return classic
+  end
+  if isCvfVerificationCodeOtpPage(htmlNode) then
+    return htmlNode:xpath('//form[@id="verification-code-form"]')
+  end
+  return htmlNode:xpath('//form[.//*[@name="otpCode"]]')
+end
+
+function isAmazonEnterableOtpPage(htmlNode)
+  local form=amazonEnterableOtpForm(htmlNode)
+  return form ~= nil and form:length() > 0
+end
+
+function isAmazonMfaPage(htmlNode)
+  return isAmazonEnterableOtpPage(htmlNode)
+end
+
+function isAmazonClaimsVerifyPage(htmlNode)
+  return htmlNode ~= nil
+    and htmlNode:xpath('//form[@action="verify"]'):length() > 0
+end
+
+function isAmazonClaimsPickerPage(htmlNode)
+  return htmlNode ~= nil
+    and htmlNode:xpath('//form[@name="claimspicker"]'):length() > 0
+end
+
+function isAmazonAuthDeviceSelectPage(htmlNode)
+  return htmlNode ~= nil
+    and htmlNode:xpath('//form[@id="auth-select-device-form"]'):length() > 0
+end
+
+--- App notification approval only when no enterable OTP is offered on the same page.
+function isAmazonAppApprovalPollingPage(htmlNode)
+  if htmlNode == nil or isAmazonEnterableOtpPage(htmlNode) then
+    return false
+  end
+  return htmlNode:xpath('//form[@id="pollingForm"]'):length() > 0
 end
 
 function isAmazonPasswordSignInPage(htmlNode)
@@ -3229,33 +3288,180 @@ function isAmazonPasswordSignInPage(htmlNode)
     and htmlNode:xpath('//form[contains(@name,"signIn")]//*[@name="password"]'):length() > 0
 end
 
+--- Interactive auth walls that are *not* enterable OTP/code (switch blocks / discovery).
 function isAmazonAuthenticationChallengePage(htmlNode)
-  if htmlNode == nil then
+  if htmlNode == nil
+      or isAmazonEnterableOtpPage(htmlNode)
+      or isAmazonClaimsVerifyPage(htmlNode) then
     return false
   end
-  return htmlNode:xpath('//form[@id="pollingForm"]'):length() > 0
-    or htmlNode:xpath('//form[@id="auth-select-device-form"]'):length() > 0
+  return isAmazonAppApprovalPollingPage(htmlNode)
+    or isAmazonAuthDeviceSelectPage(htmlNode)
     or htmlNode:xpath('//img[@id="auth-captcha-image"]'):length() > 0
-    or htmlNode:xpath('//form[@name="claimspicker"]'):length() > 0
-    or htmlNode:xpath('//form[@action="verify"]'):length() > 0
+    or isAmazonClaimsPickerPage(htmlNode)
+end
+
+--- Prefer channels MoneyMoney can complete with a typed code.
+-- TOTP > SMS > EMAIL > unknown > VOICE (cannot hear a call).
+function amazonAuthDeviceChannelScore(deviceValue)
+  if type(deviceValue) ~= 'string' or deviceValue == '' then
+    return 0
+  end
+  if endsWith(deviceValue, 'TOTP') then
+    return 30
+  end
+  if endsWith(deviceValue, 'SMS') then
+    return 20
+  end
+  if endsWith(deviceValue, 'EMAIL') then
+    return 15
+  end
+  if endsWith(deviceValue, 'VOICE') then
+    return -20
+  end
+  return 0
+end
+
+--- Selects the best otpDeviceContext radio on auth-select-device-form.
+-- @return selected device value (may be '')
+function applyPreferredAmazonAuthDeviceSelection(authSelectForm)
+  if authSelectForm == nil or authSelectForm:length() == 0 then
+    return ''
+  end
+  local otpDeviceContext=''
+  local score=-1000
+  authSelectForm:xpath('.//input[@type="radio"]'):each(function(_, element)
+    local k=element:attr('value')
+    local v=amazonAuthDeviceChannelScore(k)
+    if score < v then
+      otpDeviceContext=k
+      score=v
+    end
+  end)
+  authSelectForm:xpath('.//input[@type="radio"]'):each(function(_, element)
+    if element:attr('value') == otpDeviceContext then
+      element:attr('checked', 'checked')
+      print("select "..element:xpath('..'):text())
+    else
+      element:attr('checked', '')
+    end
+  end)
+  return otpDeviceContext
+end
+
+--- MoneyMoney interactive challenge table (OTP / claims verify).
+function moneyMoneyOtpChallenge(title, challengeText)
+  local prompt=challengeText
+  if type(prompt) ~= 'string' or prompt == '' then
+    prompt=AMAZON_DEFAULT_OTP_PROMPT
+  end
+  local challengeTitle=title
+  if type(challengeTitle) ~= 'string' or challengeTitle == '' then
+    challengeTitle=AMAZON_LOGIN_OTP_TITLE
+  end
+  return {
+    title=challengeTitle,
+    challenge=prompt,
+    label='Code'
+  }
+end
+
+--- Challenge text for classic MFA, CVF SMS/OTP, or authenticator pages.
+function amazonMfaChallengePrompt(htmlNode)
+  if htmlNode == nil then
+    return AMAZON_DEFAULT_OTP_PROMPT
+  end
+  local classic=htmlNode:xpath('//form[@id="auth-mfa-form"]//p'):text()
+  if classic ~= '' then
+    return classic
+  end
+  local raw=htmlNodeRaw(htmlNode)
+  if type(raw) ~= 'string' then
+    raw=''
+  end
+  local phoneDe=string.match(raw, "Zu deiner Sicherheit haben wir den Code an dein Telefon[^<]*")
+  if type(phoneDe) == 'string' and phoneDe ~= '' then
+    return phoneDe
+  end
+  local phoneEn=string.match(raw, "[Ww]e[^<]{0,40}sent[^<]{0,40}code[^<]{0,40}phone[^<]*")
+  if type(phoneEn) == 'string' and phoneEn ~= '' then
+    return phoneEn
+  end
+  local emailDe=string.match(raw, "Code an [^<]*[Ee]-?[Mm]ail[^<]*")
+  if type(emailDe) == 'string' and emailDe ~= '' then
+    return emailDe
+  end
+  if string.find(raw, "Authenticator", 1, true) ~= nil
+    or string.find(raw, "Zwei-Schritt-App", 1, true) ~= nil
+    or string.find(raw, "authenticator app", 1, true) ~= nil then
+    return 'Bitte den Code aus der Authenticator-App eingeben.'
+  end
+  return AMAZON_DEFAULT_OTP_PROMPT
+end
+
+function enterableOtpChallengeFromHtml(htmlNode, title)
+  if not isAmazonEnterableOtpPage(htmlNode) then
+    return nil
+  end
+  return moneyMoneyOtpChallenge(title, amazonMfaChallengePrompt(htmlNode))
+end
+
+function loginOtpChallengeFromHtml(htmlNode)
+  return enterableOtpChallengeFromHtml(htmlNode, AMAZON_LOGIN_OTP_TITLE)
 end
 
 function mfaChallengeFromHtml(htmlNode)
+  return enterableOtpChallengeFromHtml(htmlNode, AMAZON_SWITCH_OTP_TITLE)
+end
+
+--- MoneyMoney challenge table for Amazon claims verify (field name=code).
+-- @param titleOverride optional; when set, replaces the page title (switch MFA).
+function claimsVerifyChallengeFromHtml(htmlNode, titleOverride)
+  if htmlNode == nil or not isAmazonClaimsVerifyPage(htmlNode) then
+    return nil
+  end
+  local title=titleOverride
+  if type(title) ~= 'string' or title == '' then
+    title=htmlNode:xpath('//form[@action="verify"]//div[1]//div[1]'):text()
+  end
+  return moneyMoneyOtpChallenge(
+    title,
+    htmlNode:xpath('//form[@action="verify"]//div[1]//div[2]'):text())
+end
+
+--- Present claims-verify challenge once; next login step submits the code.
+-- @return challengeTable | nil, failLabel
+function takeClaimsVerifyChallengeForLogin(htmlNode)
+  claimsVerify1run=false
+  local ch=claimsVerifyChallengeFromHtml(htmlNode)
+  if ch == nil then
+    return nil, "Bestätigungscode"
+  end
+  return ch, nil
+end
+
+--- Login helper: claims-verify challenge or failMissingLoginPage result.
+function returnClaimsVerifyChallengeOrFail(htmlNode)
+  local ch, failLabel=takeClaimsVerifyChallengeForLogin(htmlNode)
+  if ch == nil then
+    return failMissingLoginPage(failLabel)
+  end
+  return ch
+end
+
+function submitAmazonClaimsPicker(htmlNode)
   if htmlNode == nil then
-    return nil
+    return nil, "claimspicker page missing"
   end
-  if not isAmazonMfaPage(htmlNode) then
-    return nil
+  local form=htmlNode:xpath('//form[@name="claimspicker"]')
+  if form:length() == 0 then
+    return nil, "claimspicker form missing"
   end
-  local mfatext=htmlNode:xpath('//form[@id="auth-mfa-form"]//p'):text()
-  if mfatext == '' then
-    mfatext='Bitte den Bestätigungscode für den Amazon-Kontenwechsel eingeben.'
+  local nextPage=connectShopForm(form)
+  if nextPage == nil then
+    return nil, "claimspicker submit failed"
   end
-  return {
-    title='Amazon Konto wechseln – 2FA',
-    challenge=mfatext,
-    label='Code'
-  }
+  return nextPage, nil
 end
 
 function submitAmazonMfa(htmlNode, otpCode)
@@ -3265,13 +3471,58 @@ function submitAmazonMfa(htmlNode, otpCode)
   if type(otpCode) ~= 'string' or otpCode == '' then
     return nil, "MFA code missing"
   end
-  local form=htmlNode:xpath('//*[@id="auth-mfa-form"]')
-  if form:length() == 0 then
+  local form=amazonEnterableOtpForm(htmlNode)
+  if form == nil or form:length() == 0 then
     return nil, "MFA form missing"
   end
   htmlNode:xpath('//*[@name="otpCode"]'):attr("value", otpCode)
+  -- CVF JS copies the visible field into otpCodeHidden before submit.
+  local otpHidden=htmlNode:xpath('//*[@name="otpCodeHidden"]')
+  if otpHidden:length() > 0 then
+    otpHidden:attr("value", otpCode)
+  end
   htmlNode:xpath('//*[@name="rememberDevice"]'):attr('checked', 'checked')
-  return connectShopForm(form), nil
+  local nextPage=connectShopForm(form)
+  if nextPage == nil then
+    return nil, "MFA submit failed"
+  end
+  return nextPage, nil
+end
+
+function submitAmazonClaimsVerify(htmlNode, code)
+  if htmlNode == nil then
+    return nil, "verify page missing"
+  end
+  if type(code) ~= 'string' or code == '' then
+    return nil, "verify code missing"
+  end
+  local form=htmlNode:xpath('//form[@action="verify"]')
+  if form:length() == 0 then
+    return nil, "verify form missing"
+  end
+  htmlNode:xpath('//*[@name="code"]'):attr("value", code)
+  local nextPage=connectShopForm(form)
+  if nextPage == nil then
+    return nil, "verify submit failed"
+  end
+  return nextPage, nil
+end
+
+--- OTP challenge during sub-account switch (classic/CVF otpCode or claims verify).
+function switchOtpChallengeFromHtml(htmlNode)
+  return mfaChallengeFromHtml(htmlNode)
+    or claimsVerifyChallengeFromHtml(htmlNode, AMAZON_SWITCH_OTP_TITLE)
+end
+
+--- Submit whatever enterable OTP form the switch landing currently shows.
+function submitAmazonSwitchOtp(htmlNode, otpCode)
+  if isAmazonEnterableOtpPage(htmlNode) then
+    return submitAmazonMfa(htmlNode, otpCode)
+  end
+  if isAmazonClaimsVerifyPage(htmlNode) then
+    return submitAmazonClaimsVerify(htmlNode, otpCode)
+  end
+  return nil, "MFA form missing"
 end
 
 --- @function submitSwitchAuthPrompt
@@ -3317,7 +3568,7 @@ function finishAccountSwitchLanding(htmlNode, opts)
     opts.interstitialTried=true
     return finishAccountSwitchLanding(nextHtml, opts)
   end
-  local mfa=mfaChallengeFromHtml(htmlNode)
+  local mfa=switchOtpChallengeFromHtml(htmlNode)
   if mfa ~= nil then
     html=htmlNode
     return {needsMfa=true, challenge=mfa}
@@ -3343,7 +3594,7 @@ function finishAccountSwitchLanding(htmlNode, opts)
 end
 
 function switchAuthBlockReason(htmlNode)
-  if isAmazonMfaPage(htmlNode) then
+  if isAmazonMfaPage(htmlNode) or isAmazonClaimsVerifyPage(htmlNode) then
     return "MFA"
   end
   if isAmazonPasswordSignInPage(htmlNode) then
@@ -5894,21 +6145,19 @@ end
 
 function continueMfaSubAccountSwitch(state, otpCode)
   if type(otpCode) ~= 'string' or otpCode == '' then
-    return mfaChallengeFromHtml(html) or {
-      title='Amazon Konto wechseln – 2FA',
-      challenge='Bitte den Bestätigungscode für den Amazon-Kontenwechsel eingeben.',
-      label='Code'
-    }
+    return switchOtpChallengeFromHtml(html) or moneyMoneyOtpChallenge(
+      AMAZON_SWITCH_OTP_TITLE,
+      'Bitte den Bestätigungscode für den Amazon-Kontenwechsel eingeben.')
   end
   local want=state.plan[state.index]
   if type(want) ~= 'table' then
     clearSubAccountScanState()
     return "Amazon: Kein Unterkonto nach der Zwei-Faktor-Authentifizierung"
   end
-  local nextHtml, err=submitAmazonMfa(html, otpCode)
-  if err ~= nil then
+  local nextHtml, err=submitAmazonSwitchOtp(html, otpCode)
+  if err ~= nil or nextHtml == nil then
     clearSubAccountScanState()
-    return "Amazon 2FA fehlgeschlagen: "..err
+    return "Amazon 2FA fehlgeschlagen: "..tostring(err or "empty response")
   end
   local land=finishAccountSwitchLanding(nextHtml, {switchKind=want.kind})
   if land.needsMfa then
@@ -6607,6 +6856,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     rememberShopCredentials(credentials[1], credentials[2])
     captcha1run=true
     mfa1run=true
+    claimsVerify1run=true
     aName=nil
     if not shouldPreserveSubAccountScanOnLogin() then
       clearSubAccountScanState()
@@ -6669,17 +6919,111 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
 
 
 
-    -- authlink
-    --
-    -- $x('//form[@id="pollingForm"]')
-    -- $x('//input[@name="transactionApprovalStatus"]')
-    -- <input type="hidden" name="transactionApprovalStatus" value="TransactionPending">
-    -- <input type="hidden" name="transactionApprovalStatus" value="TransactionCompleted">
-    --
+    -- Enterable OTP (classic MFA / CVF SMS-TOTP) before app-approval polling.
+    -- Amazon CVF approval pages often include both on the same HTML.
+    if isAmazonEnterableOtpPage(html) then
+      print("multi factor auth")
+      leaveLoginLoop=false
+      if config.debug then print("login mfa") end
+      if mfa1run then
+        mfa1run=false
+        local otpChallenge=loginOtpChallengeFromHtml(html)
+        if otpChallenge == nil then
+          return failMissingLoginPage("Zwei-Faktor-Authentifizierung")
+        end
+        return otpChallenge
+      else
+        local mfaPage, mfaErr=submitAmazonMfa(html, credentials[1])
+        if mfaErr ~= nil or mfaPage == nil then
+          return failMissingLoginPage("Zwei-Faktor-Authentifizierung")
+        end
+        html=mfaPage
+        mfa1run=true
+      end
+    end
 
-    local authLink=html:xpath('//form[@id="pollingForm"]')
-    if authLink:attr('id') ~='' then
+    -- Channel picker (SMS / email / …) before waiting on app approval.
+    if isAmazonClaimsPickerPage(html) then
+      print("passcode")
+      leaveLoginLoop=false
+      local text=''
+      local number=0
+      local passcode1run=true
+      if config.debug then print("passcode 1. part") end
+      html:xpath('//input[@type="radio"]'):each(function (index,element)
+        text=text..index..". "..element:xpath('..'):text().."\n"
+        number=index
+        if  tonumber(index) == tonumber(credentials[1]) then
+          element:attr('checked','checked')
+          if config.debug then print("select",element:xpath('..'):text()) end
+          passcode1run=false
+        else
+          element:attr('checked','')
+        end
+      end)
+      if number == 0 then
+        local pickerPage=submitAmazonClaimsPicker(html)
+        if pickerPage == nil then
+          return failMissingLoginPage("Bestätigungscode")
+        end
+        html=pickerPage
+        if isAmazonClaimsVerifyPage(html) then
+          return returnClaimsVerifyChallengeOrFail(html)
+        end
+      else
+        if passcode1run then
+          passcode1run=false
+          return {
+            title=html:xpath('//form[@action="claimspicker"]//div[1]'):text(),
+            challenge=text,
+            label='Please select 1-'..number
+          }
+        else
+          local pickerPage=submitAmazonClaimsPicker(html)
+          if pickerPage == nil then
+            return failMissingLoginPage("Bestätigungsmethode")
+          end
+          html=pickerPage
+          if isAmazonClaimsVerifyPage(html) then
+            return returnClaimsVerifyChallengeOrFail(html)
+          end
+        end
+      end
+    end
+
+    -- Claims verify OTP (field name=code) after channel selection.
+    if isAmazonClaimsVerifyPage(html) then
+      print("passcode part 2")
+      leaveLoginLoop=false
+      if config.debug then print("passcode 2. part") end
+      if claimsVerify1run then
+        return returnClaimsVerifyChallengeOrFail(html)
+      else
+        local verifyPage, verifyErr=submitAmazonClaimsVerify(html, credentials[1])
+        if verifyErr ~= nil or verifyPage == nil then
+          return failMissingLoginPage("Bestätigungscode")
+        end
+        html=verifyPage
+        claimsVerify1run=true
+      end
+    end
+
+    -- Device select (TOTP / SMS / EMAIL / VOICE) before app-approval polling.
+    if isAmazonAuthDeviceSelectPage(html) then
+      print("auth selector")
+      leaveLoginLoop=false
+      local authSelect=html:xpath('//form[@id="auth-select-device-form"]')
+      applyPreferredAmazonAuthDeviceSelection(authSelect)
+      html=connectShopForm(authSelect)
+      if html == nil then
+        return failMissingLoginPage("Authentifizierungsmethode")
+      end
+    end
+
+    -- App approval polling only when no enterable OTP is on the page.
+    if isAmazonAppApprovalPollingPage(html) then
       print("auth link sended")
+      local authLink=html:xpath('//form[@id="pollingForm"]')
       local waitUntil=os.time()+300
       local poll
       repeat
@@ -6693,10 +7037,12 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         poll=pollPage:xpath('//input[@name="transactionApprovalStatus"]'):attr('value')
         print("poll="..poll)
       until( poll == 'TransactionCompleted' or waitUntil<os.time())
+      if poll ~= 'TransactionCompleted' then
+        return "Amazon: Anmeldebestätigung in der App nicht rechtzeitig erfolgt"
+      end
+      leaveLoginLoop=false
       enterOrderList()
     end
-
-
 
     -- Account selector
     -- https://www.amazon.de/ap/cvf/request.embed?arb=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx&CVFVersion=0.1.0.0-2020-12-30&AUIVersion=3.19.8-2020-12-30
@@ -6726,47 +7072,6 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       end
     end
 
-    -- auth select
-    --
-
-    local authSelect=html:xpath('//form[@id="auth-select-device-form"]')
-    if authSelect:text() ~= ''  then
-      print("auth selector")
-      leaveLoginLoop=false
-      -- name="otpDeviceContext"
-      local otpDeviceContext=''
-      local score=-1000
-      authSelect:xpath('.//input[@type="radio"]'):each(function (index,element)
-        local k=element:attr('value')
-        local v=0
-        if endsWith(k,'TOTP') then
-          v=10
-        end
-        if endsWith(k,'VOICE') then
-          v=-10
-        end
-        if endsWith(k,'SMS') then
-          v=5
-        end
-        if score<v then
-          otpDeviceContext=k
-          score=v
-        end
-      end)
-      authSelect:xpath('.//input[@type="radio"]'):each(function (index,element)
-        if element:attr('value') == otpDeviceContext then
-          element:attr('checked','checked')
-          print("select "..element:xpath('..'):text())
-        else
-          element:attr('checked','')
-        end
-      end)
-      html=connectShopForm(authSelect)
-      if html == nil then
-        return failMissingLoginPage("Authentifizierungsmethode")
-      end
-    end
-
     -- Captcha
     local captcha=html:xpath('//img[@id="auth-captcha-image"]'):attr('src')
     if captcha ~= "" then
@@ -6787,103 +7092,6 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         html:xpath('//*[@name="rememberMe"]'):attr('checked','checked')
         html:xpath('//*[@name="password"]'):attr("value",secPassword)
         captcha1run=true
-      end
-    end
-
-    -- passcode
-
-    if html:xpath('//form[@name="claimspicker"]'):text() ~= ''  then
-      print("passcode")
-      leaveLoginLoop=false
-      local text=''
-      local number=0
-      local passcode1run=true
-      if config.debug then print("passcode 1. part") end
-      html:xpath('//input[@type="radio"]'):each(function (index,element)
-        text=text..index..". "..element:xpath('..'):text().."\n"
-        number=index
-        if  tonumber(index) == tonumber(credentials[1]) then
-          element:attr('checked','checked')
-          if config.debug then print("select",element:xpath('..'):text()) end
-          passcode1run=false
-        else
-          element:attr('checked','')
-        end
-        --print(index,element:xpath('..'):text(),element:attr('checked'))
-      end)
-      if number == 0 then
-        -- no selectable options
-        html= connectShopForm(html:xpath('//form[@name="claimspicker"]'))
-        if html == nil then
-          return failMissingLoginPage("Bestätigungscode")
-        end
-        if html:xpath('//form[@action="verify"]'):text() ~= '' then
-          return {
-            title=html:xpath('//form[@action="verify"]//div[1]//div[1]'):text(),
-            challenge=html:xpath('//form[@action="verify"]//div[1]//div[2]'):text(),
-            label='Code'
-          }
-        end
-      else
-        if passcode1run then
-          passcode1run=false
-          -- ask for passcode methode, feature request select field when return value a table?
-          return {
-            title=html:xpath('//form[@action="claimspicker"]//div[1]'):text(),
-            challenge=text,
-            label='Please select 1-'..number
-          }
-        else
-          html= connectShopForm(html:xpath('//form[@name="claimspicker"]'))
-          if html == nil then
-            return failMissingLoginPage("Bestätigungsmethode")
-          end
-          if html:xpath('//form[@action="verify"]'):text() ~= '' then
-            return {
-              title=html:xpath('//form[@action="verify"]//div[1]//div[1]'):text(),
-              challenge=html:xpath('//form[@action="verify"]//div[1]//div[2]'):text(),
-              label='Code'
-            }
-          end
-        end
-      end
-    end
-
-    -- passcode part 2
-    if html:xpath('//form[@action="verify"]'):text() ~= '' then
-      print("passcode part 2")
-      leaveLoginLoop=false
-      if config.debug then print("passcode 2. part") end
-      html:xpath('//*[@name="code"]'):attr("value",credentials[1])
-      html= connectShopForm(html:xpath('//form[@action="verify"]'))
-      if html == nil then
-        return failMissingLoginPage("Bestätigungscode")
-      end
-    end
-
-    -- 2.FA
-    local mfatext=html:xpath('//form[@id="auth-mfa-form"]//p'):text()
-    if mfatext ~= "" then
-      print("multi factor auth")
-      leaveLoginLoop=false
-      if config.debug then print("login mfa") end
-      if mfa1run then
-        -- print("mfa="..mfatext)
-        mfa1run=false
-        return {
-          title='Zwei-Faktor-Authentifizierung',
-          challenge=mfatext,
-          label='Code'
-        }
-      else
-        html:xpath('//*[@name="otpCode"]'):attr("value",credentials[1])
-        -- checkbox
-        html:xpath('//*[@name="rememberDevice"]'):attr('checked','checked')
-        html= connectShopForm(html:xpath('//*[@id="auth-mfa-form"]'))
-        if html == nil then
-          return failMissingLoginPage("Zwei-Faktor-Authentifizierung")
-        end
-        mfa1run=true
       end
     end
 

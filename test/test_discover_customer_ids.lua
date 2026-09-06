@@ -39,6 +39,15 @@ end
 local function authenticationChallengePage()
   return mm.HTML([[
 <html><body>
+  <form id="pollingForm" action="/ap/cvf/approval/poll">
+    <input type="hidden" name="transactionApprovalStatus" value="TransactionPending"/>
+  </form>
+</body></html>]])
+end
+
+local function claimsVerifyChallengePage()
+  return mm.HTML([[
+<html><body>
   <form action="verify">
     <input name="code" type="text"/>
   </form>
@@ -60,6 +69,16 @@ local authChallengeResult, authChallengeErr = env.discoverAmazonSubAccounts()
 assert(authChallengeResult == nil)
 assert(type(authChallengeErr) == "string"
   and authChallengeErr:find("authentication challenge", 1, true), tostring(authChallengeErr))
+
+-- Claims verify during discovery is reported as 2FA (enterable code, not app polling).
+env.LocalStorage = {}
+env.openAccountSwitcherEmbed = function()
+  return claimsVerifyChallengePage()
+end
+local claimsDiscoverResult, claimsDiscoverErr = env.discoverAmazonSubAccounts()
+assert(claimsDiscoverResult == nil)
+assert(type(claimsDiscoverErr) == "string"
+  and claimsDiscoverErr:find("2FA", 1, true), tostring(claimsDiscoverErr))
 
 -- A missing switcher response must still surface MFA from the active HTML state.
 env.LocalStorage = {}
