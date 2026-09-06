@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head><title>Amazon Transaction Approval</title></head>
+<body>
+<div id="channelDetailsWithMessengerApproval">
+  Genehmige zu deiner Sicherheit die Benachrichtigung, die an folgende Adresse gesendet wurde: AmazonShopping, iPhone
+</div>
+<form id="pollingForm" method="get" action="/ap/cvf/approval/poll">
+  <input type="hidden" name="arb" value="REDACTED-ARB"/>
+  <input type="hidden" name="pageId" value="amzn_retail_yourorders_de"/>
+  <input type="hidden" name="openid.assoc_handle" value="amzn_retail_yourorders_de"/>
+  <input type="hidden" name="disableRedirect" value="false"/>
+  <input type="hidden" name="isResend" value="1"/>
+  <input type="hidden" name="isIncomingSmsResponded" value="false"/>
+  <input type="hidden" name="isRedirectForIncomingSms" value="false"/>
+  <input type="hidden" name="isRedirectForWhatsapp" value="false"/>
+  <input type="hidden" name="isRedirectForSms" value="false"/>
+  <input type="hidden" name="isWhatsAppOptionClickedOnNonBlockCX" value="false"/>
+  <input type="hidden" name="csrfToken" value="REDACTED"/>
+  <input type="hidden" name="transactionApprovalStatus" value="TransactionPending"/>
+</form>
+<form id="resend-approval-form" method="post" action="/ap/cvf/approval/resend">
+  <a id="resend-approval-link" class="a-link-normal" href="#">Benachrichtigung erneut senden</a>
+  <input type="hidden" name="arb" value="REDACTED-ARB"/>
+  <input type="hidden" name="pageId" value="amzn_retail_yourorders_de"/>
+  <input type="hidden" name="openid.assoc_handle" value="amzn_retail_yourorders_de"/>
+  <input type="hidden" name="disableRedirect" value="false"/>
+  <input type="hidden" name="isResend" value="1"/>
+  <input type="hidden" name="isIncomingSmsResponded" value="false"/>
+  <input type="hidden" name="isRedirectForIncomingSms" value="false"/>
+  <input type="hidden" name="isRedirectForWhatsapp" value="false"/>
+  <input type="hidden" name="isRedirectForSms" value="false"/>
+  <input type="hidden" name="isWhatsAppOptionClickedOnNonBlockCX" value="false"/>
+  <input type="hidden" name="csrfToken" value="REDACTED"/>
+</form>
+<form id="resend-approval-form" method="post"
+  action="/ap/cvf/approval/resend?arb=REDACTED-ARB&amp;isResend=0&amp;isVerifyOtp=0&amp;isRedirectForWhatsapp=true&amp;ref_=ch_tiv_display_whatsapp">
+  <span id="whatsapp-button" class="a-button a-button-span12 a-button-base">
+    <span class="a-button-inner">
+      <input class="a-button-input" type="submit" aria-labelledby="whatsapp-button-announce"/>
+      <span id="whatsapp-button-announce" class="a-button-text" aria-hidden="true">Oder mit WhatsApp verifizieren</span>
+    </span>
+  </span>
+</form>
+<a href="/ap/cvf/accountrecovery">Du hast keinen Zugriff auf die Benachrichtigung?</a>
+</body>
+</html>
