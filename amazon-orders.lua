@@ -43,6 +43,7 @@ local AMAZON_LOGIN_STATE_KEYS = {
   'cookies',
   'orderFilterCache',
   'orderFilterCacheByAccount',
+  'offeredOrderFiltersByAccount',
   'orderListHarvestIncompleteByAccount',
   'floatingBalanceAnchorByAccount',
   'discoveredSubAccounts',
@@ -469,6 +470,7 @@ end
 function clearOrderFilterCaches()
   LocalStorage.orderFilterCache=nil
   LocalStorage.orderFilterCacheByAccount={}
+  LocalStorage.offeredOrderFiltersByAccount={}
 end
 
 function clearAbaRollupHarvestIncomplete()
@@ -3810,6 +3812,42 @@ function filterCacheForSubAccount(subAccountLabel)
   return LocalStorage.orderFilterCacheByAccount[key]
 end
 
+--- Amazon timeFilter options actually offered for a sub-account (from the order-list select).
+-- hasMore must not invent years back to 2000 that the account UI never lists.
+function rememberOfferedOrderFilters(subAccountLabel, filterVals)
+  if LocalStorage == nil or type(subAccountLabel) ~= 'string' or subAccountLabel == '' then
+    return
+  end
+  if type(filterVals) ~= 'table' then
+    return
+  end
+  if type(LocalStorage.offeredOrderFiltersByAccount) ~= 'table' then
+    LocalStorage.offeredOrderFiltersByAccount={}
+  end
+  local offered={}
+  for _, val in ipairs(filterVals) do
+    if type(val) == 'string' and val ~= '' then
+      offered[val]=true
+    end
+  end
+  if next(offered) == nil then
+    return
+  end
+  LocalStorage.offeredOrderFiltersByAccount[subAccountLabel]=offered
+end
+
+function offeredOrderFiltersForSubAccount(subAccountLabel)
+  local byAccount=LocalStorage and LocalStorage.offeredOrderFiltersByAccount
+  if type(byAccount) ~= 'table' or type(subAccountLabel) ~= 'string' or subAccountLabel == '' then
+    return nil
+  end
+  local offered=byAccount[subAccountLabel]
+  if type(offered) ~= 'table' or next(offered) == nil then
+    return nil
+  end
+  return offered
+end
+
 function ensureOrderCache()
   if LocalStorage.OrderCache == nil then
     LocalStorage.OrderCache={}
@@ -4518,6 +4556,16 @@ function hasMoreOrderListFiltersToHarvest(subAccountLabel, refreshSince, now)
     return true
   end
   local orderFilterCache=filterCacheForSubAccount(subAccountLabel)
+  local offered=offeredOrderFiltersForSubAccount(subAccountLabel)
+  if offered ~= nil then
+    for val, _ in pairs(offered) do
+      if not isRecentOrderFilter(val)
+          and shouldHarvestOrderFilter(val, orderFilterCache, 0, refreshSince, now) then
+        return true
+      end
+    end
+    return false
+  end
   for _,item in ipairs(enumerateYourOrdersGetFilters(refreshSince, now)) do
     if not isRecentOrderFilter(item.val)
         and shouldHarvestOrderFilter(item.val, orderFilterCache, 0, refreshSince, now) then
@@ -5623,6 +5671,19 @@ function collectOrdersFromOrderList(subAccountLabel, kind, refreshSince)
     print("scanFiltersMonths=", scanMonths)
   end
 
+  local offeredVals={}
+  local selectedFilterVal=getSelectedOrderFilter(html)
+  if selectedFilterVal ~= '' then
+    offeredVals[#offeredVals+1]=selectedFilterVal
+  end
+  orderFilterSelect:each(function(_, element)
+    local val=element:attr('value')
+    if type(val) == 'string' and val ~= '' then
+      offeredVals[#offeredVals+1]=val
+    end
+  end)
+  rememberOfferedOrderFilters(subAccountLabel, offeredVals)
+
   local function harvestFilter(orderFilterVal, statusLabel, submitFilter)
     if scannedFilters[orderFilterVal]
         or not shouldHarvestOrderFilter(orderFilterVal, orderFilterCache, newCount, refreshSince, now) then
@@ -5638,7 +5699,6 @@ function collectOrdersFromOrderList(subAccountLabel, kind, refreshSince)
     newCount=newCount+n
   end
 
-  local selectedFilterVal=getSelectedOrderFilter(html)
   if selectedFilterVal ~= '' then
     harvestFilter(selectedFilterVal, getSelectedOrderFilterLabel(html, selectedFilterVal), false)
   end

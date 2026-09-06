@@ -101,6 +101,55 @@ end
 assert(env.hasMoreOrderListFiltersToHarvest("Persönliches Konto", 0, os.time()) == false,
   "recent filters alone must not keep the sub-account scan incomplete")
 
+-- Synthetic years (enumerate back to 2000) must not stick incomplete when Amazon's
+-- select only offers a newer oldest year (log: Ursula Schramme dropdown ends 2016).
+env.LocalStorage = {
+  orderFilterCacheByAccount = {
+    ["Ursula Schramme"] = {
+      ["year-2016"] = true,
+      ["year-2017"] = true,
+      ["year-2018"] = true,
+      ["year-2019"] = true,
+      ["year-2020"] = true,
+      ["year-2021"] = true,
+      ["year-2022"] = true,
+      ["year-2023"] = true,
+      ["year-2024"] = true,
+      ["year-2025"] = true,
+      ["year-2026"] = true,
+    },
+  },
+  offeredOrderFiltersByAccount = {
+    ["Ursula Schramme"] = {
+      last30 = true,
+      ["months-3"] = true,
+      ["year-2016"] = true,
+      ["year-2017"] = true,
+      ["year-2018"] = true,
+      ["year-2019"] = true,
+      ["year-2020"] = true,
+      ["year-2021"] = true,
+      ["year-2022"] = true,
+      ["year-2023"] = true,
+      ["year-2024"] = true,
+      ["year-2025"] = true,
+      ["year-2026"] = true,
+    },
+  },
+}
+env.setOrderListHarvestIncomplete("Ursula Schramme", false)
+assert(env.hasMoreOrderListFiltersToHarvest("Ursula Schramme", 0, os.time()) == false,
+  "offered filters fully cached must complete even if enumerate lists older years")
+
+env.LocalStorage.offeredOrderFiltersByAccount["Ursula Schramme"]["year-2015"] = true
+assert(env.hasMoreOrderListFiltersToHarvest("Ursula Schramme", 0, os.time()) == true,
+  "unscanned offered year must keep hasMore")
+
+env.rememberOfferedOrderFilters("Testkonto", { "last30", "year-2024", "", nil })
+local remembered = env.offeredOrderFiltersForSubAccount("Testkonto")
+assert(remembered["last30"] == true and remembered["year-2024"] == true)
+assert(remembered[""] == nil)
+
 env.setOrderListHarvestIncomplete("Persönliches Konto", false)
 env.runOrderFilterHarvest(
   "last30", "den letzten 30 Tagen", {}, "Persönliches Konto", "personal", {
