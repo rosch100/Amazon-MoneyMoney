@@ -2,7 +2,7 @@
 -- Run: test/run.sh test/test_storno_omit.lua
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 env.secUsername = "test@example.com"
 
 local now = os.time() + 86400

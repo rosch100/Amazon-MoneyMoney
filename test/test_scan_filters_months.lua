@@ -3,7 +3,7 @@
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 
 -- Unlimited (nil/0): everything allowed
 assert(env.orderFilterWithinScanMonths("last30", nil) == true)

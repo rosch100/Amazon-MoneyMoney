@@ -4,7 +4,7 @@
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 
 local landingFile = assert(io.open("test/fixtures/aba_landing_nav.html", "rb"))
 local landingHtml = landingFile:read("*all")

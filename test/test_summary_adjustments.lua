@@ -3,7 +3,7 @@
 -- Run: test/run.sh test/test_summary_adjustments.lua
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 env.secUsername = "test@example.com"
 
 local ENGLISH_DIFF = "Difference (shipping costs, coupon etc.)"

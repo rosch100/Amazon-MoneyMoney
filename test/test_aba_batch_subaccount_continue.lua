@@ -3,7 +3,7 @@
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 
 env.connectShop = function()
   return mm.HTML("<html><body></body></html>")

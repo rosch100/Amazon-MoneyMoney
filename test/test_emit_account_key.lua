@@ -3,7 +3,7 @@
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 env.secUsername = "test@example.com"
 
 assert(env.emitAccountKey(" Test@Example.COM ") == "test@example.com")
@@ -21,7 +21,7 @@ assert(env.isOrderEmittedForAccount(marked, "AO.3PERSONALID01") == false)
 local legacyMix = { emittedAccounts = { mix = true } }
 assert(env.isOrderEmittedForAccount(legacyMix, "test@example.com") == false)
 
-local noUser = mm.loadPlugin("amazon-orders.lua")
+local noUser = mm.loadPlugin("amazon-bestellungen.lua")
 local ok = pcall(noUser.emitAccountKey, nil)
 assert(ok == false, "emitAccountKey without login must error")
 

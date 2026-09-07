@@ -5,7 +5,7 @@
 **OS:** macOS 27.0 (ARM)
 **Datum:** 2026-09-04
 **API:** [Web Banking Extensions](https://moneymoney.app/api/webbanking/)
-**Extension:** eigene Lua-Extension `amazon-orders.lua` (Service-Name „Amazon Bestellungen“, Web Scraping)
+**Extension:** eigene Lua-Extension `amazon-bestellungen.lua` (Service-Name „Amazon Bestellungen“, Web Scraping)
 
 ---
 

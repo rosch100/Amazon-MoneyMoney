@@ -1,6 +1,6 @@
 -- mm_shim.lua
 -- Emulates the MoneyMoney WebBanking host environment well enough to run the
--- parsing functions of amazon-orders.lua against saved HTML pages offline.
+-- parsing functions of amazon-bestellungen.lua against saved HTML pages offline.
 --
 -- The real host parses HTML with libxml2 (HTML parser + XPath); we wrap xmlua
 -- (a libxml2 binding) to mirror the node-set API the plugin relies on:
@@ -129,7 +129,7 @@ function M.HTML(content, charset)
 end
 
 ----------------------------------------------------------------------
--- Sandbox: load amazon-orders.lua with host globals stubbed, return its env
+-- Sandbox: load amazon-bestellungen.lua with host globals stubbed, return its env
 -- so tests can call its global functions (getOrdersFromSummary, etc.).
 ----------------------------------------------------------------------
 function M.loadPlugin(path, localStorage)

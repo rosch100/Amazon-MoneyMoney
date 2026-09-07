@@ -2,7 +2,7 @@
 -- Run: test/run.sh test/test_partial_return.lua
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 
 local bookingDate = os.time({ year = 2026, month = 7, day = 22 })
 local now = os.time() + 86400

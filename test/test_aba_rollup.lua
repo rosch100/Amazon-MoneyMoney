@@ -4,7 +4,7 @@
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 
 local rollupFile = assert(io.open("test/fixtures/aba_rollup_table.json", "rb"))
 local rollupJson = rollupFile:read("*all")

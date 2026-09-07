@@ -2,7 +2,7 @@
 -- Run: test/run.sh test/test_parse.lua
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 
 local fails = 0
 local function check(condition, message)

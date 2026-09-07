@@ -1,13 +1,13 @@
 # Offline test harness
 
-MoneyMoney runs `amazon-orders.lua` inside its own host, parsing Amazon HTML with
+MoneyMoney runs `amazon-bestellungen.lua` inside its own host, parsing Amazon HTML with
 libxml2 (HTML parser + XPath) — **no JavaScript is executed**. This harness lets
 you run the plugin's parsing functions against *saved* Amazon pages on your own
 machine, so you can adjust selectors when Amazon changes its layout without
 needing a live login each time.
 
 It emulates the MoneyMoney host environment on top of LuaJIT + libxml2, loads the
-real (unmodified) `amazon-orders.lua`, and calls its global functions
+real (unmodified) `amazon-bestellungen.lua`, and calls its global functions
 (`getOrdersFromSummary`, `getOrderDetails`, …) against HTML files you provide.
 
 ## Prerequisites (one-time)
@@ -74,7 +74,7 @@ scripts, Amazon is rendering it client-side and the plugin can't parse it as-is
 
 - `mm_shim.lua` — emulates the host. `HTML(content)` returns a NodeSet that is
   both array-like (`result[1]`) and method-bearing (`:xpath/:text/:attr/:each/`
-  `:length/:get/:children`). `loadPlugin(path)` loads `amazon-orders.lua` into a
+  `:length/:get/:children`). `loadPlugin(path)` loads `amazon-bestellungen.lua` into a
   sandbox (stubbing `MM`/`JSON`/`LocalStorage`/`Connection`/`WebBanking`; `io=nil`
   so it behaves like the signed build) and returns its environment table.
 - `test_parse.lua` — deterministic parser assertions over synthetic HTML.
@@ -111,6 +111,6 @@ See `../CLAUDE.md` for the full layout/architecture write-up and
 
 ## Constraint
 
-`amazon-orders.lua` must remain a **single self-contained file** to be recognized
+`amazon-bestellungen.lua` must remain a **single self-contained file** to be recognized
 by MoneyMoney. The harness loads it and calls its globals; it never splits or
 modifies the plugin's structure.

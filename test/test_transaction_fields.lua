@@ -3,7 +3,7 @@
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 env.MM.toEncoding = function()
   error("transaction strings must stay UTF-8")
 end
@@ -76,7 +76,7 @@ assert(tx.mandateReference == "MasterCard **** 0000", "mandate must be payment m
 assert(tx.accountNumber == "Persoenliches Konto", "accountNumber must be sub-account")
 assert(tx.amount == -22.99)
 
-local src = assert(io.open("amazon-orders.lua", "rb")):read("*all")
+local src = assert(io.open("amazon-bestellungen.lua", "rb")):read("*all")
 assert(not src:find("MM%.toEncoding%(const%.fixEncoding,", 1),
   "MoneyMoney transaction strings must not be converted to binary data")
 

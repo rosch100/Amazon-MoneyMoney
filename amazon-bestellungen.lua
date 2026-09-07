@@ -922,11 +922,11 @@ if configDirty and io ~= nil and io.open ~= nil then
   configFile:close()
 end
 
-print(((io == nil or io.open == nil) and 'signed ' or '')  .. const.services[1],"plugin loaded...")
-if config.debug then print('debugging...') end
-if debug ~= nil then
-  print("lua debug is usable")
-end
+-- print(((io == nil or io.open == nil) and 'signed ' or '')  .. const.services[1],"plugin loaded...")
+-- if config.debug then print('debugging...') end
+-- if debug ~= nil then
+--   print("lua debug is usable")
+-- end
 local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters). To mark this as an
@@ -7621,3 +7621,4 @@ function EndSession ()
   secUsername=nil
 end
 
+-- SIGNATURE: MCwCFADXoW9IQ8E3gKZIvLlZX6w/MPcrAhRKrBC+jjNHPEpgB3p4b7GDoJxG1w==

@@ -1,7 +1,7 @@
 -- test/test_customer_id_parse.lua
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 
 local function readFixture(name)
   local f = assert(io.open("test/fixtures/" .. name, "r"))

@@ -1,7 +1,7 @@
 # CLAUDE.md — Amazon-MoneyMoney plugin
 
 ## What this is
-A MoneyMoney web-banking extension (`amazon-orders.lua`) that scrapes a user's
+A MoneyMoney web-banking extension (`amazon-bestellungen.lua`) that scrapes a user's
 Amazon.de order history and exposes it as bank-account transactions. It must
 stay a **single, self-contained Lua file** to be recognized by MoneyMoney.
 API docs: https://moneymoney.app/api/webbanking/
@@ -59,7 +59,7 @@ part of the current architecture.
 - `test/mm_shim.lua` — emulates MoneyMoney's host: `HTML()` returning a
   NodeSet (array-like AND method-bearing) with `:xpath/:text/:attr/:each/`
   `:length/:get/:children`, plus `loadPlugin(path)` which loads
-  `amazon-orders.lua` into a sandboxed env (stubs MM/JSON/LocalStorage/
+  `amazon-bestellungen.lua` into a sandboxed env (stubs MM/JSON/LocalStorage/
   Connection/WebBanking; io=nil so it behaves like the signed build) and
   returns the env so tests can call its globals (e.g. `getOrdersFromSummary`).
 - `test/selftest.lua` — runs the real `getOrdersFromSummary` against a synthetic

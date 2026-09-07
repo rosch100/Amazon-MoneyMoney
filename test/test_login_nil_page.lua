@@ -3,7 +3,7 @@
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 env.LocalStorage = {
   loginCounter = 0,
   patcher = {},
@@ -27,7 +27,7 @@ assert(type(result) == "string" and result ~= "" and result ~= env.LoginFailed,
 assert(env.LocalStorage.cookies == "session=keep",
   "transient login failure must preserve session cookies")
 
-local unexpectedEnv = mm.loadPlugin("amazon-orders.lua")
+local unexpectedEnv = mm.loadPlugin("amazon-bestellungen.lua")
 unexpectedEnv.LocalStorage = {
   loginCounter = 0,
   patcher = {},
@@ -49,7 +49,7 @@ assert(type(unexpectedResult) == "string"
 assert(unexpectedEnv.LocalStorage.cookies == "session=keep",
   "unexpected login layout must preserve session cookies")
 
-local rawEnv = mm.loadPlugin("amazon-orders.lua")
+local rawEnv = mm.loadPlugin("amazon-bestellungen.lua")
 rawEnv.LocalStorage = {
   cookies = "session=keep",
 }
@@ -91,7 +91,7 @@ local function loginPageWithError(message)
   }
 end
 
-local technicalErrorEnv = mm.loadPlugin("amazon-orders.lua")
+local technicalErrorEnv = mm.loadPlugin("amazon-bestellungen.lua")
 technicalErrorEnv.LocalStorage = {
   loginCounter = 0,
   patcher = {},
@@ -113,7 +113,7 @@ assert(type(technicalError) == "string"
 assert(technicalErrorEnv.LocalStorage.cookies == "session=keep",
   "generic Amazon login error must preserve session cookies")
 
-local credentialErrorEnv = mm.loadPlugin("amazon-orders.lua")
+local credentialErrorEnv = mm.loadPlugin("amazon-bestellungen.lua")
 credentialErrorEnv.LocalStorage = {
   loginCounter = 0,
   patcher = {},
