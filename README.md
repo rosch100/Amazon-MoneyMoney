@@ -14,11 +14,10 @@ Dateiname: **`amazon-bestellungen.lua`** (nicht `amazon-orders.lua` — der Name
 durch die Erweiterung von Michael Beutling belegt; alle Extensions liegen im selben
 Download-Verzeichnis).
 
-Aus diesem Repository:
+Aus diesem Repository (inkl. MoneyMoney Signatur):
 [amazon-bestellungen.lua](https://raw.githubusercontent.com/rosch100/Amazon-MoneyMoney/master/amazon-bestellungen.lua)
 
-Signierte Website-Version: sobald Adams die Datei unter diesem Namen auf
-moneymoney-app.com bereitstellt.
+Website-Download unter diesem Namen, sobald auf moneymoney-app.com bereitgestellt.
 
 Datei nach
 `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney/Extensions`
