@@ -10,7 +10,7 @@ local day = 24 * 60 * 60
 -- and wall-clock of the last list scan in lastListHarvestAt.
 local moneyMoneySince = now - 16 * day
 
-local env = mm.loadPlugin("amazon-orders.lua", {
+local env = mm.loadPlugin("amazon-bestellungen.lua", {
   cacheVersion = 23,
   OrderCache = {
     ["303-1111111-2222222"] = {

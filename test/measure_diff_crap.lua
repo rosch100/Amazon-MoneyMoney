@@ -5,7 +5,7 @@
 -- Gate default 5 (feature-dev / coverage-analysis-and-crap).
 -- Usage: test/run.sh test/measure_diff_crap.lua
 
-local path = "amazon-orders.lua"
+local path = "amazon-bestellungen.lua"
 local src = assert(io.open(path, "r")):read("*a")
 local gate = tonumber(arg and arg[1]) or 5
 

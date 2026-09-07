@@ -10,19 +10,21 @@ Fork von [Michael Beutling](https://github.com/Michael-Beutling/Amazon-MoneyMone
 
 ## Installation
 
-Signierte Version: https://moneymoney-app.com/extensions/amazon-orders.lua
+Dateiname: **`amazon-bestellungen.lua`** (nicht `amazon-orders.lua` — der Name ist bereits
+durch die Erweiterung von Michael Beutling belegt; alle Extensions liegen im selben
+Download-Verzeichnis).
 
-Unsignierte Version aus diesem Repository:
-[amazon-orders.lua](https://raw.githubusercontent.com/rosch100/Amazon-MoneyMoney/master/amazon-orders.lua)
+Aus diesem Repository:
+[amazon-bestellungen.lua](https://raw.githubusercontent.com/rosch100/Amazon-MoneyMoney/master/amazon-bestellungen.lua)
 
-Die signierte Version entspricht nicht automatisch diesem Fork. Die hier
-beschriebenen Funktionen gelten für die unsignierte Datei.
+Signierte Website-Version: sobald Adams die Datei unter diesem Namen auf
+moneymoney-app.com bereitstellt.
 
 Datei nach
 `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney/Extensions`
 kopieren, oder im Klon `./link_ext.sh` ausführen.
 
-Unsignierte Plugins: MoneyMoney-**Beta**, Signaturprüfung unter
+Unsignierte/Entwicklungs-Plugins: MoneyMoney-**Beta**, Signaturprüfung unter
 *MoneyMoney → Einstellungen → Erweiterungen* ausschalten.
 
 ## Einrichten

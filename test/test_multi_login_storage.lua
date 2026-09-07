@@ -1,7 +1,7 @@
 -- test/test_multi_login_storage.lua
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 
 assert(env.normalizeAmazonLoginKey("  X@Y.COM ") == "x@y.com")
 

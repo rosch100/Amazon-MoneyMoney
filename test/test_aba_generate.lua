@@ -3,7 +3,7 @@
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
-local env = mm.loadPlugin("amazon-orders.lua")
+local env = mm.loadPlugin("amazon-bestellungen.lua")
 
 local uiFile = assert(io.open("test/fixtures/aba_report_ui.html", "rb"))
 local reportUiHtml = uiFile:read("*all")
