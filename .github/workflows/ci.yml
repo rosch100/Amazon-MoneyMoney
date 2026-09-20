@@ -1,0 +1,102 @@
+name: Extension tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test-and-validate:
+    name: Test & syntax checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Python syntax check
+        run: |
+          set -euo pipefail
+          files_list="$(mktemp)"
+          trap 'rm -f "${files_list}"' EXIT
+          git ls-files -z '*.py' > "${files_list}"
+          mapfile -d '' -t files < "${files_list}"
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Python files tracked."
+            exit 0
+          fi
+          for file in "${files[@]}"; do
+            python3 -m py_compile "$file"
+          done
+
+      - name: Python unit tests (tracked tests/*.py)
+        run: |
+          set -euo pipefail
+          files_list="$(mktemp)"
+          trap 'rm -f "${files_list}"' EXIT
+          git ls-files -z 'tests/*.py' > "${files_list}"
+          mapfile -d '' -t files < "${files_list}"
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Python tests tracked."
+            exit 0
+          fi
+          for file in "${files[@]}"; do
+            python3 "$file"
+          done
+
+      - name: Setup Lua
+        uses: leafo/gh-actions-lua@6919171ccf181b826f44b9bca76307b577217377 # v13.0.0
+        with:
+          luaVersion: "5.4"
+          buildCache: "false"
+
+      - name: Lua unit tests
+        run: |
+          set -euo pipefail
+          files_list="$(mktemp)"
+          trap 'rm -f "${files_list}"' EXIT
+          git ls-files -z 'tests/*.lua' > "${files_list}"
+          mapfile -d '' -t files < "${files_list}"
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Lua tests tracked."
+            exit 0
+          fi
+          for file in "${files[@]}"; do
+            lua "$file"
+          done
+
+      - name: Lua syntax check (all tracked .lua)
+        run: |
+          set -euo pipefail
+          files_list="$(mktemp)"
+          trap 'rm -f "${files_list}"' EXIT
+          git ls-files -z '*.lua' > "${files_list}"
+          mapfile -d '' -t files < "${files_list}"
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No Lua files tracked."
+            exit 0
+          fi
+          for file in "${files[@]}"; do
+            LUA_FILE="${file}" lua -e 'assert(loadfile(os.getenv("LUA_FILE")))'
+          done
