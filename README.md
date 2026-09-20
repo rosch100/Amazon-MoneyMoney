@@ -53,6 +53,12 @@ einlesen). Details:
 [Amazon — Einstellungen und Verhalten](https://github.com/rosch100/moneymoney-extensions/blob/main/docs/LUA-EXTENSIONS.md#amazon--einstellungen-und-verhalten)
 im Hub.
 
+## Fehler & Ideen
+
+Issues bitte über GitHub melden:
+[Neues Issue](https://github.com/rosch100/Amazon-MoneyMoney/issues/new/choose).
+Keine MoneyMoney-Logdateien anhängen — Details stehen im Bug-Formular.
+
 ## Haftung
 
 Keine. Wenn das Skript täglich zehn Tonnen Hundefutter bestellt, ist das dein Problem.

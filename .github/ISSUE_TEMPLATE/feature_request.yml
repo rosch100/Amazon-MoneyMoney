@@ -1,0 +1,53 @@
+name: Feature-Request
+description: Idee oder Verbesserung für diese MoneyMoney-Lua-Erweiterung vorschlagen
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Hinweis
+
+        Bitte **keine** Logdateien, Zugangsdaten oder personenbezogenen Beispieldaten posten.
+        Beschreibe den Bedarf möglichst allgemein.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: Welches Problem soll gelöst werden?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Vorgeschlagene Lösung
+      description: Wie könnte die Erweiterung sich verhalten?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativen
+      description: Andere Ansätze, die du schon erwogen hast (optional)
+
+  - type: dropdown
+    id: flow
+    attributes:
+      label: Betroffener Ablauf
+      options:
+        - Login
+        - Kontenliste
+        - Abruf/Umsätze
+        - Cookie-Import
+        - Sonstiges
+
+  - type: checkboxes
+    id: confirm_no_credentials
+    attributes:
+      label: Keine Zugangsdaten
+      options:
+        - label: Ich habe keine Zugangsdaten und keine personenbezogenen Beispieldaten gepostet.
+          required: true
