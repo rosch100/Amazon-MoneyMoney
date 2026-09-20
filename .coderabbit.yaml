@@ -1,0 +1,45 @@
+# CodeRabbit — MoneyMoney Extension
+# Docs: https://docs.coderabbit.ai/reference/configuration
+#
+# Voraussetzung: GitHub-App „CodeRabbit“ für dieses Repo installieren:
+# https://github.com/apps/coderabbitai/installations/new
+
+language: de-DE
+
+reviews:
+  profile: chill
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - master
+
+  path_filters:
+    - "!**/node_modules/**"
+    - "!**/__pycache__/**"
+    - "!**/.venv/**"
+    - "!**/*.har"
+
+  path_instructions:
+    - path: "**/*.lua"
+      instructions: |
+        MoneyMoney Web-Banking-Extension. Das Plugin bleibt eine einzelne Lua-Datei.
+        Öffentliche Host-API: SupportsBank, InitializeSession/InitializeSession2,
+        ListAccounts, RefreshAccount, EndSession. Keine Secrets loggen.
+        Host-Allowlists nicht aufweichen.
+
+  tools:
+    opengrep:
+      enabled: true
+
+  pre_merge_checks:
+    docstrings:
+      mode: off
+
+chat:
+  auto_reply: true
