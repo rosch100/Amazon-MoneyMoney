@@ -123,6 +123,14 @@ repeat runs stay fast. detailsUrl built via const.orderDetailsUrl + code.
   (od-returns-panel / a-color-success) are no longer called.
 - Digital orders (D01-) and gift cards parse via the same generic detail path
   (no special URL); gift cards have no shippingAddress, which is fine.
+- Return detection (`orderDetailsHasReturnActivity` / `isReturnedOrderItemRow`)
+  keys on return-*status* links (`href` contains `returns/status` /
+  `return-status`) or "Rücksendung"/"Erstattung" text, NOT the generic
+  "Rückgabe oder Widerruf" CTA (`/spr/returns/cart`) which every delivered order
+  carries during its return window. A false positive there makes
+  `getSummaryExtrasFromDetails` drop credit rows — e.g. the Amazon-Warehouse
+  ("Retourenkauf") ~20% checkout discount that shows as a "Gutschein eingelöst"
+  od-line-item-row. Covered by `test/test_warehouse_voucher.lua`.
 - Business harvesting through ABA, Business SPA and classic GET gap coverage is
   implemented. `poNumber` / `orderedMerchant` are not mapped to transactions.
   Per-item partial refund detail remains unavailable; the aggregate refund date

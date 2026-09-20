@@ -1799,7 +1799,14 @@ function orderDetailsHasReturnActivity(orderDetails)
   if orderDetails == nil then
     return false
   end
-  if orderDetails:xpath('.//a[contains(@href,"return")]'):length() > 0 then
+  -- A return-*status* link means a return is actually in progress. The generic
+  -- "Rückgabe oder Widerruf" CTA (/spr/returns/cart) sits on every delivered
+  -- order inside its return window and is NOT proof of a return -- treating it as
+  -- one wrongly suppresses legitimate summary credits (e.g. the Amazon-Warehouse
+  -- 20% "Gutschein eingelöst" discount).
+  if orderDetails:xpath(
+    './/a[contains(@href,"returns/status") or contains(@href,"return-status")]'
+  ):length() > 0 then
     return true
   end
   if orderDetails:xpath('.//*[contains(.,"Rücksendung") or contains(.,"Erstattung")]'):length() > 0 then
@@ -2382,7 +2389,11 @@ function isReturnedOrderItemRow(item)
   if grid:length() == 0 then
     return false
   end
-  if grid:xpath('.//a[contains(@href,"return")]'):length() > 0 then
+  -- Only a return-status link marks this item as returned; the generic
+  -- "Rückgabe oder Widerruf" eligibility CTA does not (see orderDetailsHasReturnActivity).
+  if grid:xpath(
+    './/a[contains(@href,"returns/status") or contains(@href,"return-status")]'
+  ):length() > 0 then
     return true
   end
   return grid:xpath('.//a[contains(.,"Rücksendung") or contains(.,"Erstattung")]'):length() > 0
