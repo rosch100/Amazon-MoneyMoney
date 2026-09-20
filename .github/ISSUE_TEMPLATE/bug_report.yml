@@ -1,0 +1,128 @@
+name: Bug-Report
+description: Fehler in dieser MoneyMoney-Lua-Erweiterung melden
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Datenschutz und Protokoll
+
+        MoneyMoney speichert Protokolldateien oft so, dass **nur MoneyMoney** sie lesen kann.
+        Community-Maintainer können solche Dateien **nicht** auswerten — Anhänge helfen nicht
+        und können trotzdem vertrauliche Daten enthalten.
+
+        **Bitte keine Logdateien anhängen** (weder `.log` noch andere Diagnose-/Trace-Archive).
+
+        Stattdessen: Ausschnitte aus **Fenster → Protokollfenster** und/oder Screenshots davon —
+        vorher **redigieren**.
+
+        **Nie posten:** Passwörter, Cookie-Strings (`COOKIE:…`), Session-Tokens, OTP/TAN,
+        vollständige Kontonummern/IBAN/PAN, unnötige Login-E-Mails, personenbezogene
+        Bestell-/Vertragsdaten, HAR-Dateien, LocalStorage-/webCache-Dumps,
+        Roh-Exports aus dem MoneyMoney Helper.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Kurzbeschreibung
+      description: Ein Satz zum Fehler
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Erwartetes Verhalten
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Tatsächliches Verhalten
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Schritte zur Reproduktion
+      description: Nummerierte Schritte, möglichst minimal
+      placeholder: |
+        1. …
+        2. …
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: mm_version
+    attributes:
+      label: MoneyMoney-Version
+      description: z. B. 2.5.x (Build) — bitte angeben, ob Beta
+      placeholder: "2.5.x (Build) / Beta ja|nein"
+    validations:
+      required: true
+
+  - type: input
+    id: ext_version
+    attributes:
+      label: Extension-Version und Quelle
+      description: Versionsnummer und ob signiert (moneymoney.app) oder aus diesem Repository
+      placeholder: "z. B. 1.00 aus Repo / signiert von moneymoney.app"
+    validations:
+      required: true
+
+  - type: input
+    id: macos_version
+    attributes:
+      label: macOS-Version
+      placeholder: "z. B. 15.x / 26.x"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: auth_path
+    attributes:
+      label: Auth-Weg
+      options:
+        - Username/Passwort
+        - Cookie-Import
+        - MFA
+        - unklar
+    validations:
+      required: true
+
+  - type: textarea
+    id: protocol_excerpt
+    attributes:
+      label: Redigierter Protokoll-Ausschnitt
+      description: |
+        Optional. Text aus dem Protokollfenster und/oder Hinweis auf einen Screenshot.
+        Secrets entfernen oder mit `[redacted]` ersetzen. Keine Logdatei anhängen.
+      render: text
+
+  - type: checkboxes
+    id: confirm_no_secrets
+    attributes:
+      label: Keine Secrets
+      options:
+        - label: Ich habe keine Passwörter, Cookies, Tokens, OTP/TAN oder vollständige Kontonummern gepostet.
+          required: true
+
+  - type: checkboxes
+    id: confirm_no_logfile
+    attributes:
+      label: Keine Logdatei
+      options:
+        - label: Ich habe keine MoneyMoney-Logdatei und kein Diagnose-/Trace-Archiv angehängt.
+          required: true
+
+  - type: checkboxes
+    id: confirm_redacted
+    attributes:
+      label: Redaktion
+      options:
+        - label: Protokoll-Ausschnitte und Screenshots sind redigiert (oder ich habe keine beigefügt).
+          required: true
