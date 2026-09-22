@@ -21,7 +21,7 @@ defaults:
 jobs:
   test-and-validate:
     name: Test & syntax checks
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux]
     timeout-minutes: 10
     steps:
       - name: Checkout

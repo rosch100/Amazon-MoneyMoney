@@ -23,7 +23,7 @@ concurrency:
 jobs:
   actionlint:
     name: Check workflows
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux]
     timeout-minutes: 5
     steps:
       - name: Checkout
