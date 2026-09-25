@@ -33,7 +33,7 @@ permissions:
 jobs:
   forward:
     name: Forward to Issue-Dev inbox / Grok
-    runs-on: [self-hosted, linux]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     if: github.event.repository.fork == false
     steps:

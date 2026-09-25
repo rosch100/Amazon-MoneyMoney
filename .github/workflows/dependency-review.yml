@@ -16,7 +16,7 @@ concurrency:
 jobs:
   dependency-review:
     name: Review dependencies
-    runs-on: [self-hosted, linux]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     permissions:
       contents: read

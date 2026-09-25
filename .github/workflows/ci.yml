@@ -21,7 +21,7 @@ defaults:
 jobs:
   test-and-validate:
     name: Test & syntax checks
-    runs-on: [self-hosted, linux]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     steps:
       - name: Checkout

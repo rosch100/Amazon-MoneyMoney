@@ -23,7 +23,7 @@ concurrency:
 jobs:
   actionlint:
     name: Check workflows
-    runs-on: [self-hosted, linux]
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '["ubuntu-latest"]') }}
     timeout-minutes: 5
     steps:
       - name: Checkout
