@@ -1056,10 +1056,10 @@ local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters). To mark this as an
 -- unofficial build the "(beta)" tag is added to the description instead.
-WebBanking{version  = 2.00,
+WebBanking{version  = 2.01,
   url         = baseurl,
   services    = const.services,
-  description = const.description.." (beta v2.00)"}
+  description = const.description.." (beta v2.01)"}
 
 function debugBuffer.tablePrint(tbl)
   local t={}
