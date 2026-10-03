@@ -72,7 +72,7 @@ assert(type(result) == "table")
 assert(env.lastDetailsSessionKind == "business", "details fetch must switch to business session")
 assert(#detailsFetched == 1, "business refresh must fetch only business order details, got " .. #detailsFetched)
 assert(detailsFetched[1] == "303-business-1", "expected business order, got " .. tostring(detailsFetched[1]))
-assert(#result.transactions == 2, "business mixed account emits purchase + Ausgleich, got " .. #result.transactions)
+assert(#result.transactions == 1, "business mixed account emits only the purchase, got " .. #result.transactions)
 
 detailsFetched = {}
 env.lastDetailsSessionKind = nil
@@ -81,6 +81,6 @@ local personalResult = env.RefreshAccount(personalAccount, now - (30 * 24 * 60 *
 assert(env.lastDetailsSessionKind == "personal", "details fetch must switch to personal session")
 assert(#detailsFetched == 1, "personal refresh must fetch only personal order details, got " .. #detailsFetched)
 assert(detailsFetched[1] == "303-personal-1", "expected personal order, got " .. tostring(detailsFetched[1]))
-assert(#personalResult.transactions == 2, "personal mixed account emits purchase + Ausgleich")
+assert(#personalResult.transactions == 1, "personal mixed account emits only the purchase")
 
 print("test_initial_sync_cross_account_details OK")

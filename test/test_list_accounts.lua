@@ -25,6 +25,8 @@ assert(onlyShared[1].attributes.blacklistOrders == "")
 assert(onlyShared[1].attributes.rescanOrder == "")
 assert(onlyShared[1].attributes.keepStorno == "false", "ListAccounts must pre-fill default values for MM note UI")
 assert(onlyShared[1].attributes.nameMaxLength == "0", "title line is untruncated by default")
+assert(onlyShared[1].attributes.resyncDeletedTransactions == "",
+  "explicit replay token must be available in account notes")
 
 env.LocalStorage.discoveredSubAccounts = {
   { kind = "personal", accountNumber = "", customerName = "Incomplete" },

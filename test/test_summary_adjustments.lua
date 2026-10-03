@@ -51,6 +51,25 @@ local function findByName(txs, name)
   return nil
 end
 
+local function findByNameContaining(txs, text)
+  for _, tx in ipairs(txs) do
+    if (tx.name or ""):find(text, 1, true) then
+      return tx
+    end
+  end
+  return nil
+end
+
+local function countByNameContaining(txs, text)
+  local count = 0
+  for _, tx in ipairs(txs) do
+    if (tx.name or ""):find(text, 1, true) then
+      count = count + 1
+    end
+  end
+  return count
+end
+
 ------------------------------------------------------------------ CANCEL
 print("== unbilled cancellation is not booked ==")
 do
@@ -256,6 +275,171 @@ do
   end
   assert(mask ~= nil and math.abs(mask.amount - (-22.49)) < 0.001, "mask 22,49 incl. USt")
   assert(glasses ~= nil and math.abs(glasses.amount - (-45.33)) < 0.001, "glasses 45,33 incl. USt")
+end
+
+------------------------------------------------------------------ SHIPPING VOUCHER OFFSET
+print("== match shipping voucher by net/gross amount, retain unrelated voucher ==")
+do
+  local order = parseHtml([[
+<div id="orderDetails">
+  <div data-component="orderDate">29. September 2026</div>
+  <div class="a-fixed-left-grid-inner">
+    <div data-component="purchasedItemsRightGrid">
+      <div data-component="itemTitle">Prime-Bestellung</div>
+      <div data-component="unitPrice"><span class="a-offscreen">EUR 19,99</span></div>
+    </div>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Verpackung &amp; Versand:</span>
+    <span class="od-line-item-row-content">EUR 3,35</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Verpackung:</span>
+    <span class="od-line-item-row-content">EUR 1,25</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Geschenkverpackung:</span>
+    <span class="od-line-item-row-content">EUR 2,00</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Versand:</span>
+    <span class="od-line-item-row-content">EUR 2,10</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Gutschein eingelöst:</span>
+    <span class="od-line-item-row-content">EUR 3,99</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Gutschein eingelöst:</span>
+    <span class="od-line-item-row-content">EUR 2,36</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Werbeaktion:</span>
+    <span class="od-line-item-row-content">-EUR 1,00</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label a-text-bold">Gesamtsumme:</span>
+    <span class="od-line-item-row-content a-text-bold">EUR 20,99</span>
+  </div>
+</div>
+]])
+  order.orderCode = "303-8797934-4603536"
+  local extras = env.resolvedSummaryExtras(order)
+  local extrasDebug = {}
+  for _, extra in ipairs(extras) do
+    extrasDebug[#extrasDebug + 1] = extra.name .. "=" .. tostring(extra.amount)
+  end
+  assert(#extras == 5,
+    "remove only the 3,35 € shipping / 3,99 € voucher pair: " .. table.concat(extrasDebug, " | "))
+  local txs = emitMix(order)
+  assert(#txs == 6, "item and remaining summary extras remain, got " .. names(txs))
+  assert(findByName(txs, "Geschenkverpackung") ~= nil, "gift wrap stays bookable")
+  assert(countByNameContaining(txs, "Gutschein eingel") == 1,
+    "unmatched cart-wide voucher stays bookable: " .. names(txs))
+  assert(findByName(txs, "Verpackung & Versand") == nil,
+    "matched shipping summary is omitted")
+  assert(findByName(txs, "Versand") ~= nil, "unmatched shipping stays bookable")
+  assert(findByName(txs, "Werbeaktion") ~= nil, "unrelated promotion stays bookable")
+
+  order.orderCode = nil
+  assert(#env.resolvedSummaryExtras(order) == 7,
+    "without an order reference, do not infer a shipping offset")
+
+  order.orderCode = "303-8797934-4603536"
+  order.returnActivity = true
+  assert(#env.resolvedSummaryExtras(order) == 7,
+    "return activity disables inferred shipping-offset matching")
+end
+
+------------------------------------------------------------------ VAT-ADJUSTED SHIPPING OFFSET
+print("== VAT-inclusive shipping offset is removed without hiding other cart vouchers ==")
+do
+  assert(env.shippingVoucherAmountsMatch(335, -399),
+    "3,35 € net shipping must match 3,99 € gross voucher at 19% VAT")
+  assert(env.shippingVoucherAmountsMatch(399, -335),
+    "3,99 € gross shipping must match 3,35 € net voucher at 19% VAT")
+  assert(not env.shippingVoucherAmountsMatch(335, -395),
+    "do not match an unrelated voucher amount to an arbitrary VAT percentage")
+
+  local order = parseHtml([[
+<div id="orderDetails">
+  <div data-component="orderDate">29. September 2026</div>
+  <div class="a-fixed-left-grid-inner">
+    <div data-component="purchasedItemsRightGrid">
+      <div data-component="itemTitle">Artikel im Warenkorb</div>
+      <div data-component="unitPrice"><span class="a-offscreen">EUR 19,99</span></div>
+    </div>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Verpackung &amp; Versand:</span>
+    <span class="od-line-item-row-content">EUR 3,35</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Aktionsrabatt:</span>
+    <span class="od-line-item-row-content">-EUR 3,99</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Gutschein eingelöst:</span>
+    <span class="od-line-item-row-content">EUR 2,00</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label a-text-bold">Gesamtsumme:</span>
+    <span class="od-line-item-row-content a-text-bold">EUR 17,34</span>
+  </div>
+</div>
+]])
+  order.orderCode = "303-8797934-4603536"
+  local extras = env.resolvedSummaryExtras(order)
+  assert(#extras == 1 and extras[1].amount == -200,
+    "remove only shipping 3,35 € + its 3,99 € VAT-inclusive voucher; keep unrelated voucher")
+  assert(countByNameContaining(extras, "Gutschein eingel") == 1,
+    "unmatched cart-wide voucher must remain bookable: " .. names(extras))
+  local txs = emitMix(order)
+  assert(findByName(txs, "Verpackung & Versand") == nil,
+    "Amazon-covered shipping must not be emitted: " .. names(txs))
+  assert(findByName(txs, "Aktionsrabatt") == nil,
+    "Amazon shipping-offset discount must not be emitted: " .. names(txs))
+  assert(findByNameContaining(txs, "Gutschein eingel") ~= nil,
+    "unrelated cart-wide voucher remains emitted: " .. names(txs))
+end
+
+------------------------------------------------------------------ ZERO-SHIPPING CART-WIDE VOUCHER
+print("== zero-cost shipping does not suppress a genuine cart-wide voucher ==")
+do
+  local order = parseHtml([[
+<div id="orderDetails">
+  <div data-component="orderDate">5. September 2026</div>
+  <div class="a-fixed-left-grid-inner">
+    <div data-component="purchasedItemsRightGrid">
+      <div data-component="itemTitle">Separat versendeter Prime-Artikel</div>
+      <div data-component="unitPrice"><span class="a-offscreen">EUR 87,88</span></div>
+    </div>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Verpackung &amp; Versand:</span>
+    <span class="od-line-item-row-content">EUR 0,00</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label">Gutschein eingelöst:</span>
+    <span class="od-line-item-row-content">EUR 3,00</span>
+  </div>
+  <div class="od-line-item-row">
+    <span class="od-line-item-row-label a-text-bold">Gesamtsumme:</span>
+    <span class="od-line-item-row-content a-text-bold">EUR 84,88</span>
+  </div>
+</div>
+]])
+  order.orderCode = "302-2190635-6673910"
+  local extras = env.resolvedSummaryExtras(order)
+  assert(#extras == 1 and extras[1].name:find("Gutschein", 1, true)
+      and extras[1].amount == -300,
+    "real 3,00 € cart-wide voucher remains an order extra: "
+      .. tostring(extras[1] and extras[1].name) .. ", "
+      .. tostring(extras[1] and extras[1].amount))
+  local txs = emitMix(order)
+  local voucher = findByNameContaining(txs, "Gutschein eingel")
+  assert(voucher ~= nil and math.abs(voucher.amount - 3.00) < 0.001,
+    "cart-wide voucher must be emitted as a 3,00 € credit: " .. names(txs))
 end
 
 ------------------------------------------------------------------ CACHE FALLBACK
