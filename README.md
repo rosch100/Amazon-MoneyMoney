@@ -45,13 +45,18 @@ Den Zugang mehrfach aktualisieren, bis nichts Offenes mehr gemeldet wird. Der
 erste vollständige Import kann mehrere Aktualisierungen brauchen.
 
 Die Bestellnummer steht unter **Referenz**, nicht in der Titelzeile. Käufe,
-Erstattungen und Rückgaben erscheinen als Umsätze; **Amazon Ausgleich** hält
-den Saldo bei 0.
+Erstattungen und Rückgaben erscheinen als Umsätze. Wenn eine negative
+Gutschein- oder Aktionsrabatt-Gutschrift einer positiven Versandposition
+derselben Bestellung betragsgleich netto oder brutto (bei 19 % MwSt.)
+entspricht, werden beide als von Amazon übernommene Versandkosten unterdrückt.
+Nicht passende Warenkorb-Gutscheine bleiben erhalten. Der synthetische
+**Amazon Ausgleich** ist derzeit deaktiviert.
 
-Optionale Feineinstellungen liegen in den Kontonotizen (z. B. Cache neu
-einlesen). Details:
-[Amazon — Einstellungen und Verhalten](https://github.com/rosch100/moneymoney-extensions/blob/main/docs/LUA-EXTENSIONS.md#amazon--einstellungen-und-verhalten)
-im Hub.
+Alle Konto-Notizen und erweiterten Optionen (`resetCache`, `blacklistOrders`,
+`rescanOrder`, `keepStorno`, `nameMaxLength`, `resyncDeletedTransactions`,
+`limitOrders`, `scanFiltersMonths`, `cookieLanguage`, `orderDetailsUrl`) mit
+Defaults und Verwendung sind unter [Amazon — Einstellungen und Verhalten](https://github.com/rosch100/moneymoney-extensions/blob/main/docs/LUA-EXTENSIONS.md#amazon--einstellungen-und-verhalten)
+dokumentiert.
 
 ## Fehler & Ideen
 

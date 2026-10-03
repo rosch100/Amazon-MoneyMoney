@@ -11,6 +11,7 @@ assert(env.isSupportedAccountAttributeKey("keepStorno") == true)
 assert(env.isSupportedAccountAttributeKey("nameMaxLength") == true)
 assert(env.isSupportedAccountAttributeKey("stornoAnzeigen") == false)
 assert(env.isSupportedAccountAttributeKey("resetCache") == true)
+assert(env.isSupportedAccountAttributeKey("resyncDeletedTransactions") == true)
 assert(env.isSupportedAccountAttributeKey("limitOrders") == true)
 assert(env.isSupportedAccountAttributeKey("debug") == false)
 

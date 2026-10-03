@@ -201,6 +201,7 @@ local config={
   blacklistOrders='',
   keepStorno=false,
   nameMaxLength=0,
+  resyncDeletedTransactions='',
 }
 
 local daySeconds=24*60*60
@@ -327,6 +328,7 @@ local accountOptionKeys={
   'rescanOrder',
   'keepStorno',
   'nameMaxLength',
+  'resyncDeletedTransactions',
 }
 
 -- Supported in notes but not pre-filled in ListAccounts.
@@ -376,7 +378,7 @@ end
 
 function accountAttributeDefaultValue(key)
   local canonical=canonicalAccountAttributeKey(key) or key
-  if canonical == 'resetCache' then
+  if canonical == 'resetCache' or canonical == 'resyncDeletedTransactions' then
     return ''
   end
   if type(config[canonical]) == 'boolean' then
@@ -586,6 +588,104 @@ function markOrderEmittedForAccount(owner, accountNumber)
   owner.emittedAccounts[emitAccountKey(accountNumber)]=true
 end
 
+function clearOrderEmissionForAccount(order, accountNumber)
+  local key=emitAccountKey(accountNumber)
+  local function clear(owner)
+    if type(owner) ~= 'table' or type(owner.emittedAccounts) ~= 'table' then
+      return
+    end
+    owner.emittedAccounts[key]=nil
+    if next(owner.emittedAccounts) == nil then
+      owner.emittedAccounts=nil
+    end
+  end
+  clear(order)
+  forEachAdjustmentLeaf(order, function(leaf)
+    clear(leaf)
+  end)
+end
+
+function copyAccountTransaction(transaction)
+  local copy={}
+  for key,value in pairs(transaction) do
+    copy[key]=value
+  end
+  return copy
+end
+
+function cachedOrderTransactionsForAccount(order, accountNumber)
+  if type(order) ~= 'table' or type(order.emittedTransactionsByAccount) ~= 'table' then
+    return nil
+  end
+  return order.emittedTransactionsByAccount[emitAccountKey(accountNumber)]
+end
+
+function orderHasEmittedTransactionsForAccount(order, accountNumber)
+  if isOrderEmittedForAccount(order, accountNumber) then
+    return true
+  end
+  local emitted=false
+  forEachAdjustmentLeaf(order, function(leaf)
+    if isOrderEmittedForAccount(leaf, accountNumber) then
+      emitted=true
+    end
+  end)
+  return emitted or type(cachedOrderTransactionsForAccount(order, accountNumber)) == 'table'
+end
+
+function appendCachedOrderTransactions(transactions, order, accountNumber)
+  local entries=cachedOrderTransactionsForAccount(order, accountNumber)
+  if type(entries) ~= 'table' then
+    return false
+  end
+  for _,transaction in ipairs(entries) do
+    table.insert(transactions, copyAccountTransaction(transaction))
+  end
+  return true
+end
+
+function accountTransactionsEqual(left, right)
+  for key,value in pairs(left) do
+    if right[key] ~= value then
+      return false
+    end
+  end
+  for key,value in pairs(right) do
+    if left[key] ~= value then
+      return false
+    end
+  end
+  return true
+end
+
+function rememberOrderTransactions(order, accountNumber, transactions, firstIndex, replace)
+  if #transactions < firstIndex then
+    return
+  end
+  if type(order.emittedTransactionsByAccount) ~= 'table' then
+    order.emittedTransactionsByAccount={}
+  end
+  local key=emitAccountKey(accountNumber)
+  local entries=order.emittedTransactionsByAccount[key]
+  if replace or type(entries) ~= 'table' then
+    entries={}
+    order.emittedTransactionsByAccount[key]=entries
+  end
+  for index=firstIndex,#transactions do
+    local transaction=transactions[index]
+    local alreadyStored=false
+    for _,stored in ipairs(entries) do
+      if accountTransactionsEqual(stored, transaction) then
+        alreadyStored=true
+        break
+      end
+    end
+    if not alreadyStored then
+      entries[#entries+1]=copyAccountTransaction(transaction)
+    end
+  end
+end
+
 --- @function clearOrderEmittedFlags
 -- Clears emit tracking. keepDetailsParsed=true keeps a successful detailsParsed marker
 -- (used when positions appear after an empty prior parse).
@@ -594,6 +694,7 @@ function clearOrderEmittedFlags(order, keepDetailsParsed)
     return
   end
   order.emittedAccounts=nil
+  order.emittedTransactionsByAccount=nil
   if not keepDetailsParsed then
     order.detailsParsed=nil
   end
@@ -876,6 +977,30 @@ function forEachAdjustmentLeaf(order, fn)
   forEachRefundLeaf(order, fn)
   forEachReturnLeaf(order, fn)
 end
+
+function resyncDeletedTransactionsForAccount(accountNumber, token)
+  if type(token) ~= 'string' or token == '' or type(LocalStorage) ~= 'table' then
+    return false
+  end
+  local accountKey=emitAccountKey(accountNumber)
+  local tokens=LocalStorage.deletedTransactionResyncTokens
+  if type(tokens) == 'table' and tokens[accountKey] == token then
+    return false
+  end
+  MM.printStatus("Amazon: Umsätze aus lokalem Cache werden erneut synchronisiert…")
+  return true
+end
+
+function markDeletedTransactionResyncToken(accountNumber, token)
+  if type(token) ~= 'string' or token == '' or type(LocalStorage) ~= 'table' then
+    return
+  end
+  if type(LocalStorage.deletedTransactionResyncTokens) ~= 'table' then
+    LocalStorage.deletedTransactionResyncTokens={}
+  end
+  LocalStorage.deletedTransactionResyncTokens[emitAccountKey(accountNumber)]=token
+end
+
 
 if LocalStorage ~=nil then
   if applyImportSchemaUpgrade() then
@@ -2103,16 +2228,32 @@ function emitPurchaseLines(ctx, order, orderCode)
 end
 
 function appendOrderToRefresh(ctx, order, orderCode)
+  local firstTransactionIndex=#ctx.transactions+1
+  local isResync=ctx.resyncDeletedTransactions == true
+  local snapshotUsed=isResync
+    and appendCachedOrderTransactions(ctx.transactions, order, ctx.accountNumber)
+  if snapshotUsed then
+    return
+  end
+  local hasEmittedTransactions=orderHasEmittedTransactionsForAccount(order, ctx.accountNumber)
+  if isResync and hasEmittedTransactions then
+    clearOrderEmissionForAccount(order, ctx.accountNumber)
+  end
   if shouldOmitReversedPair(order, ctx.accountNumber) then
     markReversedPairOmitted(order, ctx.accountNumber)
     return
   end
-  local report=not isOrderEmittedForAccount(order, ctx.accountNumber)
-    and orderDetailsCompleteForEmit(order, ctx.now, ctx.accountNumber)
+  local report=(isResync and hasEmittedTransactions)
+    or (not isResync and not isOrderEmittedForAccount(order, ctx.accountNumber))
+  report=report and orderDetailsCompleteForEmit(order, ctx.now, ctx.accountNumber)
   if report then
     emitPurchaseLines(ctx, order, orderCode)
   end
   emitOrderAdjustments(ctx, order, orderCode, report)
+  if #ctx.transactions >= firstTransactionIndex then
+    rememberOrderTransactions(
+      order, ctx.accountNumber, ctx.transactions, firstTransactionIndex, isResync)
+  end
 end
 
 function makeAccountTransaction(order, orderCode, name, amount, bookingDate, purpose)
@@ -2328,6 +2469,72 @@ function getSummaryExtrasFromDetails(orderDetails)
   return extras
 end
 
+--- Match equal net/gross shipping and voucher values at 19% VAT.
+-- Amazon's summary omits the tax rate; round converted values to invoice cents.
+function shippingVoucherAmountsMatch(shippingCents, voucherCents)
+  if type(shippingCents) ~= 'number' or type(voucherCents) ~= 'number'
+      or shippingCents <= 0 or voucherCents >= 0 then
+    return false
+  end
+  local voucherValue=math.abs(voucherCents)
+  if voucherValue == shippingCents then
+    return true
+  end
+  local shippingGross=math.floor((shippingCents*119+50)/100)
+  local voucherGross=math.floor((voucherValue*119+50)/100)
+  return voucherValue == shippingGross or shippingCents == voucherGross
+end
+
+--- Remove only shipping and its matching voucher, not unrelated cart-wide discounts.
+function omitAmazonCoveredShipping(order, extras)
+  if type(order) ~= 'table' or type(order.orderCode) ~= 'string'
+      or order.orderCode == '' or orderHasReturnActivity(order) then
+    return extras
+  end
+  local shippingIndices={}
+  local voucherIndices={}
+  for index, extra in ipairs(extras) do
+    local name=extra.name or ''
+    local isGiftPackaging=name:find('Geschenk', 1, true) ~= nil
+      or name:find('[Gg]ift') ~= nil
+    local isShipping=not isGiftPackaging and (
+      name:find('Versand', 1, true) ~= nil
+      or name:find('[Ss]hipping') ~= nil)
+    if isShipping and extra.amount > 0 then
+      shippingIndices[#shippingIndices+1]=index
+    elseif ((name:find('Gutschein', 1, true) and name:find('eingel', 1, true))
+        or name:find('Aktionsrabatt', 1, true)) and extra.amount < 0 then
+      voucherIndices[#voucherIndices+1]=index
+    end
+  end
+  local omitted={}
+  local matchedShippings={}
+  local matchedVouchers={}
+  for _, shippingIndex in ipairs(shippingIndices) do
+    local shipping=extras[shippingIndex]
+    for _, voucherIndex in ipairs(voucherIndices) do
+      if not matchedShippings[shippingIndex] and not matchedVouchers[voucherIndex]
+          and shippingVoucherAmountsMatch(shipping.amount, extras[voucherIndex].amount) then
+        omitted[shippingIndex]=true
+        omitted[voucherIndex]=true
+        matchedShippings[shippingIndex]=true
+        matchedVouchers[voucherIndex]=true
+        break
+      end
+    end
+  end
+  if next(omitted) == nil then
+    return extras
+  end
+  local filtered={}
+  for index, extra in ipairs(extras) do
+    if not omitted[index] then
+      filtered[#filtered+1]=extra
+    end
+  end
+  return filtered
+end
+
 --- @function resolvedSummaryExtras
 -- Named extras (shipping, coupon, …). VAT and leftover are not booked.
 function resolvedSummaryExtras(order)
@@ -2341,6 +2548,7 @@ function resolvedSummaryExtras(order)
       end
     end
   end
+  extras=omitAmazonCoveredShipping(order, extras)
   local leftover=0
   if type(order) == 'table' then
     local orderSum=tonumber(order.orderSum)
@@ -7456,6 +7664,7 @@ function RefreshAccount (account, since)
 
   config.keepStorno=false
   config.nameMaxLength=0
+  config.resyncDeletedTransactions=''
   if type(account.attributes) == 'table' then
     LocalStorage.patcher={}
     for k,v in pairs(account.attributes) do
@@ -7482,6 +7691,8 @@ function RefreshAccount (account, since)
 
   ensureOrderCache()
   orderBlacklist=loadOrderBlacklistFromConfig()
+  local resyncDeletedTransactions=resyncDeletedTransactionsForAccount(
+    account.accountNumber, config.resyncDeletedTransactions)
 
   local divisor=refreshAccountLedgerProfile(account.accountNumber).divisor
 
@@ -7566,17 +7777,21 @@ function RefreshAccount (account, since)
   local ctx={
     transactions=transactions,
     accountNumber=account.accountNumber,
+    resyncDeletedTransactions=resyncDeletedTransactions,
     divisor=divisor,
     now=now,
     balance=0,
   }
   for orderCode,order in pairs(LocalStorage.OrderCache) do
     if not orderBlacklist[orderCode] and orderMatchesMoneyMoneyAccount(order, ctx.accountNumber) then
-      appendOrderToRefresh(ctx, order, orderCode)
+      if not resyncDeletedTransactions
+          or orderHasEmittedTransactionsForAccount(order, ctx.accountNumber) then
+        appendOrderToRefresh(ctx, order, orderCode)
+      end
     end
   end
 
-  addMixFloatingBalance(transactions, ctx.accountNumber, refreshSince, now, divisor)
+  -- Amazon Ausgleich temporarily disabled.
 
   if config.debug then
     RegressionTest.run(transactions,account.accountNumber)
@@ -7602,6 +7817,14 @@ function RefreshAccount (account, since)
 
   appendIncompleteHarvestDummy(transactions, account.accountNumber, now, harvest, detailsFetchState)
   sortTransactionsNewestFirst(transactions)
+  local resyncComplete=scanErr == nil
+    and (not harvest or scanComplete)
+    and not detailsFetchWasTruncated(detailsFetchState)
+    and not detailsFetchFailed(detailsFetchState)
+  if resyncDeletedTransactions and resyncComplete then
+    markDeletedTransactionResyncToken(
+      account.accountNumber, config.resyncDeletedTransactions)
+  end
 
   return {balance=ctx.balance/divisor, transactions=transactions}
 end
