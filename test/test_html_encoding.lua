@@ -30,6 +30,30 @@ local legacyTitle = legacy.connectShop("GET", "/gp/css/summary/edit.html"):xpath
 assert(legacyTitle == "Früher",
   "windows-1252 order HTML must keep umlauts, got bytes " .. tostring(legacyTitle))
 
+-- 2015 order HTML is UTF-8, but the declared charset is ISO-8859-1 and a stray
+-- byte makes the document invalid UTF-8. Decoding the whole page as Latin-1
+-- turns Wärme into W + U+00C3 + U+00A4.
+local function utf8cp(cp)
+  return string.char(0xC0 + math.floor(cp / 64), 0x80 + (cp % 64))
+end
+local mixed = mm.loadPlugin("amazon-bestellungen.lua")
+local mixedRaw = "<html><head><meta charset=\"iso-8859-1\"></head><body>"
+  .. "<div data-component=\"itemTitle\">Medisana HUB Wärmeunterbett, weiß</div>"
+  .. "\255</body></html>"
+mixed.connectShopRaw = function()
+  return mixedRaw, "ISO-8859-1"
+end
+local mixedTitle = mixed.connectShop("GET", "/your-orders/order-details")
+  :xpath('//*[@data-component="itemTitle"]'):text()
+assert(mixedTitle == "Medisana HUB Wärmeunterbett, weiß",
+  "UTF-8 title must not be read as ISO-8859-1, got: " .. tostring(mixedTitle))
+
+local mojibake = "Medisana HUB W" .. utf8cp(0xC3) .. utf8cp(0xA4)
+  .. "rmeunterbett, wei" .. utf8cp(0xC3) .. utf8cp(0x9F)
+assert(env.encodeFormText(mojibake) == "Medisana HUB Wärmeunterbett, weiß",
+  "already misread 2015 titles must be repaired, got: " .. tostring(env.encodeFormText(mojibake)))
+assert(env.encodeFormText("Das Beste Von Kurz Nach Früher") == "Das Beste Von Kurz Nach Früher")
+
 local now = 1700000000
 env.secUsername = "user@example.com"
 local damaged = {

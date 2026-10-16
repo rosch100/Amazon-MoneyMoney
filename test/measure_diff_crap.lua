@@ -51,6 +51,13 @@ local targets = {
   "textHasBrokenAmazonEncoding",
   "tableHasBrokenAmazonEncoding",
   "orderTextHasBrokenEncoding",
+  "amazonHtmlHasUtf8Multibyte",
+  "utf8Codepoint",
+  "utf8CodepointFromBytes",
+  "mojibakeTrailCount",
+  "takeMojibakeSequence",
+  "repairLatin1Utf8Mojibake",
+  "startFullHistoryReimport",
 }
 
 local function extractFunction(name)

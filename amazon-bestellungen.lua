@@ -516,6 +516,19 @@ function resetImportState(requireFullReimport)
   end
 end
 
+--- After resetCache: MoneyMoney's since still covers only the latest refresh.
+-- Without a full-history sync the next pass harvests that window again and
+-- never reloads deleted orders from earlier years.
+function startFullHistoryReimport()
+  resetImportState(false)
+  if LocalStorage == nil then
+    return
+  end
+  LocalStorage.pendingInitialSync=true
+  LocalStorage.initialSyncHarvestDone=nil
+  LocalStorage.initialSyncRefreshedAccounts=nil
+end
+
 --- @function applyImportSchemaUpgrade
 -- Older or missing cacheVersion with any import state → wipe and require full reimport.
 function applyImportSchemaUpgrade()
@@ -1056,10 +1069,10 @@ local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters). To mark this as an
 -- unofficial build the "(beta)" tag is added to the description instead.
-WebBanking{version  = 2.02,
+WebBanking{version  = 2.04,
   url         = baseurl,
   services    = const.services,
-  description = const.description.." (beta v2.02)"}
+  description = const.description.." (beta v2.04)"}
 
 function debugBuffer.tablePrint(tbl)
   local t={}
@@ -1138,10 +1151,12 @@ function reportedCharsetIsLegacy(reported)
   return lower ~= 'utf-8' and lower ~= 'utf8'
 end
 
---- Valid UTF-8 stays UTF-8 even when Amazon still sends a stale windows-1252 hint.
--- Bytes that are not UTF-8 are the pre-2016 order pages (windows-1252 / ISO-8859-1).
+--- UTF-8 wins when the body contains real UTF-8 sequences, even if a meta
+-- charset says ISO-8859-1. Otherwise 2015 titles like Wärme become WÃ¤rme.
+-- windows-1252 is only for pages whose high bytes are not UTF-8 at all.
 function amazonHtmlCharset(content, reported)
-  if type(content) == 'string' and isValidUtf8(content) then
+  if type(content) == 'string'
+      and (isValidUtf8(content) or amazonHtmlHasUtf8Multibyte(content)) then
     return 'UTF-8'
   end
   if reportedCharsetIsLegacy(reported) then
@@ -1602,6 +1617,102 @@ function truncateUtf8(text, maxChars)
   return text
 end
 
+function amazonHtmlHasUtf8Multibyte(content)
+  if type(content) ~= 'string' then
+    return false
+  end
+  local i=1
+  while i <= #content do
+    local len=utf8CharLen(content, i)
+    if len ~= nil and len > 1 then
+      return true
+    end
+    i=i+(len or 1)
+  end
+  return false
+end
+
+function utf8Codepoint(text, i)
+  local len=utf8CharLen(text, i)
+  if len == nil then
+    return nil, 1
+  end
+  if len == 1 then
+    return text:byte(i), 1
+  end
+  return utf8CodepointFromBytes(text, i, len), len
+end
+
+function utf8CodepointFromBytes(text, i, len)
+  local b1=text:byte(i)
+  if len == 2 then
+    return (b1 - 0xC0) * 64 + (text:byte(i+1) - 0x80)
+  end
+  if len == 3 then
+    return (b1 - 0xE0) * 4096 + (text:byte(i+1) - 0x80) * 64 + (text:byte(i+2) - 0x80)
+  end
+  return (b1 - 0xF0) * 262144 + (text:byte(i+1) - 0x80) * 4096
+    + (text:byte(i+2) - 0x80) * 64 + (text:byte(i+3) - 0x80)
+end
+
+function mojibakeTrailCount(lead)
+  if lead >= 0xC2 and lead <= 0xDF then
+    return 1
+  end
+  if lead >= 0xE0 and lead <= 0xEF then
+    return 2
+  end
+  if lead >= 0xF0 and lead <= 0xF4 then
+    return 3
+  end
+  return nil
+end
+
+function takeMojibakeSequence(text, i)
+  local cp, len=utf8Codepoint(text, i)
+  local need=cp and mojibakeTrailCount(cp) or nil
+  if need == nil then
+    return nil
+  end
+  local pos=i+len
+  local bytes={string.char(cp)}
+  for _=1,need do
+    local cont, contLen=utf8Codepoint(text, pos)
+    if cont == nil or cont < 0x80 or cont > 0xBF then
+      return nil
+    end
+    bytes[#bytes+1]=string.char(cont)
+    pos=pos+contLen
+  end
+  return table.concat(bytes), pos
+end
+
+--- ISO-8859-1 reading of UTF-8 bytes: Wärme → U+00C3 U+00A4, weiß → U+00C3 U+009F.
+function repairLatin1Utf8Mojibake(text)
+  if type(text) ~= 'string' or text == '' or not isValidUtf8(text) then
+    return text
+  end
+  local parts={}
+  local i=1
+  local changed=false
+  while i <= #text do
+    local seq, nextI=takeMojibakeSequence(text, i)
+    if seq ~= nil then
+      parts[#parts+1]=seq
+      i=nextI
+      changed=true
+    else
+      local _, len=utf8Codepoint(text, i)
+      parts[#parts+1]=text:sub(i, i+len-1)
+      i=i+len
+    end
+  end
+  if not changed then
+    return text
+  end
+  return table.concat(parts)
+end
+
 function isValidUtf8(text)
   if type(text) ~= 'string' then
     return false
@@ -1627,10 +1738,14 @@ end
 -- mandateReference = Zahlungsart,
 -- accountNumber = Amazon-Unterkonto.
 function encodeFormText(text)
-  if not isValidUtf8(text) then
+  if type(text) ~= 'string' then
     error('MoneyMoney transaction text must be a UTF-8 string')
   end
-  return text
+  local repaired=repairLatin1Utf8Mojibake(text)
+  if not isValidUtf8(repaired) then
+    error('MoneyMoney transaction text must be a UTF-8 string')
+  end
+  return repaired
 end
 
 function sortTransactionsNewestFirst(transactions)
@@ -7777,9 +7892,9 @@ function RefreshAccount (account, since)
           LocalStorage.patcher[canonical]=v
           applyAccountAttribute(k, v, true)
           if canonical == 'resetCache' and v ~= '' and v ~= LocalStorage.resetCache then
-            resetImportState(false)
+            startFullHistoryReimport()
             LocalStorage.resetCache=v
-            MM.printStatus("Amazon: Cache zurückgesetzt – Bestellungen werden neu geladen…")
+            MM.printStatus("Amazon: Cache zurückgesetzt – gesamte Bestellhistorie wird neu geladen…")
           end
         end
       end

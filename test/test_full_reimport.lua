@@ -130,4 +130,20 @@ for _, tx in ipairs(released.transactions) do
 end
 assert(n == 1, "after resetCache the clean cache must emit")
 
+-- A new resetCache token must ignore MoneyMoney's recent since and reload all years.
+env.LocalStorage = {
+  cacheVersion = 23,
+  resetCache = "old-token",
+  OrderCache = {
+    ["303-2015"] = { orderCode = "303-2015", bookingDate = os.time({ year = 2015, month = 6, day = 1 }) },
+  },
+  pendingInitialSync = nil,
+  lastHarvestSince = os.time(),
+}
+env.startFullHistoryReimport()
+assert(env.LocalStorage.pendingInitialSync == true)
+assert(env.LocalStorage.OrderCache["303-2015"] == nil)
+assert(env.effectiveRefreshSince(os.time() - 86400) == 0,
+  "full history reimport must not stay on MoneyMoney's recent since")
+
 print("test_full_reimport OK")
