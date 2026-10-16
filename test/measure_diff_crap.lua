@@ -46,6 +46,11 @@ local targets = {
   "isAmazonClaimCollectPage",
   "isAmazonPasswordSignInPage",
   "fillAmazonSignInFields",
+  "reportedCharsetIsLegacy",
+  "amazonHtmlCharset",
+  "textHasBrokenAmazonEncoding",
+  "tableHasBrokenAmazonEncoding",
+  "orderTextHasBrokenEncoding",
 }
 
 local function extractFunction(name)

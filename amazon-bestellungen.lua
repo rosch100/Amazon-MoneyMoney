@@ -1130,15 +1130,36 @@ function removeWebCacheLastItem()
   end
 end
 
-function parseAmazonHtml(content)
-  return HTML(content, const.htmlEncoding)
+function reportedCharsetIsLegacy(reported)
+  if type(reported) ~= 'string' or reported == '' then
+    return false
+  end
+  local lower=reported:lower()
+  return lower ~= 'utf-8' and lower ~= 'utf8'
+end
+
+--- Valid UTF-8 stays UTF-8 even when Amazon still sends a stale windows-1252 hint.
+-- Bytes that are not UTF-8 are the pre-2016 order pages (windows-1252 / ISO-8859-1).
+function amazonHtmlCharset(content, reported)
+  if type(content) == 'string' and isValidUtf8(content) then
+    return 'UTF-8'
+  end
+  if reportedCharsetIsLegacy(reported) then
+    return reported
+  end
+  return 'windows-1252'
+end
+
+function parseAmazonHtml(content, reportedCharset)
+  return HTML(content, amazonHtmlCharset(content, reportedCharset))
 end
 
 function connectShop(method, url, postContent, postContentType, headers)
   if method == nil then
     return nil
   end
-  return parseAmazonHtml(connectShopRaw(method, url, postContent, postContentType, headers))
+  local content, charset=connectShopRaw(method, url, postContent, postContentType, headers)
+  return parseAmazonHtml(content, charset)
 end
 
 function connectShopRaw(method, url, postContent, postContentType, headers)
@@ -1397,7 +1418,8 @@ function connectShopWithCheck(method, url, postContent, postContentType, headers
   if method == nil then
     return nil
   end
-  local html=parseAmazonHtml(connectShopRaw(method, url, postContent, postContentType, headers))
+  local content, charset=connectShopRaw(method, url, postContent, postContentType, headers)
+  local html=parseAmazonHtml(content, charset)
   local xpform='//form[@name="signIn"]'
   if html:xpath(xpform):attr("name") ~= '' then
     removeWebCacheLastItem()
@@ -2828,6 +2850,9 @@ function getOrderDetails(order)
     parsed=true
   else
     debugBuffer.print("getOrderDetails no details",order.orderCode)
+  end
+  if html ~= nil then
+    order.encodingRepairDone=true
   end
   debugBuffer.context=''
   return parsed
@@ -6311,14 +6336,60 @@ end
 
 --- @function orderNeedsDetailsForAccount
 -- True when order details are stale and the order belongs to this MoneyMoney account.
+function textHasBrokenAmazonEncoding(text)
+  if type(text) ~= 'string' or text == '' then
+    return false
+  end
+  if not isValidUtf8(text) then
+    return true
+  end
+  return text:find('\239\191\189', 1, true) ~= nil
+end
+
+function tableHasBrokenAmazonEncoding(list)
+  if type(list) ~= 'table' then
+    return false
+  end
+  for _, item in pairs(list) do
+    if type(item) == 'table'
+        and (textHasBrokenAmazonEncoding(item.purpose) or textHasBrokenAmazonEncoding(item.name)) then
+      return true
+    end
+  end
+  return false
+end
+
+function orderTextHasBrokenEncoding(order)
+  if type(order) ~= 'table' or order.encodingRepairDone == true then
+    return false
+  end
+  if textHasBrokenAmazonEncoding(order.shippingAddress)
+      or textHasBrokenAmazonEncoding(order.bookingText)
+      or textHasBrokenAmazonEncoding(order.mandateReference) then
+    return true
+  end
+  for _, key in ipairs({'orderPositions', 'returnedPositions', 'summaryExtras'}) do
+    if tableHasBrokenAmazonEncoding(order[key]) then
+      return true
+    end
+  end
+  return false
+end
+
 function orderNeedsDetailsForAccount(order, now, accountNumber)
   if type(order) ~= 'table' or type(now) ~= 'number' then
     return false
   end
+  if not orderMatchesMoneyMoneyAccount(order, accountNumber) then
+    return false
+  end
+  if orderTextHasBrokenEncoding(order) then
+    return true
+  end
   if type(order.detailsDate) ~= 'number' or not (order.detailsDate < now) then
     return false
   end
-  return orderMatchesMoneyMoneyAccount(order, accountNumber)
+  return true
 end
 
 --- Stable list of orders needing details for one MoneyMoney account (avoids double OrderCache scan).
