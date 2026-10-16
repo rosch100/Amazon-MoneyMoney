@@ -2,7 +2,7 @@
 
 Bestellungen von amazon.de als Umsätze in MoneyMoney.
 
-Version: **2.01**
+Version: **2.04** (Beta; die Versionsnummer in MoneyMoney ist 2.04, der Zusatz steht in der Beschreibung)
 Repository: https://github.com/rosch100/Amazon-MoneyMoney
 Gemeinsame Infos: https://github.com/rosch100/moneymoney-extensions
 
@@ -51,6 +51,21 @@ derselben Bestellung betragsgleich netto oder brutto (bei 19 % MwSt.)
 entspricht, werden beide als von Amazon übernommene Versandkosten unterdrückt.
 Nicht passende Warenkorb-Gutscheine bleiben erhalten. Der synthetische
 **Amazon Ausgleich** ist derzeit deaktiviert.
+
+## Umlaute und gelöschte Umsätze
+
+Eine normale Aktualisierung ändert bereits gebuchte Zeilen nicht. Titel aus
+Bestellungen bis etwa 2015, die als `WÃ¤rme` oder `weiÃŸ` dastehen, werden erst
+beim erneuten Aufbau der Umsatzzeile korrigiert.
+
+Dafür in den Kontonotizen `resetCache` auf einen **neuen** Wert setzen und das
+Konto mehrfach aktualisieren, bis der Hinweis zum Erstimport verschwindet.
+Damit wird die ganze Bestellhistorie neu gelesen, nicht nur der Zeitraum seit
+dem letzten Abruf. Bereits vorhandene Umsätze bleiben; gelöschte kommen wieder
+dazu.
+
+`resyncDeletedTransactions` reicht dafür nicht. Dabei werden die schon
+gespeicherten Texte erneut geschickt.
 
 Alle Konto-Notizen und erweiterten Optionen (`resetCache`, `blacklistOrders`,
 `rescanOrder`, `keepStorno`, `nameMaxLength`, `resyncDeletedTransactions`,
