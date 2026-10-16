@@ -43,6 +43,9 @@ local targets = {
   "completeAkamaiInterstitial",
   "markGetYearFiltersAbandoned",
   "abandonUnreadyGetYearFilters",
+  "isAmazonClaimCollectPage",
+  "isAmazonPasswordSignInPage",
+  "fillAmazonSignInFields",
 }
 
 local function extractFunction(name)
