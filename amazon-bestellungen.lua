@@ -1056,10 +1056,10 @@ local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters). To mark this as an
 -- unofficial build the "(beta)" tag is added to the description instead.
-WebBanking{version  = 2.01,
+WebBanking{version  = 2.02,
   url         = baseurl,
   services    = const.services,
-  description = const.description.." (beta v2.01)"}
+  description = const.description.." (beta v2.02)"}
 
 function debugBuffer.tablePrint(tbl)
   local t={}
@@ -3504,9 +3504,43 @@ function isAmazonAppApprovalPollingPage(htmlNode)
   return htmlNode:xpath('//form[@id="pollingForm"]'):length() > 0
 end
 
+--- Email step of Amazon's claim flow. The password input on this page is the
+-- hidden autofill hint (ap-credential-autofill-hint), not the password step.
+function isAmazonClaimCollectPage(htmlNode)
+  if htmlNode == nil then
+    return false
+  end
+  if htmlNode:xpath('//input[@name="subPageType"]'):attr('value') == 'SignInClaimCollect' then
+    return true
+  end
+  return htmlNode:xpath('//*[@id="ap-credential-autofill-hint"]'):length() > 0
+    and htmlNode:xpath('//*[@id="ap_password"]'):length() == 0
+end
+
 function isAmazonPasswordSignInPage(htmlNode)
-  return htmlNode ~= nil
-    and htmlNode:xpath('//form[contains(@name,"signIn")]//*[@name="password"]'):length() > 0
+  if htmlNode == nil or isAmazonClaimCollectPage(htmlNode) then
+    return false
+  end
+  return htmlNode:xpath('//form[contains(@name,"signIn")]//*[@name="password"]'):length() > 0
+end
+
+--- Claim-collect keeps the autofill password empty. The password page (ap_password) receives it.
+function fillAmazonSignInFields(htmlNode)
+  if htmlNode == nil then
+    return
+  end
+  if type(secUsername) == 'string' and secUsername ~= '' then
+    htmlNode:xpath('//*[@name="email"]'):attr("value", secUsername)
+  end
+  local password=htmlNode:xpath('//*[@name="password"]')
+  if password:length() == 0 or type(secPassword) ~= 'string' then
+    return
+  end
+  if isAmazonClaimCollectPage(htmlNode) then
+    password:attr("value", "")
+  else
+    password:attr("value", secPassword)
+  end
 end
 
 --- Interactive auth walls that are *not* enterable OTP/code (switch blocks / discovery).
@@ -3773,10 +3807,7 @@ function submitSwitchAuthPrompt(htmlNode)
   if form:length() == 0 then
     return nil, "signIn form missing on auth_prompt"
   end
-  if type(secUsername) == 'string' and secUsername ~= '' then
-    htmlNode:xpath('//*[@name="email"]'):attr("value", secUsername)
-  end
-  htmlNode:xpath('//*[@name="password"]'):attr("value", secPassword)
+  fillAmazonSignInFields(htmlNode)
   print("switch auth_prompt: submitting password")
   local nextPage=connectShopForm(form)
   if nextPage == nil then
@@ -7395,10 +7426,10 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         print("force captcha with wrong password")
         html:xpath('//*[@name="email"]'):attr("value", secUsername.."a")
         config.forceCaptcha=false
+        html:xpath('//*[@name="password"]'):attr("value",secPassword)
       else
-        html:xpath('//*[@name="email"]'):attr("value", secUsername)
+        fillAmazonSignInFields(html)
       end
-      html:xpath('//*[@name="password"]'):attr("value",secPassword)
       html= connectShopForm(html:xpath(xpform))
       if html == nil then
         return failMissingLoginPage("Benutzername und Passwort")
