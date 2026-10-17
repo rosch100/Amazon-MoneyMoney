@@ -17,3 +17,5 @@ HAR/
 # Local agent workflow artifacts
 .superpowers/
 .worktrees/
+CLAUDE.md
+/docs/

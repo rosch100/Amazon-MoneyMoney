@@ -67,11 +67,25 @@ dazu.
 `resyncDeletedTransactions` reicht dafür nicht. Dabei werden die schon
 gespeicherten Texte erneut geschickt.
 
-Alle Konto-Notizen und erweiterten Optionen (`resetCache`, `blacklistOrders`,
-`rescanOrder`, `keepStorno`, `nameMaxLength`, `resyncDeletedTransactions`,
-`limitOrders`, `scanFiltersMonths`, `cookieLanguage`, `orderDetailsUrl`) mit
-Defaults und Verwendung sind unter [Amazon — Einstellungen und Verhalten](https://github.com/rosch100/moneymoney-extensions/blob/main/docs/LUA-EXTENSIONS.md#amazon--einstellungen-und-verhalten)
-dokumentiert.
+## Konto-Notizen
+
+Schlüssel/Wert unter **Konto → Einstellungen → Notizen**. Die ersten sechs
+Felder bietet MoneyMoney beim Anlegen an; die vier erweiterten werden nur
+gelesen, wenn sie manuell eingetragen sind. Leere Werte behalten den Standard.
+Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
+
+| Feld | Standard | Wirkung |
+|------|----------|---------|
+| `resetCache` | leer | Import-Cache löschen und die Historie neu aufbauen. Wirkt nur bei einem neuen, nichtleeren Wert. Löscht keine schon importierten Umsätze. |
+| `blacklistOrders` | leer | Bestellnummern (kommagetrennt), die nicht als Umsätze ausgegeben werden. |
+| `rescanOrder` | leer | Eine bekannte Bestellnummer, deren Details bei jedem Abruf neu geladen werden. Danach leeren. |
+| `keepStorno` | `false` | Nur `true`: Buchung und Gegenbuchung bei voller Erstattung/Storno behalten. |
+| `nameMaxLength` | `0` | Maximale Titellänge in Zeichen. `0` = unbegrenzt. |
+| `resyncDeletedTransactions` | leer | Gespeicherte Umsätze dieses Kontos erneut anbieten. Neuer, nichtleerer Wert je Wiederholung. |
+| `limitOrders` | `250` | Obergrenze neuer Bestellungen und Detailseiten pro Abruf. |
+| `scanFiltersMonths` | `0` | Altersfenster der Listenfilter in Monaten. `0` = alle angebotenen Zeiträume. |
+| `cookieLanguage` | leer | Sprachcookie, z. B. `de-DE`. Leer = Sprache der Amazon-Domain. |
+| `orderDetailsUrl` | `/your-orders/order-details?orderID=` | Pfadpräfix der Bestelldetails; Bestellnummer wird angehängt. |
 
 ## Fehler & Ideen
 
