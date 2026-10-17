@@ -102,6 +102,62 @@ function NodeSet:html()
   return h
 end
 
+local function formUrlEncode(value)
+  return (tostring(value or ""):gsub("[^%w%-%.%_%~]", function(ch)
+    return string.format("%%%02X", string.byte(ch))
+  end))
+end
+
+--- MoneyMoney elements:submit: successful controls only.
+-- Disabled inputs and inputs without a name are not request parameters.
+function NodeSet:submit()
+  local form = self._nodes[1]
+  if form == nil then
+    return nil
+  end
+  local method = "GET"
+  local okMethod, rawMethod = pcall(function() return form:get_attribute("method") end)
+  if okMethod and type(rawMethod) == "string" and rawMethod ~= "" then
+    method = rawMethod:upper()
+  end
+  local action = ""
+  local okAction, rawAction = pcall(function() return form:get_attribute("action") end)
+  if okAction and type(rawAction) == "string" then
+    action = rawAction
+  end
+  local controls = {}
+  local okSearch, found = pcall(function() return form:search(".//input|.//textarea|.//select") end)
+  if okSearch and found ~= nil then
+    for _, node in ipairs(found) do
+      local function attr(name)
+        local ok, value = pcall(function() return node:get_attribute(name) end)
+        if not ok or value == nil then
+          return ""
+        end
+        return value
+      end
+      if attr("disabled") == "" then
+        local name = attr("name")
+        local inputType = attr("type"):lower()
+        local skipped = name == ""
+          or inputType == "submit"
+          or inputType == "button"
+          or inputType == "image"
+          or inputType == "reset"
+          or ((inputType == "checkbox" or inputType == "radio") and attr("checked") == "")
+        if not skipped then
+          controls[#controls + 1] = formUrlEncode(name) .. "=" .. formUrlEncode(attr("value"))
+        end
+      end
+    end
+  end
+  local body = table.concat(controls, "&")
+  if method == "GET" then
+    return method, action
+  end
+  return method, action, body, "application/x-www-form-urlencoded"
+end
+
 -- navigation stubs: error loudly so a test that hits them is obvious
 local function navStub(name)
   return function()
@@ -109,7 +165,6 @@ local function navStub(name)
   end
 end
 NodeSet.select = navStub("select")
-NodeSet.submit = navStub("submit")
 NodeSet.click  = navStub("click")
 
 ----------------------------------------------------------------------

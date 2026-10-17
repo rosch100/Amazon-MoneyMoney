@@ -1080,7 +1080,7 @@ end
 local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters).
-WebBanking{version  = 2.04,
+WebBanking{version  = 2.05,
   url         = baseurl,
   services    = const.services,
   description = const.description}
@@ -3695,7 +3695,9 @@ function isAmazonPasswordSignInPage(htmlNode)
   return htmlNode:xpath('//form[contains(@name,"signIn")]//*[@name="password"]'):length() > 0
 end
 
---- Claim-collect keeps the autofill password empty. The password page (ap_password) receives it.
+--- Claim-collect drops the autofill password from the request. Empty value still
+-- submits password= via form:submit(); disabled and a blank name exclude it.
+-- The password page (ap_password) receives the real password.
 function fillAmazonSignInFields(htmlNode)
   if htmlNode == nil then
     return
@@ -3709,6 +3711,8 @@ function fillAmazonSignInFields(htmlNode)
   end
   if isAmazonClaimCollectPage(htmlNode) then
     password:attr("value", "")
+    password:attr("disabled", "disabled")
+    password:attr("name", "")
   else
     password:attr("value", secPassword)
   end

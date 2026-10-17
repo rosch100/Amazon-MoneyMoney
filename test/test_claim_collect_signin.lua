@@ -38,12 +38,28 @@ local posts = {}
 env.connectShop = function()
   return mm.HTML(claimHtml)
 end
+local function formHasParam(body, key)
+  if type(body) ~= "string" then
+    return false
+  end
+  for part in body:gmatch("[^&]+") do
+    local name = part:match("^([^=]*)")
+    if name == key then
+      return true
+    end
+  end
+  return false
+end
+
 env.connectShopForm = function(form)
+  local _, _, body = form:submit()
   posts[#posts + 1] = {
+    body = body or "",
     email = form:xpath('//*[@name="email"]'):attr("value"),
-    password = form:xpath('//*[@name="password"]'):attr("value"),
     subPageType = form:xpath('//*[@name="subPageType"]'):attr("value"),
-    passwordId = form:xpath('//*[@name="password"]'):attr("id"),
+    passwordId = form:xpath('//*[@id="ap_password"]'):attr("id"),
+    password = form:xpath('//*[@id="ap_password"]'):attr("value"),
+    hasPasswordParam = formHasParam(body, "password"),
   }
   if #posts == 1 then
     return mm.HTML(passwordHtml)
@@ -61,9 +77,11 @@ local result = env.InitializeSession2(
 assert(#posts >= 2, "login must submit claim-collect and then the password page, got " .. tostring(#posts))
 assert(posts[1].subPageType == "SignInClaimCollect")
 assert(posts[1].email == "user@example.com", "claim step must send the email")
-assert(posts[1].password == "", "claim step must not send the autofill password, got " .. tostring(posts[1].password))
+assert(posts[1].hasPasswordParam == false,
+  "claim step must omit the password parameter, body=" .. tostring(posts[1].body))
 assert(posts[2].passwordId == "ap_password")
 assert(posts[2].password == "secret-pw", "password step must send the password")
+assert(posts[2].hasPasswordParam == true, "password step must include the password parameter")
 assert(result == nil, "login must finish after the password page, got " .. tostring(result))
 
 local claimPage = mm.HTML(claimHtml)
