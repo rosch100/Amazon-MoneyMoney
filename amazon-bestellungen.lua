@@ -319,6 +319,18 @@ local const={
   daysByMonth={31,28,31,30,31,30,31,31,30,31,30,31},
   -- Obsolete MoneyMoney accountNumbers (pre email/customerId). Refresh rejects these.
   obsoleteMoneyMoneyAccountNumbers={"mix", "normal", "inverse", "monthly", "yearly"},
+  -- Personal + Business/SPA timeFilter aliases for isRecentOrderFilter (exact / substring).
+  orderFilterExactRecent30={"yoLast30Days", "last_30_days"},
+  orderFilterExactRecent3Months={"yoPast3months", "last_3_months"},
+  orderFilterSubstringRecent30={"30.Tage", "30 Tage"},
+  orderFilterSubstringRecent3Months={"3.Monate", "3 Monate"},
+  amazonDomainLanguageTags={
+    [".amazon.de"]="de-DE",
+    [".amazon.co.uk"]="en-GB",
+    [".amazon.fr"]="fr-FR",
+    [".amazon.it"]="it-IT",
+    [".amazon.es"]="es-ES",
+  },
 }
 
 -- SSOT: account note keys (ListAccounts defaults + RefreshAccount).
@@ -1501,6 +1513,44 @@ end
 
 function buildDetailsUrl(orderCode)
   return const.orderDetailsUrl..orderCode
+end
+
+--- Minimal order record when only the order code is known (list enumeration / cache insert).
+function newMinimalOrderStub(orderCode)
+  return {
+    orderCode=orderCode,
+    orderPositions={},
+    orderSum=0,
+    orderTotal=0,
+    refund=0,
+    bookingDate=invalidDate,
+    detailsDate=0, -- force detail fetch; the list page has no per-order data
+    detailsUrl=buildDetailsUrl(orderCode),
+  }
+end
+
+local function stringListContains(list, value)
+  if type(list) ~= 'table' or type(value) ~= 'string' then
+    return false
+  end
+  for i=1,#list do
+    if list[i] == value then
+      return true
+    end
+  end
+  return false
+end
+
+local function stringContainsAnyLiteral(haystack, needles)
+  if type(haystack) ~= 'string' or type(needles) ~= 'table' then
+    return false
+  end
+  for i=1,#needles do
+    if string.find(haystack, needles[i], 1, true) then
+      return true
+    end
+  end
+  return false
 end
 
 function getOrderCode(text)
@@ -2987,16 +3037,7 @@ function getOrdersFromSummary(html)
       orderCode=getOrderCode(card:html())
     end
     if orderCode ~= nil and orders[orderCode] == nil then
-      orders[orderCode]={
-        orderCode=orderCode,
-        orderPositions={},
-        orderSum=0,
-        orderTotal=0,
-        refund=0,
-        bookingDate=invalidDate,
-        detailsDate=0, -- force detail fetch; the list page has no per-order data
-        detailsUrl=buildDetailsUrl(orderCode),
-      }
+      orders[orderCode]=newMinimalOrderStub(orderCode)
     end
     debugBuffer.flush()
     debugBuffer.context=''
@@ -3017,16 +3058,16 @@ function isRecentOrderFilter(filterVal, scanMonths)
   if string.match(filterVal, "^last") ~= nil then
     return true
   end
-  if filterVal == const.recentMonthsFilter or filterVal == "yoPast3months"
-      or filterVal == "last_3_months" then
+  if filterVal == const.recentMonthsFilter
+      or stringListContains(const.orderFilterExactRecent3Months, filterVal) then
     return includeThreeMonth
   end
-  if string.find(filterVal, "30.Tage", 1, true) or string.find(filterVal, "30 Tage", 1, true)
-      or filterVal == "yoLast30Days" or filterVal == "last_30_days" then
+  if stringContainsAnyLiteral(filterVal, const.orderFilterSubstringRecent30)
+      or stringListContains(const.orderFilterExactRecent30, filterVal) then
     return true
   end
-  if includeThreeMonth and (
-      string.find(filterVal, "3.Monate", 1, true) or string.find(filterVal, "3 Monate", 1, true)) then
+  if includeThreeMonth
+      and stringContainsAnyLiteral(filterVal, const.orderFilterSubstringRecent3Months) then
     return true
   end
   return false
@@ -3170,16 +3211,7 @@ function upsertOrderInCache(orderCache, orderCode, orderStub, subAccountLabel, k
   end
   local order=orderStub
   if type(order) ~= 'table' then
-    order={
-      orderCode=orderCode,
-      orderPositions={},
-      orderSum=0,
-      orderTotal=0,
-      refund=0,
-      bookingDate=invalidDate,
-      detailsDate=0,
-      detailsUrl=buildDetailsUrl(orderCode),
-    }
+    order=newMinimalOrderStub(orderCode)
   end
   assignSubAccountMeta(order, subAccountLabel, kind)
   orderCache[orderCode]=order
@@ -3852,6 +3884,29 @@ function returnClaimsVerifyChallengeOrFail(htmlNode)
   return ch
 end
 
+--- Submit a filled Amazon form via connectShopForm; shared fail-tail for auth helpers.
+function submitAmazonShopForm(form, failMessage)
+  local nextPage=connectShopForm(form)
+  if nextPage == nil then
+    return nil, failMessage
+  end
+  return nextPage, nil
+end
+
+--- After claimspicker submit: nextHtml (always when submit OK) + optional earlyReturn.
+-- Caller must assign module html=nextHtml before returning earlyReturn so the next
+-- InitializeSession2 after a MoneyMoney challenge sees the verify page, not the picker.
+function continueAfterClaimsPickerOrReturn(htmlNode, failStage)
+  local pickerPage=submitAmazonClaimsPicker(htmlNode)
+  if pickerPage == nil then
+    return nil, failMissingLoginPage(failStage)
+  end
+  if isAmazonClaimsVerifyPage(pickerPage) then
+    return pickerPage, returnClaimsVerifyChallengeOrFail(pickerPage)
+  end
+  return pickerPage, nil
+end
+
 function submitAmazonClaimsPicker(htmlNode)
   if htmlNode == nil then
     return nil, "claimspicker page missing"
@@ -3860,11 +3915,7 @@ function submitAmazonClaimsPicker(htmlNode)
   if form:length() == 0 then
     return nil, "claimspicker form missing"
   end
-  local nextPage=connectShopForm(form)
-  if nextPage == nil then
-    return nil, "claimspicker submit failed"
-  end
-  return nextPage, nil
+  return submitAmazonShopForm(form, "claimspicker submit failed")
 end
 
 function submitAmazonMfa(htmlNode, otpCode)
@@ -3885,11 +3936,7 @@ function submitAmazonMfa(htmlNode, otpCode)
     otpHidden:attr("value", otpCode)
   end
   htmlNode:xpath('//*[@name="rememberDevice"]'):attr('checked', 'checked')
-  local nextPage=connectShopForm(form)
-  if nextPage == nil then
-    return nil, "MFA submit failed"
-  end
-  return nextPage, nil
+  return submitAmazonShopForm(form, "MFA submit failed")
 end
 
 function submitAmazonClaimsVerify(htmlNode, code)
@@ -3904,11 +3951,7 @@ function submitAmazonClaimsVerify(htmlNode, code)
     return nil, "verify form missing"
   end
   htmlNode:xpath('//*[@name="code"]'):attr("value", code)
-  local nextPage=connectShopForm(form)
-  if nextPage == nil then
-    return nil, "verify submit failed"
-  end
-  return nextPage, nil
+  return submitAmazonShopForm(form, "verify submit failed")
 end
 
 --- OTP challenge during sub-account switch (classic/CVF otpCode or claims verify).
@@ -3948,11 +3991,7 @@ function submitSwitchAuthPrompt(htmlNode)
   end
   fillAmazonSignInFields(htmlNode)
   print("switch auth_prompt: submitting password")
-  local nextPage=connectShopForm(form)
-  if nextPage == nil then
-    return nil, "auth_prompt submit failed"
-  end
-  return nextPage, nil
+  return submitAmazonShopForm(form, "auth_prompt submit failed")
 end
 
 --- @function finishAccountSwitchLanding
@@ -4457,20 +4496,9 @@ function abaLanguageTag()
   if type(config.cookieLanguage) == 'string' and config.cookieLanguage ~= '' then
     return config.cookieLanguage
   end
-  if const.domain == '.amazon.de' then
-    return 'de-DE'
-  end
-  if const.domain == '.amazon.co.uk' then
-    return 'en-GB'
-  end
-  if const.domain == '.amazon.fr' then
-    return 'fr-FR'
-  end
-  if const.domain == '.amazon.it' then
-    return 'it-IT'
-  end
-  if const.domain == '.amazon.es' then
-    return 'es-ES'
+  local mapped=const.amazonDomainLanguageTags[const.domain]
+  if type(mapped) == 'string' and mapped ~= '' then
+    return mapped
   end
   return 'en-US'
 end
@@ -7470,13 +7498,12 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         end
       end)
       if number == 0 then
-        local pickerPage=submitAmazonClaimsPicker(html)
-        if pickerPage == nil then
-          return failMissingLoginPage("Bestätigungscode")
+        local nextHtml, earlyReturn=continueAfterClaimsPickerOrReturn(html, "Bestätigungscode")
+        if nextHtml ~= nil then
+          html=nextHtml
         end
-        html=pickerPage
-        if isAmazonClaimsVerifyPage(html) then
-          return returnClaimsVerifyChallengeOrFail(html)
+        if earlyReturn ~= nil then
+          return earlyReturn
         end
       else
         if passcode1run then
@@ -7487,13 +7514,12 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
             label='Please select 1-'..number
           }
         else
-          local pickerPage=submitAmazonClaimsPicker(html)
-          if pickerPage == nil then
-            return failMissingLoginPage("Bestätigungsmethode")
+          local nextHtml, earlyReturn=continueAfterClaimsPickerOrReturn(html, "Bestätigungsmethode")
+          if nextHtml ~= nil then
+            html=nextHtml
           end
-          html=pickerPage
-          if isAmazonClaimsVerifyPage(html) then
-            return returnClaimsVerifyChallengeOrFail(html)
+          if earlyReturn ~= nil then
+            return earlyReturn
           end
         end
       end
@@ -8070,5 +8096,3 @@ function EndSession ()
   secPassword=nil
   secUsername=nil
 end
-
--- SIGNATURE: MCwCFADXoW9IQ8E3gKZIvLlZX6w/MPcrAhRKrBC+jjNHPEpgB3p4b7GDoJxG1w==
