@@ -89,3 +89,27 @@ assert(env.isAmazonClaimCollectPage(claimPage) == true)
 assert(env.isAmazonPasswordSignInPage(claimPage) == false,
   "hidden autofill password is not the password step")
 assert(env.isAmazonPasswordSignInPage(mm.HTML(passwordHtml)) == true)
+
+-- Forced re-login mid-session must use the same claim-collect rules.
+local forcedPosts = {}
+env.connectShopRaw = function()
+  return claimHtml, "UTF-8"
+end
+env.removeWebCacheLastItem = function() end
+env.connectShopForm = function(form)
+  local _, _, body = form:submit()
+  forcedPosts[#forcedPosts + 1] = {
+    body = body or "",
+    email = form:xpath('//*[@name="email"]'):attr("value"),
+    hasPasswordParam = formHasParam(body, "password"),
+  }
+  return mm.HTML(loggedInHtml)
+end
+local forcedHtml = env.connectShopWithCheck("GET", "https://www.amazon.de/gp/css/order-history")
+assert(forcedHtml ~= nil, "forced re-login must return HTML")
+assert(#forcedPosts == 1, "forced re-login must submit the sign-in form once")
+assert(forcedPosts[1].email == "user@example.com",
+  "forced re-login must send the email")
+assert(forcedPosts[1].hasPasswordParam == false,
+  "forced re-login on claim-collect must omit password, body="
+    .. tostring(forcedPosts[1].body))

@@ -1080,7 +1080,7 @@ end
 local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters).
-WebBanking{version  = 2.05,
+WebBanking{version  = 2.06,
   url         = baseurl,
   services    = const.services,
   description = const.description}
@@ -1450,8 +1450,7 @@ function connectShopWithCheck(method, url, postContent, postContentType, headers
   if html:xpath(xpform):attr("name") ~= '' then
     removeWebCacheLastItem()
     print("Forced log out detect, enter username/password")
-    html:xpath('//*[@name="email"]'):attr("value", secUsername)
-    html:xpath('//*[@name="password"]'):attr("value",secPassword)
+    fillAmazonSignInFields(html)
     html= connectShopForm(html:xpath(xpform))
   end
   return html
@@ -4068,6 +4067,45 @@ function isAkamaiInterstitial(htmlNode)
   end
   return string.find(raw, "/_sec/verify", 1, true) ~= nil
     or string.find(raw, "triggerInterstitialChallenge", 1, true) ~= nil
+end
+
+--- Softblock shell (Nolif / #7): empty <title>, no shop chrome, short en page.
+function amazonLooksLikeEmptyTitleSoftblock(htmlNode, raw)
+  if htmlNode == nil or type(raw) ~= 'string' or raw == '' then
+    return false
+  end
+  if string.match(htmlNode:xpath('//title'):text() or '', "%S") then
+    return false
+  end
+  if htmlNode:xpath(
+        '//*[@id="nav-logo"]|//span[contains(@class,"nav-shortened-name")]|//form[@name="signIn"]'
+      ):length() > 0 then
+    return false
+  end
+  local lower=string.lower(raw)
+  return string.find(lower, "challenge", 1, true) ~= nil
+    or (#raw < 8000 and string.find(raw, 'lang="en"', 1, true) ~= nil)
+end
+
+--- AWS WAF / softblock (challenge.js). Distinct from Akamai bm-verify.
+-- Continuing into claim yields a misleading credential error (#7).
+function isAmazonAwsWafChallengePage(htmlNode)
+  local raw=htmlNodeRaw(htmlNode)
+  if raw == '' then
+    return false
+  end
+  local lower=string.lower(raw)
+  if string.find(lower, "challenge.js", 1, true) ~= nil
+      or string.find(lower, "awswaf", 1, true) ~= nil then
+    return true
+  end
+  return amazonLooksLikeEmptyTitleSoftblock(htmlNode, raw)
+end
+
+function amazonAwsWafSoftblockMessage()
+  return "Amazon: Bot-Prüfung (AWS WAF) nicht gelöst. Bitte im Browser bei amazon.de "
+    .."anmelden und den Abruf später erneut versuchen. Die Meldung „Passwort falsch“ "
+    .."nach dem Claim ist dann oft irreführend."
 end
 
 --- Parse pow / bm-verify / meta-refresh from an Akamai interstitial HTML body.
@@ -7430,6 +7468,11 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       return "Amazon: "..akamaiError
     end
     html = resolvedHtml
+    if isAmazonAwsWafChallengePage(html) then
+      print("AWS WAF / softblock on start page; halt before claim")
+      MM.printStatus(amazonAwsWafSoftblockMessage())
+      return amazonAwsWafSoftblockMessage()
+    end
     enterOrderList()
   end
 
