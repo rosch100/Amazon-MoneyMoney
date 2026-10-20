@@ -90,10 +90,15 @@ assert(env.isAmazonPasswordSignInPage(claimPage) == false,
   "hidden autofill password is not the password step")
 assert(env.isAmazonPasswordSignInPage(mm.HTML(passwordHtml)) == true)
 
--- Forced re-login mid-session must use the same claim-collect rules.
+-- Forced re-login: claim-collect without password, then password page, then re-GET.
 local forcedPosts = {}
+local rawCalls = 0
 env.connectShopRaw = function()
-  return claimHtml, "UTF-8"
+  rawCalls = rawCalls + 1
+  if rawCalls == 1 then
+    return claimHtml, "UTF-8"
+  end
+  return loggedInHtml, "UTF-8"
 end
 env.removeWebCacheLastItem = function() end
 env.connectShopForm = function(form)
@@ -101,15 +106,23 @@ env.connectShopForm = function(form)
   forcedPosts[#forcedPosts + 1] = {
     body = body or "",
     email = form:xpath('//*[@name="email"]'):attr("value"),
+    passwordId = form:xpath('//*[@id="ap_password"]'):attr("id"),
+    password = form:xpath('//*[@id="ap_password"]'):attr("value"),
     hasPasswordParam = formHasParam(body, "password"),
   }
+  if #forcedPosts == 1 then
+    return mm.HTML(passwordHtml)
+  end
   return mm.HTML(loggedInHtml)
 end
 local forcedHtml = env.connectShopWithCheck("GET", "https://www.amazon.de/gp/css/order-history")
 assert(forcedHtml ~= nil, "forced re-login must return HTML")
-assert(#forcedPosts == 1, "forced re-login must submit the sign-in form once")
-assert(forcedPosts[1].email == "user@example.com",
-  "forced re-login must send the email")
+assert(#forcedPosts == 2, "forced re-login must submit claim then password, got "
+  .. tostring(#forcedPosts))
 assert(forcedPosts[1].hasPasswordParam == false,
-  "forced re-login on claim-collect must omit password, body="
-    .. tostring(forcedPosts[1].body))
+  "claim step must omit password, body=" .. tostring(forcedPosts[1].body))
+assert(forcedPosts[2].passwordId == "ap_password")
+assert(forcedPosts[2].password == "secret-pw", "password step must send the password")
+assert(forcedPosts[2].hasPasswordParam == true)
+assert(rawCalls >= 2, "must re-request the original URL after login")
+assert(forcedHtml:xpath('//span[@class="nav-shortened-name"]'):text() == "Ada")

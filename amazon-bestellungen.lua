@@ -1447,13 +1447,23 @@ function connectShopWithCheck(method, url, postContent, postContentType, headers
   local content, charset=connectShopRaw(method, url, postContent, postContentType, headers)
   local html=parseAmazonHtml(content, charset)
   local xpform='//form[@name="signIn"]'
-  if html:xpath(xpform):attr("name") ~= '' then
-    removeWebCacheLastItem()
-    print("Forced log out detect, enter username/password")
-    fillAmazonSignInFields(html)
-    html= connectShopForm(html:xpath(xpform))
+  if html == nil or html:xpath(xpform):attr("name") == '' then
+    return html
   end
-  return html
+  removeWebCacheLastItem()
+  print("Forced log out detect, enter username/password")
+  -- Claim-collect may return the password page next; finish both steps.
+  local steps=0
+  while html ~= nil and html:xpath(xpform):attr("name") ~= '' and steps < 3 do
+    fillAmazonSignInFields(html)
+    html=connectShopForm(html:xpath(xpform))
+    steps=steps+1
+  end
+  if html ~= nil and html:xpath(xpform):attr("name") ~= '' then
+    return html
+  end
+  content, charset=connectShopRaw(method, url, postContent, postContentType, headers)
+  return parseAmazonHtml(content, charset)
 end
 
 function getDate(text)
@@ -4082,9 +4092,16 @@ function amazonLooksLikeEmptyTitleSoftblock(htmlNode, raw)
       ):length() > 0 then
     return false
   end
-  local lower=string.lower(raw)
-  return string.find(lower, "challenge", 1, true) ~= nil
-    or (#raw < 8000 and string.find(raw, 'lang="en"', 1, true) ~= nil)
+  return #raw < 8000 and string.find(raw, 'lang="en"', 1, true) ~= nil
+end
+
+--- True when HTML references AWS WAF challenge.js as its own token (not nochallenge.js).
+function rawHasAwsWafChallengeJs(lower)
+  if type(lower) ~= 'string' or lower == '' then
+    return false
+  end
+  return string.find(lower, "[^%w%-_]challenge%.js") ~= nil
+    or string.find(lower, "^challenge%.js") ~= nil
 end
 
 --- AWS WAF / softblock (challenge.js). Distinct from Akamai bm-verify.
@@ -4095,7 +4112,7 @@ function isAmazonAwsWafChallengePage(htmlNode)
     return false
   end
   local lower=string.lower(raw)
-  if string.find(lower, "challenge.js", 1, true) ~= nil
+  if rawHasAwsWafChallengeJs(lower)
       or string.find(lower, "awswaf", 1, true) ~= nil then
     return true
   end

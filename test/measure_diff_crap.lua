@@ -48,6 +48,7 @@ local targets = {
   "fillAmazonSignInFields",
   "isAmazonAwsWafChallengePage",
   "amazonLooksLikeEmptyTitleSoftblock",
+  "rawHasAwsWafChallengeJs",
   "amazonAwsWafSoftblockMessage",
   "reportedCharsetIsLegacy",
   "amazonHtmlCharset",
