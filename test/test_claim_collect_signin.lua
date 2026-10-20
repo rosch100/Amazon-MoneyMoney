@@ -126,3 +126,24 @@ assert(forcedPosts[2].password == "secret-pw", "password step must send the pass
 assert(forcedPosts[2].hasPasswordParam == true)
 assert(rawCalls >= 2, "must re-request the original URL after login")
 assert(forcedHtml:xpath('//span[@class="nav-shortened-name"]'):text() == "Ada")
+
+-- Auth error on sign-in must stop forced re-login (no credential resubmit loop).
+local authErrorHtml = [[<html><body>
+<form name="signIn" method="post" action="https://www.amazon.de/ap/signin">
+  <div id="auth-error-message-box">Deine E-Mail-Adresse oder das Passwort war nicht korrekt.</div>
+  <input type="email" name="email" value=""/>
+  <input type="password" id="ap_password" name="password" value=""/>
+</form>
+</body></html>]]
+local authPosts = 0
+env.connectShopRaw = function()
+  return authErrorHtml, "UTF-8"
+end
+env.connectShopForm = function()
+  authPosts = authPosts + 1
+  error("must not resubmit credentials after auth-error-message-box")
+end
+local authHtml = env.connectShopWithCheck("GET", "https://www.amazon.de/gp/css/order-history")
+assert(authHtml ~= nil)
+assert(authPosts == 0, "auth error page must not trigger another form submit")
+assert(authHtml:xpath('//div[@id="auth-error-message-box"]'):text() ~= "")

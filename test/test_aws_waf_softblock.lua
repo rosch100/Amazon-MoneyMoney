@@ -40,6 +40,7 @@ assert(env.isAmazonAwsWafChallengePage(mm.HTML(
     .."<body><div id=\"nav-logo\"></div></body></html>")) == false,
   "nochallenge.js must not count as AWS WAF challenge.js")
 
+local realEnterOrderList = env.enterOrderList
 env.connectShop = function()
   return mm.HTML(wafHtml)
 end
@@ -62,4 +63,32 @@ assert(result:find("Bot-Prüfung", 1, true),
   "error must be the Bot-Prüfung message, got: " .. result)
 assert(result ~= env.LoginFailed,
   "must not return LoginFailed (clears cookies / looks like bad password)")
+
+-- Softblock can appear on the order-history GET after a clean start page.
+local homeOk = [[<!DOCTYPE html><html lang="de-de"><head><title>Amazon.de</title></head>
+<body><span class="nav-shortened-name">Ada</span></body></html>]]
+local shopCalls = 0
+env.enterOrderList = realEnterOrderList
+env.connectShop = function()
+  shopCalls = shopCalls + 1
+  if shopCalls == 1 then
+    return mm.HTML(homeOk)
+  end
+  return mm.HTML(wafHtml)
+end
+env.resolveAkamaiInterstitial = function(page)
+  return page, nil
+end
+-- Real enterOrderList → tryEnterOrderListGet must keep the WAF page in html.
+local resultAfterList = env.InitializeSession2(
+  env.ProtocolWebBanking,
+  "Amazon",
+  1,
+  {"user@example.com", "secret-pw"},
+  true)
+assert(type(resultAfterList) == "string")
+assert(resultAfterList:find("Bot-Prüfung", 1, true),
+  "WAF after order-list entry must halt with Bot-Prüfung, got: "
+    .. tostring(resultAfterList))
+
 print("test_aws_waf_softblock OK")

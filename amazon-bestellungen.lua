@@ -1453,8 +1453,14 @@ function connectShopWithCheck(method, url, postContent, postContentType, headers
   removeWebCacheLastItem()
   print("Forced log out detect, enter username/password")
   -- Claim-collect may return the password page next; finish both steps.
+  -- Stop if Amazon already rejected credentials (do not resubmit the same login).
   local steps=0
   while html ~= nil and html:xpath(xpform):attr("name") ~= '' and steps < 3 do
+    local authError=html:xpath('//div[@id="auth-error-message-box"]'):text()
+    if type(authError) == 'string' and authError ~= '' then
+      print("Forced re-login stopped: auth error on sign-in page")
+      return html
+    end
     fillAmazonSignInFields(html)
     html=connectShopForm(html:xpath(xpform))
     steps=steps+1
@@ -5809,8 +5815,12 @@ function tryEnterOrderListGet(url, logMsg)
     print(logMsg)
   end
   local page=connectShop("GET", url)
-  if orderListPageReady(page) then
+  -- Always keep the last response (WAF softblock, Business SPA shell, …)
+  -- so callers can inspect html after a failed ready-check.
+  if page ~= nil then
     html=page
+  end
+  if orderListPageReady(page) then
     return true
   end
   return false
@@ -7492,6 +7502,12 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       return wafMessage
     end
     enterOrderList()
+    if isAmazonAwsWafChallengePage(html) then
+      print("AWS WAF / softblock after order-list entry; halt before claim")
+      local wafMessage=amazonAwsWafSoftblockMessage()
+      MM.printStatus(wafMessage)
+      return wafMessage
+    end
   end
 
   local leaveLoginLoop
