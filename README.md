@@ -26,6 +26,11 @@ kopieren, oder im Klon `./link_ext.sh` ausführen.
 Unsignierte/Entwicklungs-Plugins: MoneyMoney-**Beta**, Signaturprüfung unter
 *MoneyMoney → Einstellungen → Erweiterungen* ausschalten.
 
+Liefert der erste Abruf eine AWS-WAF-/Softblock-Seite, bricht die Extension mit
+einer Bot-Prüfung-Meldung ab (statt irreführend „Passwort falsch“). Die Prüfung
+selbst braucht Browser-JavaScript und ist mit Username/Passwort allein oft nicht
+lösbar — dann im Browser bei amazon.de anmelden und später erneut abrufen.
+
 ## Einrichten
 
 *Konto hinzufügen* → *Andere* → *Amazon Bestellungen*.

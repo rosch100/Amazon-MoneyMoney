@@ -7470,8 +7470,9 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     html = resolvedHtml
     if isAmazonAwsWafChallengePage(html) then
       print("AWS WAF / softblock on start page; halt before claim")
-      MM.printStatus(amazonAwsWafSoftblockMessage())
-      return amazonAwsWafSoftblockMessage()
+      local wafMessage=amazonAwsWafSoftblockMessage()
+      MM.printStatus(wafMessage)
+      return wafMessage
     end
     enterOrderList()
   end
