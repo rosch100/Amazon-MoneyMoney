@@ -4098,7 +4098,12 @@ function amazonLooksLikeEmptyTitleSoftblock(htmlNode, raw)
       ):length() > 0 then
     return false
   end
-  return #raw < 8000 and string.find(raw, 'lang="en"', 1, true) ~= nil
+  if #raw >= 8000 then
+    return false
+  end
+  -- lang may use single/double quotes and regional tags (en-US); read the attribute.
+  local lang=string.lower(htmlNode:xpath('//html'):attr('lang') or '')
+  return lang == 'en' or string.match(lang, '^en%-') ~= nil or string.match(lang, '^en_') ~= nil
 end
 
 --- True when HTML references AWS WAF challenge.js as its own token (not nochallenge.js).
@@ -5820,6 +5825,10 @@ function tryEnterOrderListGet(url, logMsg)
   if page ~= nil then
     html=page
   end
+  -- Stop fallbacks on WAF so a later non-ready GET cannot overwrite the softblock.
+  if isAmazonAwsWafChallengePage(page) then
+    return true
+  end
   if orderListPageReady(page) then
     return true
   end
@@ -5847,6 +5856,9 @@ function enterOrderList ()
       -- can route to ABA harvest instead of pretending the classic form exists.
       if nextHtml ~= nil then
         html=nextHtml
+        if isAmazonAwsWafChallengePage(nextHtml) then
+          return
+        end
       end
     end
   end

@@ -27,6 +27,14 @@ assert(env.isAmazonAwsWafChallengePage(wafPage) == true,
 assert(env.isAmazonAwsWafChallengePage(mm.HTML(softShellHtml)) == true,
   "empty-title en softblock shell without challenge.js must be detected")
 assert(env.isAmazonAwsWafChallengePage(mm.HTML(
+  "<!DOCTYPE html><html lang='en'><head><title></title></head><body><div></div></body></html>"))
+  == true,
+  "softblock lang='en' (single quotes) must be detected")
+assert(env.isAmazonAwsWafChallengePage(mm.HTML(
+  "<!DOCTYPE html><html lang=\"en-US\"><head><title></title></head><body><div></div></body></html>"))
+  == true,
+  "softblock lang=en-US must be detected")
+assert(env.isAmazonAwsWafChallengePage(mm.HTML(
   "<!doctype html><html lang=\"de-de\"><head><title>Amazon.de</title></head>"
     .."<body><span class=\"nav-shortened-name\">Ada</span></body></html>")) == false,
   "normal Amazon page must not look like WAF softblock")
@@ -90,5 +98,31 @@ assert(type(resultAfterList) == "string")
 assert(resultAfterList:find("Bot-Prüfung", 1, true),
   "WAF after order-list entry must halt with Bot-Prüfung, got: "
     .. tostring(resultAfterList))
+
+-- First order-history GET softblocks; a second fallback must not overwrite it.
+shopCalls = 0
+local junk = [[<!DOCTYPE html><html lang="de"><head><title></title></head>
+<body><div>not an order list</div></body></html>]]
+env.connectShop = function()
+  shopCalls = shopCalls + 1
+  if shopCalls == 1 then
+    return mm.HTML(homeOk)
+  end
+  if shopCalls == 2 then
+    return mm.HTML(wafHtml)
+  end
+  return mm.HTML(junk)
+end
+local resultHold = env.InitializeSession2(
+  env.ProtocolWebBanking,
+  "Amazon",
+  1,
+  {"user@example.com", "secret-pw"},
+  true)
+assert(type(resultHold) == "string")
+assert(resultHold:find("Bot-Prüfung", 1, true),
+  "WAF must survive order-list fallback GETs, got: " .. tostring(resultHold))
+assert(shopCalls == 2,
+  "must stop after first WAF order-list GET, shopCalls=" .. tostring(shopCalls))
 
 print("test_aws_waf_softblock OK")
