@@ -3154,6 +3154,12 @@ function scheduleKnownOrderDetailsRefresh(order)
   if type(order.detailsDate) == 'number' and order.detailsDate <= 1 then
     return false
   end
+  -- Missing-date backoff (#3): do not clear a future detailsDate when bookingDate
+  -- is still invalid. Dated orders keep the reset so refund/return rescans work.
+  if (type(order.bookingDate) ~= 'number' or order.bookingDate == invalidDate)
+      and type(order.detailsDate) == 'number' and order.detailsDate > now then
+    return false
+  end
   order.detailsDate=1
   return true
 end
