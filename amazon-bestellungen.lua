@@ -2628,6 +2628,8 @@ function resolveOrderDetailsWithoutDate(order, orderDetails)
     debugBuffer.print("getOrderDetails unloadable page",order.orderCode)
     return false
   end
+  -- Ohne Datum neu terminieren, damit die Bestellung nicht bei jedem Abruf erneut geladen wird (#3).
+  scheduleNextDetailsDate(order, now)
   debugBuffer.print("getOrderDetails missing order date",order.orderCode)
   return false
 end
@@ -3150,6 +3152,12 @@ function scheduleKnownOrderDetailsRefresh(order)
     return false
   end
   if type(order.detailsDate) == 'number' and order.detailsDate <= 1 then
+    return false
+  end
+  -- Missing-date backoff (#3): do not clear a future detailsDate when bookingDate
+  -- is still invalid. Dated orders keep the reset so refund/return rescans work.
+  if (type(order.bookingDate) ~= 'number' or order.bookingDate == invalidDate)
+      and type(order.detailsDate) == 'number' and order.detailsDate > now then
     return false
   end
   order.detailsDate=1
