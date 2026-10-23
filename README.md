@@ -2,7 +2,7 @@
 
 Bestellungen von amazon.de als Umsätze in MoneyMoney.
 
-Version: **2.05**
+Version: **2.06**
 Repository: https://github.com/rosch100/Amazon-MoneyMoney
 Gemeinsame Infos: https://github.com/rosch100/moneymoney-extensions
 
@@ -14,10 +14,10 @@ Dateiname: **`amazon-bestellungen.lua`** (nicht `amazon-orders.lua` — der Name
 durch die Erweiterung von Michael Beutling belegt; alle Extensions liegen im selben
 Download-Verzeichnis).
 
-Aus diesem Repository (aktuell **unsigniert**, Version 2.05 — Signatur ausstehend):
+Aus diesem Repository (aktuell **unsigniert**, Version 2.06 — Signatur ausstehend):
 [amazon-bestellungen.lua](https://raw.githubusercontent.com/rosch100/Amazon-MoneyMoney/master/amazon-bestellungen.lua)
 
-Website-Download unter diesem Namen: derzeit **2.01**; 2.05 nach Freigabe.
+Website-Download unter diesem Namen: **2.04** signiert; dieses Repo ist **2.06** (Signatur ausstehend).
 
 Datei nach
 `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney/Extensions`
@@ -25,6 +25,11 @@ kopieren, oder im Klon `./link_ext.sh` ausführen.
 
 Unsignierte/Entwicklungs-Plugins: MoneyMoney-**Beta**, Signaturprüfung unter
 *MoneyMoney → Einstellungen → Erweiterungen* ausschalten.
+
+Liefert der erste Abruf eine AWS-WAF-/Softblock-Seite, bricht die Extension mit
+einer Bot-Prüfung-Meldung ab (statt irreführend „Passwort falsch“). Die Prüfung
+selbst braucht Browser-JavaScript und ist mit Username/Passwort allein oft nicht
+lösbar — dann im Browser bei amazon.de anmelden und später erneut abrufen.
 
 ## Einrichten
 

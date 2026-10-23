@@ -1080,7 +1080,7 @@ end
 local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters).
-WebBanking{version  = 2.05,
+WebBanking{version  = 2.06,
   url         = baseurl,
   services    = const.services,
   description = const.description}
@@ -1447,14 +1447,29 @@ function connectShopWithCheck(method, url, postContent, postContentType, headers
   local content, charset=connectShopRaw(method, url, postContent, postContentType, headers)
   local html=parseAmazonHtml(content, charset)
   local xpform='//form[@name="signIn"]'
-  if html:xpath(xpform):attr("name") ~= '' then
-    removeWebCacheLastItem()
-    print("Forced log out detect, enter username/password")
-    html:xpath('//*[@name="email"]'):attr("value", secUsername)
-    html:xpath('//*[@name="password"]'):attr("value",secPassword)
-    html= connectShopForm(html:xpath(xpform))
+  if html == nil or html:xpath(xpform):attr("name") == '' then
+    return html
   end
-  return html
+  removeWebCacheLastItem()
+  print("Forced log out detect, enter username/password")
+  -- Claim-collect may return the password page next; finish both steps.
+  -- Stop if Amazon already rejected credentials (do not resubmit the same login).
+  local steps=0
+  while html ~= nil and html:xpath(xpform):attr("name") ~= '' and steps < 3 do
+    local authError=html:xpath('//div[@id="auth-error-message-box"]'):text()
+    if type(authError) == 'string' and authError ~= '' then
+      print("Forced re-login stopped: auth error on sign-in page")
+      return html
+    end
+    fillAmazonSignInFields(html)
+    html=connectShopForm(html:xpath(xpform))
+    steps=steps+1
+  end
+  if html ~= nil and html:xpath(xpform):attr("name") ~= '' then
+    return html
+  end
+  content, charset=connectShopRaw(method, url, postContent, postContentType, headers)
+  return parseAmazonHtml(content, charset)
 end
 
 function getDate(text)
@@ -4070,6 +4085,57 @@ function isAkamaiInterstitial(htmlNode)
     or string.find(raw, "triggerInterstitialChallenge", 1, true) ~= nil
 end
 
+--- Softblock shell (Nolif / #7): empty <title>, no shop chrome, short en page.
+function amazonLooksLikeEmptyTitleSoftblock(htmlNode, raw)
+  if htmlNode == nil or type(raw) ~= 'string' or raw == '' then
+    return false
+  end
+  if string.match(htmlNode:xpath('//title'):text() or '', "%S") then
+    return false
+  end
+  if htmlNode:xpath(
+        '//*[@id="nav-logo"]|//span[contains(@class,"nav-shortened-name")]|//form[@name="signIn"]'
+      ):length() > 0 then
+    return false
+  end
+  if #raw >= 8000 then
+    return false
+  end
+  -- lang may use single/double quotes and regional tags (en-US); read the attribute.
+  local lang=string.lower(htmlNode:xpath('//html'):attr('lang') or '')
+  return lang == 'en' or string.match(lang, '^en%-') ~= nil or string.match(lang, '^en_') ~= nil
+end
+
+--- True when HTML references AWS WAF challenge.js as its own token (not nochallenge.js).
+function rawHasAwsWafChallengeJs(lower)
+  if type(lower) ~= 'string' or lower == '' then
+    return false
+  end
+  return string.find(lower, "[^%w%-_]challenge%.js") ~= nil
+    or string.find(lower, "^challenge%.js") ~= nil
+end
+
+--- AWS WAF / softblock (challenge.js). Distinct from Akamai bm-verify.
+-- Continuing into claim yields a misleading credential error (#7).
+function isAmazonAwsWafChallengePage(htmlNode)
+  local raw=htmlNodeRaw(htmlNode)
+  if raw == '' then
+    return false
+  end
+  local lower=string.lower(raw)
+  if rawHasAwsWafChallengeJs(lower)
+      or string.find(lower, "awswaf", 1, true) ~= nil then
+    return true
+  end
+  return amazonLooksLikeEmptyTitleSoftblock(htmlNode, raw)
+end
+
+function amazonAwsWafSoftblockMessage()
+  return "Amazon: Bot-Prüfung (AWS WAF) nicht gelöst. Bitte im Browser bei amazon.de "
+    .."anmelden und den Abruf später erneut versuchen. Die Meldung „Passwort falsch“ "
+    .."nach dem Claim ist dann oft irreführend."
+end
+
 --- Parse pow / bm-verify / meta-refresh from an Akamai interstitial HTML body.
 function parseAkamaiInterstitialChallenge(raw)
   if type(raw) ~= 'string' or raw == '' then
@@ -5754,8 +5820,16 @@ function tryEnterOrderListGet(url, logMsg)
     print(logMsg)
   end
   local page=connectShop("GET", url)
-  if orderListPageReady(page) then
+  -- Always keep the last response (WAF softblock, Business SPA shell, …)
+  -- so callers can inspect html after a failed ready-check.
+  if page ~= nil then
     html=page
+  end
+  -- Stop fallbacks on WAF so a later non-ready GET cannot overwrite the softblock.
+  if isAmazonAwsWafChallengePage(page) then
+    return true
+  end
+  if orderListPageReady(page) then
     return true
   end
   return false
@@ -5782,6 +5856,9 @@ function enterOrderList ()
       -- can route to ABA harvest instead of pretending the classic form exists.
       if nextHtml ~= nil then
         html=nextHtml
+        if isAmazonAwsWafChallengePage(nextHtml) then
+          return
+        end
       end
     end
   end
@@ -7430,7 +7507,19 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       return "Amazon: "..akamaiError
     end
     html = resolvedHtml
+    if isAmazonAwsWafChallengePage(html) then
+      print("AWS WAF / softblock on start page; halt before claim")
+      local wafMessage=amazonAwsWafSoftblockMessage()
+      MM.printStatus(wafMessage)
+      return wafMessage
+    end
     enterOrderList()
+    if isAmazonAwsWafChallengePage(html) then
+      print("AWS WAF / softblock after order-list entry; halt before claim")
+      local wafMessage=amazonAwsWafSoftblockMessage()
+      MM.printStatus(wafMessage)
+      return wafMessage
+    end
   end
 
   local leaveLoginLoop
