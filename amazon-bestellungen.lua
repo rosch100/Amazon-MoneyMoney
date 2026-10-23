@@ -2628,6 +2628,8 @@ function resolveOrderDetailsWithoutDate(order, orderDetails)
     debugBuffer.print("getOrderDetails unloadable page",order.orderCode)
     return false
   end
+  -- Ohne Datum neu terminieren, damit die Bestellung nicht bei jedem Abruf erneut geladen wird (#3).
+  scheduleNextDetailsDate(order, now)
   debugBuffer.print("getOrderDetails missing order date",order.orderCode)
   return false
 end
