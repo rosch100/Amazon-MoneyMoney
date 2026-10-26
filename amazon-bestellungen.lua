@@ -1082,7 +1082,7 @@ end
 local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters).
-WebBanking{version  = 2.07,
+WebBanking{version  = 2.08,
   url         = baseurl,
   services    = const.services,
   description = const.description}
@@ -1190,26 +1190,26 @@ function connectShop(method, url, postContent, postContentType, headers)
   return parseAmazonHtml(content, charset)
 end
 
+--- Restore LocalStorage cookies onto the current shop Connection.
+function restoreAmazonShopCookiesFromLocalStorage()
+  if type(LocalStorage) ~= "table" or type(LocalStorage.cookies) ~= "string" then
+    return
+  end
+  for i in string.gmatch(LocalStorage.cookies, '([^; ]+)') do
+    if i:sub(1, #'ap-fid=') ~= 'ap-fid=' and i:sub(-#'=deleted') ~= '=deleted' then
+      connection:setCookie(i..'; Domain='..const.domain
+        ..'; Expires=Tue, 01-Jan-2036 08:00:01 GMT; Path=/')
+    end
+  end
+end
+
 --- Create shop Connection and restore LocalStorage cookies (same as former connectShopRaw init).
 function ensureAmazonShopConnection()
   if connection ~= nil then
     return
   end
   connection = Connection()
-  if type(LocalStorage) ~= "table" or type(LocalStorage.cookies) ~= "string" then
-    return
-  end
-  local status,err = pcall(function()
-    for i in string.gmatch(LocalStorage.cookies, '([^; ]+)') do
-      if i:sub(1, #'ap-fid=') ~= 'ap-fid=' and i:sub(-#'=deleted') ~= '=deleted' then
-        connection:setCookie(i..'; Domain='..const.domain
-          ..'; Expires=Tue, 01-Jan-2036 08:00:01 GMT; Path=/')
-      end
-    end
-  end)
-  if not status then
-    print("ensureAmazonShopConnection cookie restore:", err)
-  end
+  pcall(restoreAmazonShopCookiesFromLocalStorage)
 end
 
 function applyAmazonAwsWafCaptchaToken(token)
@@ -4207,23 +4207,18 @@ function extractAmazonAwsWafSitekey(htmlNode, scriptUrl)
   if htmlNode == nil then
     return nil
   end
-  if type(scriptUrl) == "string" then
-    local fromQuery = scriptUrl:match("[?&]sitekey=([^&#]+)")
-    if type(fromQuery) == "string" and fromQuery ~= "" then
-      return fromQuery
-    end
+  local fromQuery = type(scriptUrl) == "string"
+    and scriptUrl:match("[?&]sitekey=([^&#]+)") or nil
+  if type(fromQuery) == "string" and fromQuery ~= "" then
+    return fromQuery
   end
   local raw = htmlNodeRaw(htmlNode)
   if raw == "" then
     return nil
   end
-  local key = raw:match('data%-sitekey%s*=%s*["\']([^"\']+)["\']')
+  return raw:match('data%-sitekey%s*=%s*["\']([^"\']+)["\']')
     or raw:match('["\']sitekey["\']%s*:%s*["\']([^"\']+)["\']')
     or raw:match("gokuProps%s*=%s*{[^}]*key%s*:%s*[\"']([^\"']+)[\"']")
-  if type(key) ~= "string" or key == "" then
-    return nil
-  end
-  return key
 end
 
 --- Caller must pass a non-empty refererUrl (typically baseurl); no silent baseurl fallback.

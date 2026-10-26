@@ -2,7 +2,7 @@
 
 Datum: 2026-10-26
 
-Status: **Entwurf / freigegeben im Brainstorming** — noch nicht implementiert.
+Status: **Umgesetzt** (Feature-Branch `feature/waf-challenge-cookie-fallback`, Plugin 2.08).
 Bezug: [Issue #7](https://github.com/rosch100/Amazon-MoneyMoney/issues/7).
 Vorarbeit auf Branch `bugfix/claim-challenge-login`: Softblock-Halt (2.06),
 `COOKIE:`-Import (2.07).

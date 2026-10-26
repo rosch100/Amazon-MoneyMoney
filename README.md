@@ -2,7 +2,7 @@
 
 Bestellungen von amazon.de als Umsätze in MoneyMoney.
 
-Version: **2.07**
+Version: **2.08**
 Repository: https://github.com/rosch100/Amazon-MoneyMoney
 Gemeinsame Infos: https://github.com/rosch100/moneymoney-extensions
 
@@ -14,10 +14,10 @@ Dateiname: **`amazon-bestellungen.lua`** (nicht `amazon-orders.lua` — der Name
 durch die Erweiterung von Michael Beutling belegt; alle Extensions liegen im selben
 Download-Verzeichnis).
 
-Aus diesem Repository (aktuell **unsigniert**, Version 2.07 — Signatur ausstehend):
+Aus diesem Repository (aktuell **unsigniert**, Version 2.08 — Signatur ausstehend):
 [amazon-bestellungen.lua](https://raw.githubusercontent.com/rosch100/Amazon-MoneyMoney/master/amazon-bestellungen.lua)
 
-Website-Download unter diesem Namen: **2.04** signiert; dieses Repo ist **2.07** (Signatur ausstehend).
+Website-Download unter diesem Namen: **2.04** signiert; dieses Repo ist **2.08** (Signatur ausstehend).
 
 Datei nach
 `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney/Extensions`
@@ -26,11 +26,16 @@ kopieren, oder im Klon `./link_ext.sh` ausführen.
 Unsignierte/Entwicklungs-Plugins: MoneyMoney-**Beta**, Signaturprüfung unter
 *MoneyMoney → Einstellungen → Erweiterungen* ausschalten.
 
-Liefert der erste Abruf eine AWS-WAF-/Softblock-Seite und MoneyMoney kann die
-Captcha-Challenge nicht anzeigen bzw. lösen, bricht die Extension mit einer
-Bot-Prüfung-Meldung ab (nicht „Passwort falsch“). Hinweis: Browser-Login →
-MoneyMoney-Helper → `COOKIE:…` ins Passwortfeld (unten). Ein Browser auf demselben
-Mac allein teilt die Session nicht mit MoneyMoney.
+### Bot-Prüfung vs. Passwort vs. OTP
+
+Amazon kann vor dem Login eine Bot-Prüfung (AWS WAF) zeigen. MoneyMoney zeigt dann
+möglichst den Dialog **„Amazon Bot-Prüfung“** (Captcha). Das ist **nicht** der
+Passwort-Dialog und **nicht** die OTP-/Bestätigungscode-Abfrage.
+
+Wenn die Captcha-Challenge fehlt oder scheitert (oder der Abruf nicht interaktiv
+ist): klare Bot-Prüfung-Meldung — nicht „Passwort falsch“. Dann: im Browser bei
+amazon.de anmelden → MoneyMoney-Helper → `COOKIE:…` ins Passwortfeld (unten).
+Ein Browser auf demselben Mac allein teilt die Session **nicht** mit MoneyMoney.
 
 ## Einrichten
 
@@ -64,15 +69,16 @@ Pflicht: `session-id` und ein Auth-Cookie (`at-acbde` / `at-main` bzw.
 
 ### Lokal nachvollziehen (Kaltstart wie Nolif/#7)
 
-1. Plugin 2.07 in den Extensions-Ordner (`./link_ext.sh` oder Kopie), MoneyMoney-Beta,
+1. Plugin 2.08 in den Extensions-Ordner (`./link_ext.sh` oder Kopie), MoneyMoney-Beta,
    Signaturprüfung aus.
 2. Amazon-Zugang **neu anlegen** (oder bestehenden löschen), damit keine Alt-Cookies
    in `LocalStorage` helfen — so wie Nolifs Kaltstart.
-3. Zuerst mit echtem Passwort abrufen → erwartbar Softblock/Bot-Prüfung (wenn Amazon
-   WAF zeigt).
-4. Browser-Login → Helper → `COOKIE:…` als Passwort → Abruf sollte Konten/Bestellungen
-   ohne Claim laden.
-5. Offline: `./test/run.sh test/test_cookie_import.lua`
+3. Zuerst mit echtem Passwort abrufen → Captcha „Amazon Bot-Prüfung“ oder Softblock-
+   Meldung (wenn Amazon WAF zeigt).
+4. Wenn nötig: Browser-Login → Helper → `COOKIE:…` als Passwort → Abruf sollte
+   Konten/Bestellungen ohne Claim laden.
+5. Offline: `./test/run.sh test/test_cookie_import.lua` und
+   `./test/run.sh test/test_aws_waf_captcha_challenge.lua`
 
 ## Nutzung
 
