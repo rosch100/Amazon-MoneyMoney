@@ -124,4 +124,44 @@ assert(net == false, "incomplete COOKIE: must not call connectShop")
 assert(type(bad) == "string" and bad:find("unvollständig", 1, true),
   "incomplete cookies need a clear validation error, got: " .. tostring(bad))
 
+-- COOKIE: sessions must not remote-logout (would invalidate imported at-* cookies).
+env.connectShop = function()
+  return mm.HTML(loggedInHtml)
+end
+env.enterOrderList = function() end
+env.discoverAmazonSubAccounts = function()
+  return true, nil
+end
+assert(env.InitializeSession2(
+  env.ProtocolWebBanking,
+  "Amazon",
+  1,
+  {"user@example.com", "COOKIE:" .. validCookies},
+  true) == nil, "cookie import for EndSession test must succeed")
+
+local logoutClicks = 0
+local logoutHtml = {
+  xpath = function()
+    return {
+      click = function()
+        logoutClicks = logoutClicks + 1
+        return "logout-response"
+      end,
+    }
+  end,
+}
+for index = 1, 40 do
+  local name = debug.getupvalue(env.EndSession, index)
+  if name == "html" then
+    debug.setupvalue(env.EndSession, index, logoutHtml)
+    break
+  end
+end
+env.connectShop = function(response)
+  return response
+end
+env.EndSession()
+assert(logoutClicks == 0,
+  "COOKIE: EndSession must not click sign-out (imported cookies stay valid)")
+
 print("test_cookie_import OK")

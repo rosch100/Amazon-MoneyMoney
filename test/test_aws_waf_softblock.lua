@@ -47,6 +47,11 @@ assert(env.isAmazonAwsWafChallengePage(mm.HTML(
     .."<script src=\"/static/nochallenge.js\"></script></head>"
     .."<body><div id=\"nav-logo\"></div></body></html>")) == false,
   "nochallenge.js must not count as AWS WAF challenge.js")
+assert(env.isAmazonAwsWafChallengePage(mm.HTML(
+  "<!DOCTYPE html><html lang=\"de-de\"><head><title>Amazon.de</title>"
+    .."<script src=\"https://cdn.awswaf.com/challenge.js\"></script></head>"
+    .."<body><span class=\"nav-shortened-name\">Ada</span></body></html>")) == false,
+  "logged-in landing with awswaf script must not count as softblock")
 
 local realEnterOrderList = env.enterOrderList
 env.connectShop = function()
@@ -126,5 +131,31 @@ assert(resultHold:find("Bot-Prüfung", 1, true),
   "WAF must survive order-list fallback GETs, got: " .. tostring(resultHold))
 assert(shopCalls == 2,
   "must stop after first WAF order-list GET, shopCalls=" .. tostring(shopCalls))
+
+-- Failed order-list GETs must not replace a prior logged-in landing.
+local homeNode = mm.HTML(homeOk)
+for index = 1, 40 do
+  local name = debug.getupvalue(env.enterOrderList, index)
+  if name == "html" then
+    debug.setupvalue(env.enterOrderList, index, homeNode)
+    break
+  end
+end
+shopCalls = 0
+env.connectShop = function()
+  shopCalls = shopCalls + 1
+  return mm.HTML(junk)
+end
+env.enterOrderList()
+local keptHtml
+for index = 1, 40 do
+  local name, value = debug.getupvalue(env.enterOrderList, index)
+  if name == "html" then
+    keptHtml = value
+    break
+  end
+end
+assert(keptHtml == homeNode,
+  "non-order interstitial GETs must keep the prior logged-in landing")
 
 print("test_aws_waf_softblock OK")

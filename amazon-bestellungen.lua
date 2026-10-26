@@ -22,6 +22,8 @@ local captcha1run
 local mfa1run
 local claimsVerify1run
 local aName
+-- COOKIE: login: skip remote sign-out so imported at-* cookies stay valid.
+local cookieImportSession=false
 
 --- @function rememberShopCredentials
 -- In-memory login credentials for the current session (not persisted).
@@ -4138,7 +4140,11 @@ end
 
 --- AWS WAF / softblock (challenge.js). Distinct from Akamai bm-verify.
 -- Continuing into claim yields a misleading credential error (#7).
+-- Logged-in shop/order landings may embed awswaf/challenge scripts — not a softblock.
 function isAmazonAwsWafChallengePage(htmlNode)
+  if isLoggedInOrderLanding(htmlNode) then
+    return false
+  end
   local raw=htmlNodeRaw(htmlNode)
   if raw == '' then
     return false
@@ -5962,22 +5968,41 @@ function collectBusinessSpaOrders(subAccountLabel, kind, refreshSince)
   return nAba + nGet, nil
 end
 
-function tryEnterOrderListGet(url, logMsg)
-  if logMsg ~= nil then
-    print(logMsg)
+--- Keep GET/nav responses that are scrapable, WAF, or Business shells.
+-- Interstitial/error pages must not replace a prior logged-in landing.
+function keepEnterOrderListResponse(page)
+  if page == nil then
+    return false
   end
-  local page=connectShop("GET", url)
-  -- Always keep the last response (WAF softblock, Business SPA shell, …)
-  -- so callers can inspect html after a failed ready-check.
-  if page ~= nil then
-    html=page
-  end
-  -- Stop fallbacks on WAF so a later non-ready GET cannot overwrite the softblock.
   if isAmazonAwsWafChallengePage(page) then
     return true
   end
   if orderListPageReady(page) then
     return true
+  end
+  if isAmazonBusinessOrdersSpa(page) or isAmazonBusinessSession(page) then
+    return true
+  end
+  return false
+end
+
+function tryEnterOrderListGet(url, logMsg)
+  if logMsg ~= nil then
+    print(logMsg)
+  end
+  local page=connectShop("GET", url)
+  -- Stop fallbacks on WAF so a later non-ready GET cannot overwrite the softblock.
+  if isAmazonAwsWafChallengePage(page) then
+    html=page
+    return true
+  end
+  if orderListPageReady(page) then
+    html=page
+    return true
+  end
+  -- Business SPA/session shell: keep for ABA routing, but continue fallbacks.
+  if keepEnterOrderListResponse(page) then
+    html=page
   end
   return false
 end
@@ -5999,13 +6024,14 @@ function enterOrderList ()
         html=nextHtml
         return
       end
-      -- Keep non-ready HTML (e.g. Business SPA shell) so collectOrdersFromOrderList
-      -- can route to ABA harvest instead of pretending the classic form exists.
-      if nextHtml ~= nil then
+      if isAmazonAwsWafChallengePage(nextHtml) then
         html=nextHtml
-        if isAmazonAwsWafChallengePage(nextHtml) then
-          return
-        end
+        return
+      end
+      -- Keep Business SPA/session shells so collectOrdersFromOrderList can route
+      -- to ABA; drop interstitial/error pages so the prior landing stays.
+      if keepEnterOrderListResponse(nextHtml) then
+        html=nextHtml
       end
     end
   end
@@ -7619,6 +7645,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     activateAmazonLoginStorage(credentials[1])
     local password=credentials[2]
     local cookieImport=type(password) == 'string' and password:match("^COOKIE:") ~= nil
+    cookieImportSession=cookieImport
     -- Cookie blob must not become secPassword (forced re-login / auth_prompt).
     if cookieImport then
       rememberShopCredentials(credentials[1], nil)
@@ -8329,9 +8356,9 @@ function EndSession ()
   clearAccountSetupState()
   tryCompleteInitialSync(os.time())
   local persistLogin = shouldPersistAmazonLoginSession(LocalStorage)
-  -- Multi-login: keep cookies in LocalStorage.logins[loginKey]; remote logout
-  -- would invalidate the persisted jar for the next sync of this login.
-  if config.reallyLogout and html ~= nil and not persistLogin then
+  -- Multi-login and COOKIE: import: keep cookies; remote logout would invalidate
+  -- the jar (imported at-* tokens) for the next sync of this login.
+  if config.reallyLogout and html ~= nil and not persistLogin and not cookieImportSession then
     local logoutElement=html:xpath('//a[contains(@id,"nav-item-signout") or contains(@href,"sign-out")]')
     if logoutElement ~= nil then
       print("Logout")
@@ -8349,4 +8376,5 @@ function EndSession ()
   connection = nil
   secPassword=nil
   secUsername=nil
+  cookieImportSession=false
 end
