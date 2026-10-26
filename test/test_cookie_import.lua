@@ -64,6 +64,21 @@ assert(type(env.LocalStorage.cookies) == "string"
 assert(env.secPassword == nil or env.secPassword == "",
   "cookie blob must not become secPassword")
 
+-- Cookie-only: claim-collect hint must still be stripped without secPassword.
+local claimOnly = mm.HTML([[<html><body>
+<form name="signIn">
+  <input type="hidden" name="subPageType" value="SignInClaimCollect"/>
+  <input type="email" name="email" value=""/>
+  <input type="password" id="ap-credential-autofill-hint" name="password" value="x"/>
+</form>
+</body></html>]])
+env.secPassword = nil
+env.fillAmazonSignInFields(claimOnly)
+assert(claimOnly:xpath('//*[@name="password"]'):length() == 0,
+  "claim-collect password name must be cleared without secPassword")
+assert(claimOnly:xpath('//*[@id="ap-credential-autofill-hint"]'):attr("disabled") == "disabled",
+  "claim-collect hint must be disabled without secPassword")
+
 -- Softblock after import still returns Bot-Prüfung (not LoginFailed).
 env.LocalStorage.cookies = nil
 env.connectShop = function()

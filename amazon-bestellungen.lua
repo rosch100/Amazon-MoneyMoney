@@ -1461,6 +1461,12 @@ function connectShopWithCheck(method, url, postContent, postContentType, headers
       print("Forced re-login stopped: auth error on sign-in page")
       return html
     end
+    -- Cookie-only login: never submit an empty password page.
+    if isAmazonPasswordSignInPage(html)
+        and (type(secPassword) ~= 'string' or secPassword == '') then
+      print("Forced re-login stopped: cookie-only session has no password")
+      return html
+    end
     fillAmazonSignInFields(html)
     html=connectShopForm(html:xpath(xpform))
     steps=steps+1
@@ -3710,25 +3716,40 @@ function isAmazonPasswordSignInPage(htmlNode)
   return htmlNode:xpath('//form[contains(@name,"signIn")]//*[@name="password"]'):length() > 0
 end
 
---- Claim-collect drops the autofill password from the request. Empty value still
--- submits password= via form:submit(); disabled and a blank name exclude it.
+--- Drop autofill password= from claim-collect (empty value still posts the name).
+function stripAmazonClaimCollectPasswordHint(passwordNodes)
+  if passwordNodes == nil or passwordNodes:length() == 0 then
+    return
+  end
+  passwordNodes:attr("value", "")
+  passwordNodes:attr("disabled", "disabled")
+  passwordNodes:attr("name", "")
+end
+
+function fillAmazonSignInEmail(htmlNode)
+  if htmlNode == nil or type(secUsername) ~= 'string' or secUsername == '' then
+    return
+  end
+  htmlNode:xpath('//*[@name="email"]'):attr("value", secUsername)
+end
+
+--- Claim-collect drops the autofill password from the request.
 -- The password page (ap_password) receives the real password.
+-- Cookie-only sessions (secPassword nil) still strip the claim-collect hint.
 function fillAmazonSignInFields(htmlNode)
   if htmlNode == nil then
     return
   end
-  if type(secUsername) == 'string' and secUsername ~= '' then
-    htmlNode:xpath('//*[@name="email"]'):attr("value", secUsername)
-  end
+  fillAmazonSignInEmail(htmlNode)
   local password=htmlNode:xpath('//*[@name="password"]')
-  if password:length() == 0 or type(secPassword) ~= 'string' then
+  if password:length() == 0 then
     return
   end
   if isAmazonClaimCollectPage(htmlNode) then
-    password:attr("value", "")
-    password:attr("disabled", "disabled")
-    password:attr("name", "")
-  else
+    stripAmazonClaimCollectPasswordHint(password)
+    return
+  end
+  if type(secPassword) == 'string' and secPassword ~= '' then
     password:attr("value", secPassword)
   end
 end
@@ -3999,7 +4020,7 @@ function submitSwitchAuthPrompt(htmlNode)
     return nil, "auth_prompt page missing"
   end
   if type(secPassword) ~= 'string' or secPassword == '' then
-    return nil, "password missing for auth_prompt"
+    return nil, amazonCookieOnlySessionNeedsPasswordMessage()
   end
   local form=htmlNode:xpath('//form[@name="signIn"]')
   if form:length() == 0 then
@@ -4132,13 +4153,18 @@ end
 
 function amazonAwsWafSoftblockMessage()
   return "Amazon: Bot-Prüfung (AWS WAF) nicht gelöst. Bitte im Browser bei amazon.de "
-    .."anmelden und den Abruf später erneut versuchen. Die Meldung „Passwort falsch“ "
-    .."nach dem Claim ist dann oft irreführend."
+    .."anmelden und die Session per COOKIE:… als Passwort importieren (siehe README). "
+    .."Die Meldung „Passwort falsch“ nach dem Claim ist dann oft irreführend."
 end
 
 function amazonImportedCookieSessionExpiredMessage()
   return "Amazon: Cookie-Session abgelaufen oder ungültig. Bitte im Browser bei amazon.de "
     .."anmelden und COOKIE:… neu als Passwort einfügen."
+end
+
+function amazonCookieOnlySessionNeedsPasswordMessage()
+  return "Amazon: Cookie-Session ohne gespeichertes Passwort. Für diesen Schritt "
+    .."Amazon-Passwort in MoneyMoney hinterlegen oder COOKIE:… nach Browser-Login erneuern."
 end
 
 --- Hub/BoA-compatible COOKIE: payload (trim; comma → semicolon when no ';').
@@ -4193,6 +4219,29 @@ function applyImportedAmazonCookies(cookieString)
   return nil
 end
 
+function haltMessageIfAmazonAwsWaf(htmlNode, logMsg)
+  if not isAmazonAwsWafChallengePage(htmlNode) then
+    return nil
+  end
+  if type(logMsg) == 'string' and logMsg ~= '' then
+    print(logMsg)
+  end
+  return amazonAwsWafSoftblockMessage()
+end
+
+function amazonCookieImportLandingFailure(htmlNode)
+  if isLoggedInOrderLanding(htmlNode) then
+    return nil
+  end
+  if htmlNode ~= nil and (
+      htmlNode:xpath('//form[@name="signIn"]'):length() > 0
+      or isAmazonPasswordSignInPage(htmlNode)
+      or isAmazonMfaPage(htmlNode)) then
+    return amazonImportedCookieSessionExpiredMessage()
+  end
+  return "Amazon: Cookie-Import fehlgeschlagen — Bestellübersicht nicht erreichbar."
+end
+
 --- Apply COOKIE: jar, open shop/orders, require logged-in landing (sets module html).
 function establishAmazonSessionFromImportedCookies(cookieString)
   local applyErr=applyImportedAmazonCookies(cookieString)
@@ -4205,25 +4254,16 @@ function establishAmazonSessionFromImportedCookies(cookieString)
     return "Amazon: "..akamaiError
   end
   html=resolvedHtml
-  if isAmazonAwsWafChallengePage(html) then
-    print("AWS WAF / softblock after cookie import; halt")
-    return amazonAwsWafSoftblockMessage()
+  local wafErr=haltMessageIfAmazonAwsWaf(html, "AWS WAF / softblock after cookie import; halt")
+  if wafErr ~= nil then
+    return wafErr
   end
   enterOrderList()
-  if isAmazonAwsWafChallengePage(html) then
-    print("AWS WAF / softblock on order list after cookie import; halt")
-    return amazonAwsWafSoftblockMessage()
+  wafErr=haltMessageIfAmazonAwsWaf(html, "AWS WAF / softblock on order list after cookie import; halt")
+  if wafErr ~= nil then
+    return wafErr
   end
-  if isLoggedInOrderLanding(html) then
-    return nil
-  end
-  if html ~= nil and (
-      html:xpath('//form[@name="signIn"]'):length() > 0
-      or isAmazonPasswordSignInPage(html)
-      or isAmazonMfaPage(html)) then
-    return amazonImportedCookieSessionExpiredMessage()
-  end
-  return "Amazon: Cookie-Import fehlgeschlagen — Bestellübersicht nicht erreichbar."
+  return amazonCookieImportLandingFailure(html)
 end
 
 function finishAmazonLoginDisplayNameFromHtml(htmlNode)

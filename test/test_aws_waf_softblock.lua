@@ -69,6 +69,8 @@ local result = env.InitializeSession2(
 assert(type(result) == "string", "login must return an error string, got " .. tostring(result))
 assert(result:find("Bot-Prüfung", 1, true),
   "error must be the Bot-Prüfung message, got: " .. result)
+assert(result:find("COOKIE:", 1, true),
+  "softblock message must point to COOKIE: import, got: " .. result)
 assert(result ~= env.LoginFailed,
   "must not return LoginFailed (clears cookies / looks like bad password)")
 
