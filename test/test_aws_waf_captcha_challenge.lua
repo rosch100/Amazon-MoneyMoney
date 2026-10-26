@@ -92,3 +92,70 @@ assert(type(ch2) == "table" and ch2.title == "Amazon Bot-Prüfung",
     .. tostring(ch2))
 
 print("ok challenge return")
+
+-- Unit: empty / nil token → A
+env.LocalStorage = { loginCounter = 0, patcher = {}, cookies = "session-id=1" }
+env.connection = nil
+assert(env.applyAmazonAwsWafCaptchaToken("") ~= nil, "empty token must return A message")
+assert(env.applyAmazonAwsWafCaptchaToken(nil) ~= nil, "nil token must return A message")
+
+-- Unit: aws-waf-token cookie via ensureAmazonShopConnection
+local cookiesSet = {}
+local fakeConn = {
+  setCookie = function(_, c) cookiesSet[#cookiesSet + 1] = c end,
+  getCookies = function() return table.concat(cookiesSet, "; ") end,
+}
+env.connection = nil
+env.Connection = function() return fakeConn end
+assert(env.applyAmazonAwsWafCaptchaToken("waf-token-stub") == nil)
+local joined = table.concat(cookiesSet, " ")
+assert(joined:find("aws%-waf%-token=waf%-token%-stub", 1),
+  "token must be stored as aws-waf-token cookie, got: " .. joined)
+
+-- Integration: step1 challenge → step2 token → softblock gone
+env.LocalStorage = { loginCounter = 0, patcher = {} }
+local phase = "softblock"
+env.connection = nil
+env.Connection = function() return fakeConn end
+env.connectShop = function()
+  if phase == "softblock" then
+    return mm.HTML(readFixture("aws_waf_challenge_sitekey.html"))
+  end
+  return mm.HTML([[<!DOCTYPE html><html lang="de-de"><head><title>Amazon.de</title></head>
+<body><span class="nav-shortened-name">Ada</span>
+<form action="/gp/css/order-history"><select name="timeFilter">
+<option value="last30">30</option></select></form></body></html>]])
+end
+env.resolveAkamaiInterstitial = function(page) return page, nil end
+env.enterOrderList = function() end
+env.discoverAmazonSubAccounts = function() return true, nil end
+
+local ch3 = env.InitializeSession2(
+  env.ProtocolWebBanking, "Amazon", 1,
+  {"user@example.com", "secret-pw"}, true)
+assert(type(ch3) == "table", "step1 must return challenge")
+assert(env.LocalStorage.awsWafCaptchaPending == true)
+
+phase = "ok"
+local step2 = env.InitializeSession2(
+  env.ProtocolWebBanking, "Amazon", 2,
+  {"waf-token-stub"}, true)
+assert(type(step2) ~= "string" or not step2:find("Bot-Prüfung", 1, true),
+  "step2 after token must not be softblock A, got: " .. tostring(step2))
+assert(env.LocalStorage.awsWafCaptchaPending ~= true,
+  "pending must clear after token apply")
+
+-- Empty token on step2 → A
+env.LocalStorage = { loginCounter = 0, patcher = {}, awsWafCaptchaPending = true }
+phase = "softblock"
+env.enterOrderList = function()
+  error("enterOrderList must not run when WAF token missing")
+end
+local empty = env.InitializeSession2(
+  env.ProtocolWebBanking, "Amazon", 2,
+  {""}, true)
+assert(type(empty) == "string" and empty:find("Bot-Prüfung", 1, true),
+  "empty WAF token must return A")
+
+print("ok token apply")
+print("test_aws_waf_captcha_challenge OK")

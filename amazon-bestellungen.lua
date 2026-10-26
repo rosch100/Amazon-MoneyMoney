@@ -1190,6 +1190,40 @@ function connectShop(method, url, postContent, postContentType, headers)
   return parseAmazonHtml(content, charset)
 end
 
+--- Create shop Connection and restore LocalStorage cookies (same as former connectShopRaw init).
+function ensureAmazonShopConnection()
+  if connection ~= nil then
+    return
+  end
+  connection = Connection()
+  if type(LocalStorage) ~= "table" or type(LocalStorage.cookies) ~= "string" then
+    return
+  end
+  local status,err = pcall(function()
+    for i in string.gmatch(LocalStorage.cookies, '([^; ]+)') do
+      if i:sub(1, #'ap-fid=') ~= 'ap-fid=' and i:sub(-#'=deleted') ~= '=deleted' then
+        connection:setCookie(i..'; Domain='..const.domain
+          ..'; Expires=Tue, 01-Jan-2036 08:00:01 GMT; Path=/')
+      end
+    end
+  end)
+  if not status then
+    print("ensureAmazonShopConnection cookie restore:", err)
+  end
+end
+
+function applyAmazonAwsWafCaptchaToken(token)
+  if type(token) ~= "string" or token == "" then
+    return amazonAwsWafSoftblockMessage()
+  end
+  ensureAmazonShopConnection()
+  connection:setCookie(
+    "aws-waf-token=" .. token
+      .. "; Domain=" .. const.domain
+      .. "; Path=/; Secure")
+  return nil
+end
+
 function connectShopRaw(method, url, postContent, postContentType, headers)
   -- All string request URLs must stay on www.amazon.de (MoneyMoney whitelist).
   if type(url) == 'string' and url ~= '' then
@@ -1219,21 +1253,7 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
     end
   end
 
-  if connection == nil then
-    connection = Connection()
-    --connection.useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0"
-
-    local status,err = pcall( function()
-      for i in string.gmatch(LocalStorage.cookies, '([^; ]+)') do
-        if  i:sub(1, #'ap-fid=') ~= 'ap-fid=' and i:sub(-#'=deleted') ~= '=deleted' then
-          -- print("keep cookie:"..i)
-          connection:setCookie(i..'; Domain='..const.domain..'; Expires=Tue, 01-Jan-2036 08:00:01 GMT; Path=/')
-        else
-        -- print("suppress cockie:"..i)
-        end
-      end
-    end) --pcall
-  end
+  ensureAmazonShopConnection()
 
   local cached=false
   local content, charset, mimeType, filename, headers
@@ -7731,6 +7751,36 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       return scanResult
     end
     return nil
+  end
+
+  -- Resume after MoneyMoney AWS WAF captcha (credentials[1] = solution token).
+  if type(LocalStorage) == "table"
+      and LocalStorage.awsWafCaptchaPending == true
+      and step > 1 then
+    local applyErr = applyAmazonAwsWafCaptchaToken(credentials[1])
+    LocalStorage.awsWafCaptchaPending = nil
+    if applyErr ~= nil then
+      MM.printStatus(applyErr)
+      return applyErr
+    end
+    html = connectShop("GET", baseurl)
+    local resolvedHtml, akamaiError = resolveAkamaiInterstitial(html)
+    if akamaiError ~= nil then
+      return "Amazon: "..akamaiError
+    end
+    html = resolvedHtml
+    local again = takeAwsWafCaptchaChallengeOrSoftblockMessage(html, baseurl, false)
+    if type(again) == "string" then
+      MM.printStatus(again)
+      return again
+    end
+    enterOrderList()
+    again = takeAwsWafCaptchaChallengeOrSoftblockMessage(html, baseurl, false)
+    if type(again) == "string" then
+      MM.printStatus(again)
+      return again
+    end
+    -- Fall through into the normal post-start login loop (claim / password / OTP).
   end
 
   if step==1 then
