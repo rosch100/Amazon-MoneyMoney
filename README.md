@@ -2,7 +2,7 @@
 
 Bestellungen von amazon.de als Umsätze in MoneyMoney.
 
-Version: **2.06**
+Version: **2.07**
 Repository: https://github.com/rosch100/Amazon-MoneyMoney
 Gemeinsame Infos: https://github.com/rosch100/moneymoney-extensions
 
@@ -14,10 +14,10 @@ Dateiname: **`amazon-bestellungen.lua`** (nicht `amazon-orders.lua` — der Name
 durch die Erweiterung von Michael Beutling belegt; alle Extensions liegen im selben
 Download-Verzeichnis).
 
-Aus diesem Repository (aktuell **unsigniert**, Version 2.06 — Signatur ausstehend):
+Aus diesem Repository (aktuell **unsigniert**, Version 2.07 — Signatur ausstehend):
 [amazon-bestellungen.lua](https://raw.githubusercontent.com/rosch100/Amazon-MoneyMoney/master/amazon-bestellungen.lua)
 
-Website-Download unter diesem Namen: **2.04** signiert; dieses Repo ist **2.06** (Signatur ausstehend).
+Website-Download unter diesem Namen: **2.04** signiert; dieses Repo ist **2.07** (Signatur ausstehend).
 
 Datei nach
 `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney/Extensions`
@@ -29,20 +29,49 @@ Unsignierte/Entwicklungs-Plugins: MoneyMoney-**Beta**, Signaturprüfung unter
 Liefert der erste Abruf eine AWS-WAF-/Softblock-Seite, bricht die Extension mit
 einer Bot-Prüfung-Meldung ab (statt irreführend „Passwort falsch“). Die Prüfung
 selbst braucht Browser-JavaScript und ist mit Username/Passwort allein oft nicht
-lösbar — dann im Browser bei amazon.de anmelden und später erneut abrufen.
+lösbar — dann Cookie-Import (unten) oder später erneut abrufen.
 
 ## Einrichten
 
 *Konto hinzufügen* → *Andere* → *Amazon Bestellungen*.
 
-Benutzername und Passwort = Amazon-Login. Mehrere Amazon-Konten: jeweils einen
-eigenen Bankzugang mit eigener E-Mail anlegen.
+Benutzername = Amazon-E-Mail. Passwort = Amazon-Passwort **oder** Cookie-Import
+`COOKIE:…` (siehe unten). Mehrere Amazon-Konten: jeweils einen eigenen Bankzugang
+mit eigener E-Mail anlegen.
 
 Es erscheinen das gemeinsame Konto **Amazon** und ggf. getrennte Konten für
 persönlich und geschäftlich. Kontoart *Sonstige* belassen.
 
 Alte Zugänge (anderer Service-Name oder alte Kontonummern) löschen und neu
 anlegen — sie werden nicht mehr aktualisiert.
+
+## Cookie-Import (bei Bot-Prüfung / Softblock)
+
+Wenn Username/Passwort an der AWS-WAF hängen bleibt: Session aus dem Browser
+übernehmen (gleicher Ablauf wie BoA/Fidelity/MLP im
+[Hub — Cookie-Import](https://github.com/rosch100/moneymoney-extensions#cookie-import-beta-extensions)).
+
+1. Im Browser bei [amazon.de](https://www.amazon.de) anmelden (WAF und 2FA lösen).
+2. Mit dem **MoneyMoney Helper** Cookies kopieren (oder manuell
+   `COOKIE:session-id=…; at-acbde=…; …`).
+3. In MoneyMoney als **Passwort** einfügen (E-Mail unverändert lassen).
+4. Zugang aktualisieren — Claim-Login entfällt; die Session kommt aus den Cookies.
+
+Pflicht: `session-id` und ein Auth-Cookie (`at-acbde` / `at-main` bzw.
+`sess-at-acbde` / `sess-at-main`). Abgelaufene Cookies → Meldung zum Neu-Export.
+**Nie** Cookie-Strings in Issues posten.
+
+### Lokal nachvollziehen (Kaltstart wie Nolif/#7)
+
+1. Plugin 2.07 in den Extensions-Ordner (`./link_ext.sh` oder Kopie), MoneyMoney-Beta,
+   Signaturprüfung aus.
+2. Amazon-Zugang **neu anlegen** (oder bestehenden löschen), damit keine Alt-Cookies
+   in `LocalStorage` helfen — so wie Nolifs Kaltstart.
+3. Zuerst mit echtem Passwort abrufen → erwartbar Softblock/Bot-Prüfung (wenn Amazon
+   WAF zeigt).
+4. Browser-Login → Helper → `COOKIE:…` als Passwort → Abruf sollte Konten/Bestellungen
+   ohne Claim laden.
+5. Offline: `./test/run.sh test/test_cookie_import.lua`
 
 ## Nutzung
 

@@ -1080,7 +1080,7 @@ end
 local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters).
-WebBanking{version  = 2.06,
+WebBanking{version  = 2.07,
   url         = baseurl,
   services    = const.services,
   description = const.description}
@@ -4134,6 +4134,113 @@ function amazonAwsWafSoftblockMessage()
   return "Amazon: Bot-Prüfung (AWS WAF) nicht gelöst. Bitte im Browser bei amazon.de "
     .."anmelden und den Abruf später erneut versuchen. Die Meldung „Passwort falsch“ "
     .."nach dem Claim ist dann oft irreführend."
+end
+
+function amazonImportedCookieSessionExpiredMessage()
+  return "Amazon: Cookie-Session abgelaufen oder ungültig. Bitte im Browser bei amazon.de "
+    .."anmelden und COOKIE:… neu als Passwort einfügen."
+end
+
+--- Hub/BoA-compatible COOKIE: payload (trim; comma → semicolon when no ';').
+function normalizeImportedCookieString(cookieString)
+  if type(cookieString) ~= 'string' then
+    return ''
+  end
+  local formatted=cookieString:match("^%s*(.-)%s*$") or ''
+  if formatted:find(",", 1, true) and not formatted:find(";", 1, true) then
+    formatted=formatted:gsub("%s*,%s*", "; ")
+  end
+  return formatted
+end
+
+function amazonImportedCookiesHaveAuthToken(cookieString)
+  if type(cookieString) ~= 'string' then
+    return false
+  end
+  return cookieString:find("at-main=", 1, true) ~= nil
+    or cookieString:find("at-acbde=", 1, true) ~= nil
+    or cookieString:find("sess-at-main=", 1, true) ~= nil
+    or cookieString:find("sess-at-acbde=", 1, true) ~= nil
+end
+
+--- nil when ok; otherwise a German validation message (no network).
+function amazonImportedCookiesMissingRequired(cookieString)
+  local formatted=normalizeImportedCookieString(cookieString)
+  if formatted == '' or not formatted:find("=", 1, true) then
+    return "Ungültiges Cookie-Format. Erwartet: name=value;name2=value2"
+  end
+  if not formatted:find("session-id=", 1, true) then
+    return "Amazon-Cookies unvollständig: session-id fehlt."
+  end
+  if not amazonImportedCookiesHaveAuthToken(formatted) then
+    return "Amazon-Cookies unvollständig: Auth-Cookie fehlt "
+      .."(at-main / at-acbde / sess-at-main / sess-at-acbde)."
+  end
+  return nil
+end
+
+function applyImportedAmazonCookies(cookieString)
+  local formatted=normalizeImportedCookieString(cookieString)
+  local missing=amazonImportedCookiesMissingRequired(formatted)
+  if missing ~= nil then
+    return missing
+  end
+  if type(LocalStorage) ~= 'table' then
+    return "Amazon: LocalStorage fehlt — Cookie-Import nicht möglich."
+  end
+  LocalStorage.cookies=formatted
+  connection=nil
+  return nil
+end
+
+--- Apply COOKIE: jar, open shop/orders, require logged-in landing (sets module html).
+function establishAmazonSessionFromImportedCookies(cookieString)
+  local applyErr=applyImportedAmazonCookies(cookieString)
+  if applyErr ~= nil then
+    return applyErr
+  end
+  html=connectShop("GET", baseurl)
+  local resolvedHtml, akamaiError=resolveAkamaiInterstitial(html)
+  if akamaiError ~= nil then
+    return "Amazon: "..akamaiError
+  end
+  html=resolvedHtml
+  if isAmazonAwsWafChallengePage(html) then
+    print("AWS WAF / softblock after cookie import; halt")
+    return amazonAwsWafSoftblockMessage()
+  end
+  enterOrderList()
+  if isAmazonAwsWafChallengePage(html) then
+    print("AWS WAF / softblock on order list after cookie import; halt")
+    return amazonAwsWafSoftblockMessage()
+  end
+  if isLoggedInOrderLanding(html) then
+    return nil
+  end
+  if html ~= nil and (
+      html:xpath('//form[@name="signIn"]'):length() > 0
+      or isAmazonPasswordSignInPage(html)
+      or isAmazonMfaPage(html)) then
+    return amazonImportedCookieSessionExpiredMessage()
+  end
+  return "Amazon: Cookie-Import fehlgeschlagen — Bestellübersicht nicht erreichbar."
+end
+
+function finishAmazonLoginDisplayNameFromHtml(htmlNode)
+  local name=""
+  if htmlNode ~= nil then
+    name=htmlNode:xpath('//span[@class="nav-shortened-name"]'):text()
+    if name == "" then
+      name=htmlNode:xpath('//span[@class="abnav-accountfor"]'):text()
+      name=string.gsub(name, "Konto für ", "")
+    end
+  end
+  if name == "" then
+    name="Unkown"
+  else
+    print("name="..name)
+  end
+  aName=name
 end
 
 --- Parse pow / bm-verify / meta-refresh from an Akamai interstitial HTML body.
@@ -7470,7 +7577,14 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
 
   if step==1 then
     activateAmazonLoginStorage(credentials[1])
-    rememberShopCredentials(credentials[1], credentials[2])
+    local password=credentials[2]
+    local cookieImport=type(password) == 'string' and password:match("^COOKIE:") ~= nil
+    -- Cookie blob must not become secPassword (forced re-login / auth_prompt).
+    if cookieImport then
+      rememberShopCredentials(credentials[1], nil)
+    else
+      rememberShopCredentials(credentials[1], password)
+    end
     captcha1run=true
     mfa1run=true
     claimsVerify1run=true
@@ -7501,6 +7615,23 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         end
       end
     end
+
+    if cookieImport then
+      print("cookie import login")
+      local cookieErr=establishAmazonSessionFromImportedCookies(password:sub(8))
+      if cookieErr ~= nil then
+        MM.printStatus(cookieErr)
+        return cookieErr
+      end
+      print('login success (cookie import)')
+      finishAmazonLoginDisplayNameFromHtml(html)
+      local _, discoveryErr=discoverAmazonSubAccounts(nil, {reuseCustomerIds=true})
+      if discoveryErr ~= nil then
+        return discoveryErr
+      end
+      return nil
+    end
+
     html = connectShop("GET",baseurl)
     local resolvedHtml, akamaiError = resolveAkamaiInterstitial(html)
     if akamaiError ~= nil then
@@ -7750,17 +7881,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
 
   if isLoggedInOrderLanding(html) then
     print('login success')
-    aName=html:xpath('//span[@class="nav-shortened-name"]'):text()
-    if aName == "" then
-      aName=html:xpath('//span[@class="abnav-accountfor"]'):text()
-      aName=string.gsub(aName,"Konto für ","")
-    end
-    if aName == "" then
-      aName="Unkown"
-      -- print("can't get username, new layout?")
-    else
-      print("name="..aName)
-    end
+    finishAmazonLoginDisplayNameFromHtml(html)
   else
     return failMissingLoginPage("Unerwartete Antwort")
   end
