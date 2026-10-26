@@ -1350,7 +1350,8 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
         error("unwanted cockie:"..i)
       end
     end
-    LocalStorage.cookies=connection:getCookies()
+    -- Keep aws-waf-token on the live Connection for this session; never persist it.
+    LocalStorage.cookies=amazonCookiesWithoutAwsWafToken(connection:getCookies())
   else
   -- if config.debug then print("skip cookie saving") end
   end
@@ -4189,7 +4190,31 @@ end
 
 local AMAZON_WAF_BOT_TITLE = "Amazon Bot-Prüfung"
 
---- Absolute *.token.awswaf.com/.../challenge.js only (relative scripts → nil).
+--- Host must be token.awswaf.com or a subdomain (dot-boundary; reject lookalikes).
+function isAmazonAwsWafChallengeScriptHost(host)
+  if type(host) ~= "string" or host == "" then
+    return false
+  end
+  host = string.lower(host)
+  return host == "token.awswaf.com" or endsWith(host, ".token.awswaf.com")
+end
+
+--- Drop aws-waf-token from a cookie jar string (session cookie stays on Connection).
+function amazonCookiesWithoutAwsWafToken(cookieString)
+  if type(cookieString) ~= "string" or cookieString == "" then
+    return cookieString
+  end
+  local kept = {}
+  for part in string.gmatch(cookieString, "([^;]+)") do
+    local trimmed = part:match("^%s*(.-)%s*$") or part
+    if trimmed:sub(1, #"aws-waf-token=") ~= "aws-waf-token=" then
+      kept[#kept + 1] = trimmed
+    end
+  end
+  return table.concat(kept, "; ")
+end
+
+--- Absolute https://…token.awswaf.com/…/challenge.js only (relative scripts → nil).
 function extractAmazonAwsWafChallengeScriptUrl(htmlNode)
   if htmlNode == nil then
     return nil
@@ -4199,8 +4224,12 @@ function extractAmazonAwsWafChallengeScriptUrl(htmlNode)
     return nil
   end
   local src = raw:match(
-    '[sS][rR][cC]%s*=%s*["\'](https://[^"\']*token%.awswaf%.com[^"\']*challenge%.js[^"\']*)["\']')
+    '[sS][rR][cC]%s*=%s*["\'](https://[^"\']*challenge%.js[^"\']*)["\']')
   if type(src) ~= "string" or src == "" then
+    return nil
+  end
+  local host = src:match("^https://([^/:?#]+)")
+  if not isAmazonAwsWafChallengeScriptHost(host) then
     return nil
   end
   return src

@@ -36,6 +36,22 @@ assert(env.amazonAwsWafCaptchaChallengeParts(shell, "https://www.amazon.de/") ==
 assert(env.amazonAwsWafCaptchaChallengeParts(relativeOnly, "https://www.amazon.de/") == nil,
   "relative challenge.js must not enable C")
 
+local lookalike = mm.HTML([[<!DOCTYPE html><html lang="en"><head><title></title>
+<script src="https://foo.token.awswaf.com.evil.example/a/challenge.js"></script>
+</head><body><div data-sitekey="x"></div></body></html>]])
+assert(env.amazonAwsWafCaptchaChallengeParts(lookalike, "https://www.amazon.de/") == nil,
+  "lookalike host token.awswaf.com.evil must not enable C")
+assert(env.isAmazonAwsWafChallengeScriptHost("techblog.token.awswaf.com") == true)
+assert(env.isAmazonAwsWafChallengeScriptHost("token.awswaf.com") == true)
+assert(env.isAmazonAwsWafChallengeScriptHost("token.awswaf.com.evil.example") == false)
+
+local stripped = env.amazonCookiesWithoutAwsWafToken(
+  "session-id=1; aws-waf-token=secret; at-acbde=Atza|x")
+assert(stripped:find("aws%-waf%-token=", 1) == nil,
+  "persisted cookies must not keep aws-waf-token")
+assert(stripped:find("session%-id=1", 1) and stripped:find("at%-acbde=", 1),
+  "other cookies must remain after stripping waf token")
+
 print("ok extract")
 
 env.LocalStorage = { loginCounter = 0, patcher = {} }

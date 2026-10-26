@@ -52,6 +52,8 @@ local targets = {
   "amazonLooksLikeEmptyTitleSoftblock",
   "rawHasAwsWafChallengeJs",
   "amazonAwsWafSoftblockMessage",
+  "isAmazonAwsWafChallengeScriptHost",
+  "amazonCookiesWithoutAwsWafToken",
   "extractAmazonAwsWafChallengeScriptUrl",
   "extractAmazonAwsWafSitekey",
   "amazonAwsWafCaptchaChallengeParts",
