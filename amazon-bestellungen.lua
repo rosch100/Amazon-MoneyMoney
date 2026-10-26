@@ -22,6 +22,8 @@ local captcha1run
 local mfa1run
 local claimsVerify1run
 local aName
+-- COOKIE: login: skip remote sign-out so imported at-* cookies stay valid.
+local cookieImportSession=false
 
 --- @function rememberShopCredentials
 -- In-memory login credentials for the current session (not persisted).
@@ -1080,7 +1082,7 @@ end
 local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters).
-WebBanking{version  = 2.05,
+WebBanking{version  = 2.08,
   url         = baseurl,
   services    = const.services,
   description = const.description}
@@ -1188,6 +1190,43 @@ function connectShop(method, url, postContent, postContentType, headers)
   return parseAmazonHtml(content, charset)
 end
 
+--- Restore LocalStorage cookies onto the current shop Connection.
+function restoreAmazonShopCookiesFromLocalStorage()
+  if type(LocalStorage) ~= "table" or type(LocalStorage.cookies) ~= "string" then
+    return
+  end
+  for i in string.gmatch(LocalStorage.cookies, '([^; ]+)') do
+    if i:sub(1, #'ap-fid=') ~= 'ap-fid=' and i:sub(-#'=deleted') ~= '=deleted' then
+      connection:setCookie(i..'; Domain='..const.domain
+        ..'; Expires=Tue, 01-Jan-2036 08:00:01 GMT; Path=/')
+    end
+  end
+end
+
+--- Create shop Connection and restore LocalStorage cookies (same as former connectShopRaw init).
+function ensureAmazonShopConnection()
+  if connection ~= nil then
+    return
+  end
+  connection = Connection()
+  local ok, err = pcall(restoreAmazonShopCookiesFromLocalStorage)
+  if not ok then
+    print("ensureAmazonShopConnection cookie restore:", err)
+  end
+end
+
+function applyAmazonAwsWafCaptchaToken(token)
+  if type(token) ~= "string" or token == "" then
+    return amazonAwsWafSoftblockMessage()
+  end
+  ensureAmazonShopConnection()
+  connection:setCookie(
+    "aws-waf-token=" .. token
+      .. "; Domain=" .. const.domain
+      .. "; Path=/; Secure")
+  return nil
+end
+
 function connectShopRaw(method, url, postContent, postContentType, headers)
   -- All string request URLs must stay on www.amazon.de (MoneyMoney whitelist).
   if type(url) == 'string' and url ~= '' then
@@ -1217,21 +1256,7 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
     end
   end
 
-  if connection == nil then
-    connection = Connection()
-    --connection.useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:66.0) Gecko/20100101 Firefox/66.0"
-
-    local status,err = pcall( function()
-      for i in string.gmatch(LocalStorage.cookies, '([^; ]+)') do
-        if  i:sub(1, #'ap-fid=') ~= 'ap-fid=' and i:sub(-#'=deleted') ~= '=deleted' then
-          -- print("keep cookie:"..i)
-          connection:setCookie(i..'; Domain='..const.domain..'; Expires=Tue, 01-Jan-2036 08:00:01 GMT; Path=/')
-        else
-        -- print("suppress cockie:"..i)
-        end
-      end
-    end) --pcall
-  end
+  ensureAmazonShopConnection()
 
   local cached=false
   local content, charset, mimeType, filename, headers
@@ -1325,7 +1350,8 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
         error("unwanted cockie:"..i)
       end
     end
-    LocalStorage.cookies=connection:getCookies()
+    -- Keep aws-waf-token on the live Connection for this session; never persist it.
+    LocalStorage.cookies=amazonCookiesWithoutAwsWafToken(connection:getCookies())
   else
   -- if config.debug then print("skip cookie saving") end
   end
@@ -1447,14 +1473,35 @@ function connectShopWithCheck(method, url, postContent, postContentType, headers
   local content, charset=connectShopRaw(method, url, postContent, postContentType, headers)
   local html=parseAmazonHtml(content, charset)
   local xpform='//form[@name="signIn"]'
-  if html:xpath(xpform):attr("name") ~= '' then
-    removeWebCacheLastItem()
-    print("Forced log out detect, enter username/password")
-    html:xpath('//*[@name="email"]'):attr("value", secUsername)
-    html:xpath('//*[@name="password"]'):attr("value",secPassword)
-    html= connectShopForm(html:xpath(xpform))
+  if html == nil or html:xpath(xpform):attr("name") == '' then
+    return html
   end
-  return html
+  removeWebCacheLastItem()
+  print("Forced log out detect, enter username/password")
+  -- Claim-collect may return the password page next; finish both steps.
+  -- Stop if Amazon already rejected credentials (do not resubmit the same login).
+  local steps=0
+  while html ~= nil and html:xpath(xpform):attr("name") ~= '' and steps < 3 do
+    local authError=html:xpath('//div[@id="auth-error-message-box"]'):text()
+    if type(authError) == 'string' and authError ~= '' then
+      print("Forced re-login stopped: auth error on sign-in page")
+      return html
+    end
+    -- Cookie-only login: never submit an empty password page.
+    if isAmazonPasswordSignInPage(html)
+        and (type(secPassword) ~= 'string' or secPassword == '') then
+      print("Forced re-login stopped: cookie-only session has no password")
+      return html
+    end
+    fillAmazonSignInFields(html)
+    html=connectShopForm(html:xpath(xpform))
+    steps=steps+1
+  end
+  if html ~= nil and html:xpath(xpform):attr("name") ~= '' then
+    return html
+  end
+  content, charset=connectShopRaw(method, url, postContent, postContentType, headers)
+  return parseAmazonHtml(content, charset)
 end
 
 function getDate(text)
@@ -3695,25 +3742,40 @@ function isAmazonPasswordSignInPage(htmlNode)
   return htmlNode:xpath('//form[contains(@name,"signIn")]//*[@name="password"]'):length() > 0
 end
 
---- Claim-collect drops the autofill password from the request. Empty value still
--- submits password= via form:submit(); disabled and a blank name exclude it.
+--- Drop autofill password= from claim-collect (empty value still posts the name).
+function stripAmazonClaimCollectPasswordHint(passwordNodes)
+  if passwordNodes == nil or passwordNodes:length() == 0 then
+    return
+  end
+  passwordNodes:attr("value", "")
+  passwordNodes:attr("disabled", "disabled")
+  passwordNodes:attr("name", "")
+end
+
+function fillAmazonSignInEmail(htmlNode)
+  if htmlNode == nil or type(secUsername) ~= 'string' or secUsername == '' then
+    return
+  end
+  htmlNode:xpath('//*[@name="email"]'):attr("value", secUsername)
+end
+
+--- Claim-collect drops the autofill password from the request.
 -- The password page (ap_password) receives the real password.
+-- Cookie-only sessions (secPassword nil) still strip the claim-collect hint.
 function fillAmazonSignInFields(htmlNode)
   if htmlNode == nil then
     return
   end
-  if type(secUsername) == 'string' and secUsername ~= '' then
-    htmlNode:xpath('//*[@name="email"]'):attr("value", secUsername)
-  end
+  fillAmazonSignInEmail(htmlNode)
   local password=htmlNode:xpath('//*[@name="password"]')
-  if password:length() == 0 or type(secPassword) ~= 'string' then
+  if password:length() == 0 then
     return
   end
   if isAmazonClaimCollectPage(htmlNode) then
-    password:attr("value", "")
-    password:attr("disabled", "disabled")
-    password:attr("name", "")
-  else
+    stripAmazonClaimCollectPasswordHint(password)
+    return
+  end
+  if type(secPassword) == 'string' and secPassword ~= '' then
     password:attr("value", secPassword)
   end
 end
@@ -3984,7 +4046,7 @@ function submitSwitchAuthPrompt(htmlNode)
     return nil, "auth_prompt page missing"
   end
   if type(secPassword) ~= 'string' or secPassword == '' then
-    return nil, "password missing for auth_prompt"
+    return nil, amazonCookieOnlySessionNeedsPasswordMessage()
   end
   local form=htmlNode:xpath('//form[@name="signIn"]')
   if form:length() == 0 then
@@ -4068,6 +4130,335 @@ function isAkamaiInterstitial(htmlNode)
   end
   return string.find(raw, "/_sec/verify", 1, true) ~= nil
     or string.find(raw, "triggerInterstitialChallenge", 1, true) ~= nil
+end
+
+--- Softblock shell (Nolif / #7): empty <title>, no shop chrome, short en page.
+function amazonLooksLikeEmptyTitleSoftblock(htmlNode, raw)
+  if htmlNode == nil or type(raw) ~= 'string' or raw == '' then
+    return false
+  end
+  if string.match(htmlNode:xpath('//title'):text() or '', "%S") then
+    return false
+  end
+  if htmlNode:xpath(
+        '//*[@id="nav-logo"]|//span[contains(@class,"nav-shortened-name")]|//form[@name="signIn"]'
+      ):length() > 0 then
+    return false
+  end
+  if #raw >= 8000 then
+    return false
+  end
+  -- lang may use single/double quotes and regional tags (en-US); read the attribute.
+  local lang=string.lower(htmlNode:xpath('//html'):attr('lang') or '')
+  return lang == 'en' or string.match(lang, '^en%-') ~= nil or string.match(lang, '^en_') ~= nil
+end
+
+--- True when HTML references AWS WAF challenge.js as its own token (not nochallenge.js).
+function rawHasAwsWafChallengeJs(lower)
+  if type(lower) ~= 'string' or lower == '' then
+    return false
+  end
+  return string.find(lower, "[^%w%-_]challenge%.js") ~= nil
+    or string.find(lower, "^challenge%.js") ~= nil
+end
+
+--- AWS WAF / softblock (challenge.js). Distinct from Akamai bm-verify.
+-- Continuing into claim yields a misleading credential error (#7).
+-- Logged-in shop/order landings may embed awswaf/challenge scripts — not a softblock.
+function isAmazonAwsWafChallengePage(htmlNode)
+  if isLoggedInOrderLanding(htmlNode) then
+    return false
+  end
+  local raw=htmlNodeRaw(htmlNode)
+  if raw == '' then
+    return false
+  end
+  local lower=string.lower(raw)
+  if rawHasAwsWafChallengeJs(lower)
+      or string.find(lower, "awswaf", 1, true) ~= nil then
+    return true
+  end
+  return amazonLooksLikeEmptyTitleSoftblock(htmlNode, raw)
+end
+
+function amazonAwsWafSoftblockMessage()
+  return "Amazon: Bot-Prüfung nicht gelöst. Bitte im Browser bei amazon.de "
+    .."anmelden, Session mit dem MoneyMoney-Helper als COOKIE:… ins "
+    .."Passwortfeld legen (siehe README) und erneut abrufen. "
+    .."Das ist keine falsche Passwort-Meldung."
+end
+
+local AMAZON_WAF_BOT_TITLE = "Amazon Bot-Prüfung"
+
+--- Host must be token.awswaf.com or a subdomain (dot-boundary; reject lookalikes).
+function isAmazonAwsWafChallengeScriptHost(host)
+  if type(host) ~= "string" or host == "" then
+    return false
+  end
+  host = string.lower(host)
+  return host == "token.awswaf.com" or endsWith(host, ".token.awswaf.com")
+end
+
+--- Drop aws-waf-token from a cookie jar string (session cookie stays on Connection).
+function amazonCookiesWithoutAwsWafToken(cookieString)
+  if type(cookieString) ~= "string" or cookieString == "" then
+    return cookieString
+  end
+  local kept = {}
+  for part in string.gmatch(cookieString, "([^;]+)") do
+    local trimmed = part:match("^%s*(.-)%s*$") or part
+    if trimmed:sub(1, #"aws-waf-token=") ~= "aws-waf-token=" then
+      kept[#kept + 1] = trimmed
+    end
+  end
+  return table.concat(kept, "; ")
+end
+
+--- Absolute https://…token.awswaf.com/…/challenge.js only (relative scripts → nil).
+function extractAmazonAwsWafChallengeScriptUrl(htmlNode)
+  if htmlNode == nil then
+    return nil
+  end
+  local raw = htmlNodeRaw(htmlNode)
+  if raw == "" then
+    return nil
+  end
+  local src = raw:match(
+    '[sS][rR][cC]%s*=%s*["\'](https://[^"\']*challenge%.js[^"\']*)["\']')
+  if type(src) ~= "string" or src == "" then
+    return nil
+  end
+  local host = src:match("^https://([^/:?#]+)")
+  if not isAmazonAwsWafChallengeScriptHost(host) then
+    return nil
+  end
+  return src
+end
+
+function extractAmazonAwsWafSitekey(htmlNode, scriptUrl)
+  if htmlNode == nil then
+    return nil
+  end
+  local fromQuery = type(scriptUrl) == "string"
+    and scriptUrl:match("[?&]sitekey=([^&#]+)") or nil
+  if type(fromQuery) == "string" and fromQuery ~= "" then
+    return fromQuery
+  end
+  local raw = htmlNodeRaw(htmlNode)
+  if raw == "" then
+    return nil
+  end
+  return raw:match('data%-sitekey%s*=%s*["\']([^"\']+)["\']')
+    or raw:match('["\']sitekey["\']%s*:%s*["\']([^"\']+)["\']')
+    or raw:match("gokuProps%s*=%s*{[^}]*key%s*:%s*[\"']([^\"']+)[\"']")
+end
+
+--- Caller must pass a non-empty refererUrl (typically baseurl); no silent baseurl fallback.
+function amazonAwsWafCaptchaChallengeParts(htmlNode, refererUrl)
+  local scriptUrl = extractAmazonAwsWafChallengeScriptUrl(htmlNode)
+  if scriptUrl == nil then
+    return nil
+  end
+  local sitekey = extractAmazonAwsWafSitekey(htmlNode, scriptUrl)
+  if sitekey == nil then
+    return nil
+  end
+  if type(refererUrl) ~= "string" or refererUrl == "" then
+    return nil
+  end
+  return {
+    scriptUrl = scriptUrl,
+    sitekey = sitekey,
+    referer = refererUrl,
+  }
+end
+
+function moneyMoneyAwsWafCaptchaChallenge(parts)
+  local base = parts.scriptUrl:match("^([^?#]+)") or parts.scriptUrl
+  local challengeUrl = base
+    .. "?sitekey=" .. MM.urlencode(parts.sitekey)
+    .. "&referer=" .. MM.urlencode(parts.referer)
+  return {
+    title = AMAZON_WAF_BOT_TITLE,
+    challenge = challengeUrl,
+    label = "Bot-Prüfung",
+  }
+end
+
+--- Softblock page: Captcha challenge table, A message string, or nil if not softblock.
+function takeAwsWafCaptchaChallengeOrSoftblockMessage(htmlNode, refererUrl, interactive)
+  if not isAmazonAwsWafChallengePage(htmlNode) then
+    return nil
+  end
+  if interactive == true
+      and type(LocalStorage) == "table"
+      and LocalStorage.awsWafCaptchaPending ~= true then
+    local parts = amazonAwsWafCaptchaChallengeParts(htmlNode, refererUrl)
+    if parts ~= nil then
+      LocalStorage.awsWafCaptchaPending = true
+      return moneyMoneyAwsWafCaptchaChallenge(parts)
+    end
+  end
+  return amazonAwsWafSoftblockMessage()
+end
+
+--- Challenge table / A-string from softblock check, or nil to continue login.
+function amazonLoginHaltIfAwsWaf(htmlNode, refererUrl, interactive, challengeLog, haltLog)
+  local wafResult = takeAwsWafCaptchaChallengeOrSoftblockMessage(
+    htmlNode, refererUrl, interactive)
+  if type(wafResult) == "table" then
+    print(challengeLog or "AWS WAF captcha challenge; pause before claim")
+    return wafResult
+  end
+  if type(wafResult) == "string" then
+    print(haltLog or "AWS WAF / softblock; halt before claim")
+    MM.printStatus(wafResult)
+    return wafResult
+  end
+  return nil
+end
+
+--- After a normal (non-softblock) start page: order list, then softblock gate again.
+-- Returns challenge/A to abort, or nil to continue into the claim/password loop.
+function continueAmazonLoginAfterStartPage(interactive)
+  local early = amazonLoginHaltIfAwsWaf(
+    html, baseurl, interactive,
+    "AWS WAF captcha challenge; pause before claim",
+    "AWS WAF / softblock on start page; halt before claim")
+  if early ~= nil then
+    return early
+  end
+  enterOrderList()
+  return amazonLoginHaltIfAwsWaf(
+    html, baseurl, interactive,
+    "AWS WAF captcha challenge after order-list; pause before claim",
+    "AWS WAF / softblock after order-list entry; halt before claim")
+end
+
+function amazonImportedCookieSessionExpiredMessage()
+  return "Amazon: Cookie-Session abgelaufen oder ungültig. Bitte im Browser bei amazon.de "
+    .."anmelden und COOKIE:… neu als Passwort einfügen."
+end
+
+function amazonCookieOnlySessionNeedsPasswordMessage()
+  return "Amazon: Cookie-Session ohne gespeichertes Passwort. Für diesen Schritt "
+    .."Amazon-Passwort in MoneyMoney hinterlegen oder COOKIE:… nach Browser-Login erneuern."
+end
+
+--- Hub/BoA-compatible COOKIE: payload (trim; comma → semicolon when no ';').
+function normalizeImportedCookieString(cookieString)
+  if type(cookieString) ~= 'string' then
+    return ''
+  end
+  local formatted=cookieString:match("^%s*(.-)%s*$") or ''
+  if formatted:find(",", 1, true) and not formatted:find(";", 1, true) then
+    formatted=formatted:gsub("%s*,%s*", "; ")
+  end
+  return formatted
+end
+
+function amazonImportedCookiesHaveAuthToken(cookieString)
+  if type(cookieString) ~= 'string' then
+    return false
+  end
+  return cookieString:find("at-main=", 1, true) ~= nil
+    or cookieString:find("at-acbde=", 1, true) ~= nil
+    or cookieString:find("sess-at-main=", 1, true) ~= nil
+    or cookieString:find("sess-at-acbde=", 1, true) ~= nil
+end
+
+--- nil when ok; otherwise a German validation message (no network).
+function amazonImportedCookiesMissingRequired(cookieString)
+  local formatted=normalizeImportedCookieString(cookieString)
+  if formatted == '' or not formatted:find("=", 1, true) then
+    return "Ungültiges Cookie-Format. Erwartet: name=value;name2=value2"
+  end
+  if not formatted:find("session-id=", 1, true) then
+    return "Amazon-Cookies unvollständig: session-id fehlt."
+  end
+  if not amazonImportedCookiesHaveAuthToken(formatted) then
+    return "Amazon-Cookies unvollständig: Auth-Cookie fehlt "
+      .."(at-main / at-acbde / sess-at-main / sess-at-acbde)."
+  end
+  return nil
+end
+
+function applyImportedAmazonCookies(cookieString)
+  local formatted=normalizeImportedCookieString(cookieString)
+  local missing=amazonImportedCookiesMissingRequired(formatted)
+  if missing ~= nil then
+    return missing
+  end
+  if type(LocalStorage) ~= 'table' then
+    return "Amazon: LocalStorage fehlt — Cookie-Import nicht möglich."
+  end
+  LocalStorage.cookies=formatted
+  connection=nil
+  return nil
+end
+
+function haltMessageIfAmazonAwsWaf(htmlNode, logMsg)
+  if not isAmazonAwsWafChallengePage(htmlNode) then
+    return nil
+  end
+  if type(logMsg) == 'string' and logMsg ~= '' then
+    print(logMsg)
+  end
+  return amazonAwsWafSoftblockMessage()
+end
+
+function amazonCookieImportLandingFailure(htmlNode)
+  if isLoggedInOrderLanding(htmlNode) then
+    return nil
+  end
+  if htmlNode ~= nil and (
+      htmlNode:xpath('//form[@name="signIn"]'):length() > 0
+      or isAmazonPasswordSignInPage(htmlNode)
+      or isAmazonMfaPage(htmlNode)) then
+    return amazonImportedCookieSessionExpiredMessage()
+  end
+  return "Amazon: Cookie-Import fehlgeschlagen — Bestellübersicht nicht erreichbar."
+end
+
+--- Apply COOKIE: jar, open shop/orders, require logged-in landing (sets module html).
+function establishAmazonSessionFromImportedCookies(cookieString)
+  local applyErr=applyImportedAmazonCookies(cookieString)
+  if applyErr ~= nil then
+    return applyErr
+  end
+  html=connectShop("GET", baseurl)
+  local resolvedHtml, akamaiError=resolveAkamaiInterstitial(html)
+  if akamaiError ~= nil then
+    return "Amazon: "..akamaiError
+  end
+  html=resolvedHtml
+  local wafErr=haltMessageIfAmazonAwsWaf(html, "AWS WAF / softblock after cookie import; halt")
+  if wafErr ~= nil then
+    return wafErr
+  end
+  enterOrderList()
+  wafErr=haltMessageIfAmazonAwsWaf(html, "AWS WAF / softblock on order list after cookie import; halt")
+  if wafErr ~= nil then
+    return wafErr
+  end
+  return amazonCookieImportLandingFailure(html)
+end
+
+function finishAmazonLoginDisplayNameFromHtml(htmlNode)
+  local name=""
+  if htmlNode ~= nil then
+    name=htmlNode:xpath('//span[@class="nav-shortened-name"]'):text()
+    if name == "" then
+      name=htmlNode:xpath('//span[@class="abnav-accountfor"]'):text()
+      name=string.gsub(name, "Konto für ", "")
+    end
+  end
+  if name == "" then
+    name="Unkown"
+  else
+    print("name="..name)
+  end
+  aName=name
 end
 
 --- Parse pow / bm-verify / meta-refresh from an Akamai interstitial HTML body.
@@ -5749,14 +6140,41 @@ function collectBusinessSpaOrders(subAccountLabel, kind, refreshSince)
   return nAba + nGet, nil
 end
 
+--- Keep GET/nav responses that are scrapable, WAF, or Business shells.
+-- Interstitial/error pages must not replace a prior logged-in landing.
+function keepEnterOrderListResponse(page)
+  if page == nil then
+    return false
+  end
+  if isAmazonAwsWafChallengePage(page) then
+    return true
+  end
+  if orderListPageReady(page) then
+    return true
+  end
+  if isAmazonBusinessOrdersSpa(page) or isAmazonBusinessSession(page) then
+    return true
+  end
+  return false
+end
+
 function tryEnterOrderListGet(url, logMsg)
   if logMsg ~= nil then
     print(logMsg)
   end
   local page=connectShop("GET", url)
+  -- Stop fallbacks on WAF so a later non-ready GET cannot overwrite the softblock.
+  if isAmazonAwsWafChallengePage(page) then
+    html=page
+    return true
+  end
   if orderListPageReady(page) then
     html=page
     return true
+  end
+  -- Business SPA/session shell: keep for ABA routing, but continue fallbacks.
+  if keepEnterOrderListResponse(page) then
+    html=page
   end
   return false
 end
@@ -5778,9 +6196,13 @@ function enterOrderList ()
         html=nextHtml
         return
       end
-      -- Keep non-ready HTML (e.g. Business SPA shell) so collectOrdersFromOrderList
-      -- can route to ABA harvest instead of pretending the classic form exists.
-      if nextHtml ~= nil then
+      if isAmazonAwsWafChallengePage(nextHtml) then
+        html=nextHtml
+        return
+      end
+      -- Keep Business SPA/session shells so collectOrdersFromOrderList can route
+      -- to ABA; drop interstitial/error pages so the prior landing stays.
+      if keepEnterOrderListResponse(nextHtml) then
         html=nextHtml
       end
     end
@@ -7391,9 +7813,40 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     return nil
   end
 
+  -- Resume after MoneyMoney AWS WAF captcha (credentials[1] = solution token).
+  if type(LocalStorage) == "table"
+      and LocalStorage.awsWafCaptchaPending == true
+      and step > 1 then
+    local applyErr = applyAmazonAwsWafCaptchaToken(credentials[1])
+    LocalStorage.awsWafCaptchaPending = nil
+    if applyErr ~= nil then
+      MM.printStatus(applyErr)
+      return applyErr
+    end
+    html = connectShop("GET", baseurl)
+    local resolvedHtml, akamaiError = resolveAkamaiInterstitial(html)
+    if akamaiError ~= nil then
+      return "Amazon: "..akamaiError
+    end
+    html = resolvedHtml
+    local wafResumeHalt = continueAmazonLoginAfterStartPage(false)
+    if wafResumeHalt ~= nil then
+      return wafResumeHalt
+    end
+    -- Fall through into the normal post-start login loop (claim / password / OTP).
+  end
+
   if step==1 then
     activateAmazonLoginStorage(credentials[1])
-    rememberShopCredentials(credentials[1], credentials[2])
+    local password=credentials[2]
+    local cookieImport=type(password) == 'string' and password:match("^COOKIE:") ~= nil
+    cookieImportSession=cookieImport
+    -- Cookie blob must not become secPassword (forced re-login / auth_prompt).
+    if cookieImport then
+      rememberShopCredentials(credentials[1], nil)
+    else
+      rememberShopCredentials(credentials[1], password)
+    end
     captcha1run=true
     mfa1run=true
     claimsVerify1run=true
@@ -7424,13 +7877,35 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
         end
       end
     end
+
+    if cookieImport then
+      print("cookie import login")
+      local cookieErr=establishAmazonSessionFromImportedCookies(password:sub(8))
+      if cookieErr ~= nil then
+        MM.printStatus(cookieErr)
+        return cookieErr
+      end
+      print('login success (cookie import)')
+      finishAmazonLoginDisplayNameFromHtml(html)
+      local _, discoveryErr=discoverAmazonSubAccounts(nil, {reuseCustomerIds=true})
+      if discoveryErr ~= nil then
+        return discoveryErr
+      end
+      return nil
+    end
+
+    LocalStorage.awsWafCaptchaPending = nil
+
     html = connectShop("GET",baseurl)
     local resolvedHtml, akamaiError = resolveAkamaiInterstitial(html)
     if akamaiError ~= nil then
       return "Amazon: "..akamaiError
     end
     html = resolvedHtml
-    enterOrderList()
+    local wafStartHalt = continueAmazonLoginAfterStartPage(interactive)
+    if wafStartHalt ~= nil then
+      return wafStartHalt
+    end
   end
 
   local leaveLoginLoop
@@ -7661,17 +8136,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
 
   if isLoggedInOrderLanding(html) then
     print('login success')
-    aName=html:xpath('//span[@class="nav-shortened-name"]'):text()
-    if aName == "" then
-      aName=html:xpath('//span[@class="abnav-accountfor"]'):text()
-      aName=string.gsub(aName,"Konto für ","")
-    end
-    if aName == "" then
-      aName="Unkown"
-      -- print("can't get username, new layout?")
-    else
-      print("name="..aName)
-    end
+    finishAmazonLoginDisplayNameFromHtml(html)
   else
     return failMissingLoginPage("Unerwartete Antwort")
   end
@@ -8079,9 +8544,9 @@ function EndSession ()
   clearAccountSetupState()
   tryCompleteInitialSync(os.time())
   local persistLogin = shouldPersistAmazonLoginSession(LocalStorage)
-  -- Multi-login: keep cookies in LocalStorage.logins[loginKey]; remote logout
-  -- would invalidate the persisted jar for the next sync of this login.
-  if config.reallyLogout and html ~= nil and not persistLogin then
+  -- Multi-login and COOKIE: import: keep cookies; remote logout would invalidate
+  -- the jar (imported at-* tokens) for the next sync of this login.
+  if config.reallyLogout and html ~= nil and not persistLogin and not cookieImportSession then
     local logoutElement=html:xpath('//a[contains(@id,"nav-item-signout") or contains(@href,"sign-out")]')
     if logoutElement ~= nil then
       print("Logout")
@@ -8099,4 +8564,5 @@ function EndSession ()
   connection = nil
   secPassword=nil
   secUsername=nil
+  cookieImportSession=false
 end
