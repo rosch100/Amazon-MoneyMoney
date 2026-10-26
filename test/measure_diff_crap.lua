@@ -55,6 +55,8 @@ local targets = {
   "extractAmazonAwsWafChallengeScriptUrl",
   "extractAmazonAwsWafSitekey",
   "amazonAwsWafCaptchaChallengeParts",
+  "moneyMoneyAwsWafCaptchaChallenge",
+  "takeAwsWafCaptchaChallengeOrSoftblockMessage",
   "normalizeImportedCookieString",
   "amazonImportedCookiesHaveAuthToken",
   "amazonImportedCookiesMissingRequired",

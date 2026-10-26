@@ -12,6 +12,7 @@ local function readFixture(name)
 end
 
 local env = mm.loadPlugin("amazon-bestellungen.lua")
+local realEnterOrderList = env.enterOrderList
 local withKey = mm.HTML(readFixture("aws_waf_challenge_sitekey.html"))
 local noKey = mm.HTML(readFixture("aws_waf_challenge.html"))
 local shell = mm.HTML(readFixture("aws_waf_softblock_shell.html"))
@@ -36,3 +37,58 @@ assert(env.amazonAwsWafCaptchaChallengeParts(relativeOnly, "https://www.amazon.d
   "relative challenge.js must not enable C")
 
 print("ok extract")
+
+env.LocalStorage = { loginCounter = 0, patcher = {} }
+env.connectShop = function()
+  return mm.HTML(readFixture("aws_waf_challenge_sitekey.html"))
+end
+env.resolveAkamaiInterstitial = function(page) return page, nil end
+env.enterOrderList = function()
+  error("enterOrderList must not run when WAF captcha challenge is returned")
+end
+
+local ch = env.InitializeSession2(
+  env.ProtocolWebBanking, "Amazon", 1,
+  {"user@example.com", "secret-pw"}, true)
+assert(type(ch) == "table", "expected captcha challenge table, got " .. tostring(ch))
+assert(ch.title == "Amazon Bot-Prüfung", "title must be Amazon Bot-Prüfung")
+assert(type(ch.challenge) == "string"
+  and ch.challenge:find("token%.awswaf%.com", 1)
+  and ch.challenge:find("challenge%.js", 1)
+  and ch.challenge:find("sitekey=", 1, true)
+  and ch.challenge:find("referer=", 1, true),
+  "challenge must be awswaf script URL with sitekey+referer")
+assert(env.LocalStorage.awsWafCaptchaPending == true,
+  "pending flag must be set when returning captcha challenge")
+
+env.LocalStorage = { loginCounter = 0, patcher = {} }
+local msg = env.InitializeSession2(
+  env.ProtocolWebBanking, "Amazon", 1,
+  {"user@example.com", "secret-pw"}, false)
+assert(type(msg) == "string" and msg:find("Bot-Prüfung", 1, true),
+  "non-interactive must return A message")
+assert(env.LocalStorage.awsWafCaptchaPending ~= true,
+  "non-interactive must not set captcha pending")
+
+-- Softblock first appears on order-list GET: still offer C when sitekey present
+env.LocalStorage = { loginCounter = 0, patcher = {} }
+local homeOk = [[<!DOCTYPE html><html lang="de-de"><head><title>Amazon.de</title></head>
+<body><span class="nav-shortened-name">Ada</span></body></html>]]
+local shopCalls = 0
+env.enterOrderList = realEnterOrderList
+env.connectShop = function()
+  shopCalls = shopCalls + 1
+  if shopCalls == 1 then
+    return mm.HTML(homeOk)
+  end
+  return mm.HTML(readFixture("aws_waf_challenge_sitekey.html"))
+end
+env.resolveAkamaiInterstitial = function(page) return page, nil end
+local ch2 = env.InitializeSession2(
+  env.ProtocolWebBanking, "Amazon", 1,
+  {"user@example.com", "secret-pw"}, true)
+assert(type(ch2) == "table" and ch2.title == "Amazon Bot-Prüfung",
+  "order-list softblock with sitekey must return captcha challenge, got "
+    .. tostring(ch2))
+
+print("ok challenge return")

@@ -4226,6 +4226,35 @@ function amazonAwsWafCaptchaChallengeParts(htmlNode, refererUrl)
   }
 end
 
+function moneyMoneyAwsWafCaptchaChallenge(parts)
+  local base = parts.scriptUrl:match("^([^?#]+)")
+  local challengeUrl = base
+    .. "?sitekey=" .. MM.urlencode(parts.sitekey)
+    .. "&referer=" .. MM.urlencode(parts.referer)
+  return {
+    title = AMAZON_WAF_BOT_TITLE,
+    challenge = challengeUrl,
+    label = "Bot-Prüfung",
+  }
+end
+
+--- Softblock page: Captcha challenge table, A message string, or nil if not softblock.
+function takeAwsWafCaptchaChallengeOrSoftblockMessage(htmlNode, refererUrl, interactive)
+  if not isAmazonAwsWafChallengePage(htmlNode) then
+    return nil
+  end
+  if interactive == true
+      and type(LocalStorage) == "table"
+      and LocalStorage.awsWafCaptchaPending ~= true then
+    local parts = amazonAwsWafCaptchaChallengeParts(htmlNode, refererUrl)
+    if parts ~= nil then
+      LocalStorage.awsWafCaptchaPending = true
+      return moneyMoneyAwsWafCaptchaChallenge(parts)
+    end
+  end
+  return amazonAwsWafSoftblockMessage()
+end
+
 function amazonImportedCookieSessionExpiredMessage()
   return "Amazon: Cookie-Session abgelaufen oder ungültig. Bitte im Browser bei amazon.de "
     .."anmelden und COOKIE:… neu als Passwort einfügen."
@@ -7762,24 +7791,36 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       return nil
     end
 
+    LocalStorage.awsWafCaptchaPending = nil
+
     html = connectShop("GET",baseurl)
     local resolvedHtml, akamaiError = resolveAkamaiInterstitial(html)
     if akamaiError ~= nil then
       return "Amazon: "..akamaiError
     end
     html = resolvedHtml
-    if isAmazonAwsWafChallengePage(html) then
+    local wafResult = takeAwsWafCaptchaChallengeOrSoftblockMessage(
+      html, baseurl, interactive)
+    if type(wafResult) == "table" then
+      print("AWS WAF captcha challenge; pause before claim")
+      return wafResult
+    end
+    if type(wafResult) == "string" then
       print("AWS WAF / softblock on start page; halt before claim")
-      local wafMessage=amazonAwsWafSoftblockMessage()
-      MM.printStatus(wafMessage)
-      return wafMessage
+      MM.printStatus(wafResult)
+      return wafResult
     end
     enterOrderList()
-    if isAmazonAwsWafChallengePage(html) then
+    wafResult = takeAwsWafCaptchaChallengeOrSoftblockMessage(
+      html, baseurl, interactive)
+    if type(wafResult) == "table" then
+      print("AWS WAF captcha challenge after order-list; pause before claim")
+      return wafResult
+    end
+    if type(wafResult) == "string" then
       print("AWS WAF / softblock after order-list entry; halt before claim")
-      local wafMessage=amazonAwsWafSoftblockMessage()
-      MM.printStatus(wafMessage)
-      return wafMessage
+      MM.printStatus(wafResult)
+      return wafResult
     end
   end
 
