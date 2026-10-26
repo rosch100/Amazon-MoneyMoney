@@ -76,6 +76,10 @@ assert(result:find("Bot-Prüfung", 1, true),
   "error must be the Bot-Prüfung message, got: " .. result)
 assert(result:find("COOKIE:", 1, true),
   "softblock message must point to COOKIE: import, got: " .. result)
+assert(result:find("keine falsche Passwort", 1, true),
+  "softblock message must say it is not a wrong-password error, got: " .. result)
+assert(result:find("Helper", 1, true),
+  "softblock message must mention Helper for COOKIE import, got: " .. result)
 assert(result ~= env.LoginFailed,
   "must not return LoginFailed (clears cookies / looks like bad password)")
 

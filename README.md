@@ -26,10 +26,11 @@ kopieren, oder im Klon `./link_ext.sh` ausführen.
 Unsignierte/Entwicklungs-Plugins: MoneyMoney-**Beta**, Signaturprüfung unter
 *MoneyMoney → Einstellungen → Erweiterungen* ausschalten.
 
-Liefert der erste Abruf eine AWS-WAF-/Softblock-Seite, bricht die Extension mit
-einer Bot-Prüfung-Meldung ab (statt irreführend „Passwort falsch“). Die Prüfung
-selbst braucht Browser-JavaScript und ist mit Username/Passwort allein oft nicht
-lösbar — dann Cookie-Import (unten) oder später erneut abrufen.
+Liefert der erste Abruf eine AWS-WAF-/Softblock-Seite und MoneyMoney kann die
+Captcha-Challenge nicht anzeigen bzw. lösen, bricht die Extension mit einer
+Bot-Prüfung-Meldung ab (nicht „Passwort falsch“). Hinweis: Browser-Login →
+MoneyMoney-Helper → `COOKIE:…` ins Passwortfeld (unten). Ein Browser auf demselben
+Mac allein teilt die Session nicht mit MoneyMoney.
 
 ## Einrichten
 

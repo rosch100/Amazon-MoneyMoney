@@ -4158,9 +4158,10 @@ function isAmazonAwsWafChallengePage(htmlNode)
 end
 
 function amazonAwsWafSoftblockMessage()
-  return "Amazon: Bot-Prüfung (AWS WAF) nicht gelöst. Bitte im Browser bei amazon.de "
-    .."anmelden und die Session per COOKIE:… als Passwort importieren (siehe README). "
-    .."Die Meldung „Passwort falsch“ nach dem Claim ist dann oft irreführend."
+  return "Amazon: Bot-Prüfung nicht gelöst. Bitte im Browser bei amazon.de "
+    .."anmelden, Session mit dem MoneyMoney-Helper als COOKIE:… ins "
+    .."Passwortfeld legen (siehe README) und erneut abrufen. "
+    .."Das ist keine falsche Passwort-Meldung."
 end
 
 function amazonImportedCookieSessionExpiredMessage()
