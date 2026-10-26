@@ -4164,6 +4164,68 @@ function amazonAwsWafSoftblockMessage()
     .."Das ist keine falsche Passwort-Meldung."
 end
 
+local AMAZON_WAF_BOT_TITLE = "Amazon Bot-Prüfung"
+
+--- Absolute *.token.awswaf.com/.../challenge.js only (relative scripts → nil).
+function extractAmazonAwsWafChallengeScriptUrl(htmlNode)
+  if htmlNode == nil then
+    return nil
+  end
+  local raw = htmlNodeRaw(htmlNode)
+  if raw == "" then
+    return nil
+  end
+  local src = raw:match(
+    '[sS][rR][cC]%s*=%s*["\'](https://[^"\']*token%.awswaf%.com[^"\']*challenge%.js[^"\']*)["\']')
+  if type(src) ~= "string" or src == "" then
+    return nil
+  end
+  return src
+end
+
+function extractAmazonAwsWafSitekey(htmlNode, scriptUrl)
+  if htmlNode == nil then
+    return nil
+  end
+  if type(scriptUrl) == "string" then
+    local fromQuery = scriptUrl:match("[?&]sitekey=([^&#]+)")
+    if type(fromQuery) == "string" and fromQuery ~= "" then
+      return fromQuery
+    end
+  end
+  local raw = htmlNodeRaw(htmlNode)
+  if raw == "" then
+    return nil
+  end
+  local key = raw:match('data%-sitekey%s*=%s*["\']([^"\']+)["\']')
+    or raw:match('["\']sitekey["\']%s*:%s*["\']([^"\']+)["\']')
+    or raw:match("gokuProps%s*=%s*{[^}]*key%s*:%s*[\"']([^\"']+)[\"']")
+  if type(key) ~= "string" or key == "" then
+    return nil
+  end
+  return key
+end
+
+--- Caller must pass a non-empty refererUrl (typically baseurl); no silent baseurl fallback.
+function amazonAwsWafCaptchaChallengeParts(htmlNode, refererUrl)
+  local scriptUrl = extractAmazonAwsWafChallengeScriptUrl(htmlNode)
+  if scriptUrl == nil then
+    return nil
+  end
+  local sitekey = extractAmazonAwsWafSitekey(htmlNode, scriptUrl)
+  if sitekey == nil then
+    return nil
+  end
+  if type(refererUrl) ~= "string" or refererUrl == "" then
+    return nil
+  end
+  return {
+    scriptUrl = scriptUrl,
+    sitekey = sitekey,
+    referer = refererUrl,
+  }
+end
+
 function amazonImportedCookieSessionExpiredMessage()
   return "Amazon: Cookie-Session abgelaufen oder ungültig. Bitte im Browser bei amazon.de "
     .."anmelden und COOKIE:… neu als Passwort einfügen."
