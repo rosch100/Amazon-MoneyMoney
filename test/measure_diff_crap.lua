@@ -57,6 +57,8 @@ local targets = {
   "amazonAwsWafCaptchaChallengeParts",
   "moneyMoneyAwsWafCaptchaChallenge",
   "takeAwsWafCaptchaChallengeOrSoftblockMessage",
+  "amazonLoginHaltIfAwsWaf",
+  "continueAmazonLoginAfterStartPage",
   "ensureAmazonShopConnection",
   "restoreAmazonShopCookiesFromLocalStorage",
   "applyAmazonAwsWafCaptchaToken",

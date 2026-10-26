@@ -157,5 +157,19 @@ local empty = env.InitializeSession2(
 assert(type(empty) == "string" and empty:find("Bot-Prüfung", 1, true),
   "empty WAF token must return A")
 
+-- Token applied but softblock remains → A (no second captcha; interactive forced false)
+env.LocalStorage = { loginCounter = 0, patcher = {}, awsWafCaptchaPending = true }
+phase = "softblock"
+env.enterOrderList = function() end
+env.Connection = function() return fakeConn end
+env.connection = nil
+local stillBlocked = env.InitializeSession2(
+  env.ProtocolWebBanking, "Amazon", 2,
+  {"waf-token-stub"}, true)
+assert(type(stillBlocked) == "string" and stillBlocked:find("Bot-Prüfung", 1, true),
+  "softblock after token must return A, got: " .. tostring(stillBlocked))
+assert(env.LocalStorage.awsWafCaptchaPending ~= true,
+  "pending must clear even when softblock remains")
+
 print("ok token apply")
 print("test_aws_waf_captcha_challenge OK")

@@ -1209,7 +1209,10 @@ function ensureAmazonShopConnection()
     return
   end
   connection = Connection()
-  pcall(restoreAmazonShopCookiesFromLocalStorage)
+  local ok, err = pcall(restoreAmazonShopCookiesFromLocalStorage)
+  if not ok then
+    print("ensureAmazonShopConnection cookie restore:", err)
+  end
 end
 
 function applyAmazonAwsWafCaptchaToken(token)
@@ -4242,7 +4245,7 @@ function amazonAwsWafCaptchaChallengeParts(htmlNode, refererUrl)
 end
 
 function moneyMoneyAwsWafCaptchaChallenge(parts)
-  local base = parts.scriptUrl:match("^([^?#]+)")
+  local base = parts.scriptUrl:match("^([^?#]+)") or parts.scriptUrl
   local challengeUrl = base
     .. "?sitekey=" .. MM.urlencode(parts.sitekey)
     .. "&referer=" .. MM.urlencode(parts.referer)
@@ -4268,6 +4271,39 @@ function takeAwsWafCaptchaChallengeOrSoftblockMessage(htmlNode, refererUrl, inte
     end
   end
   return amazonAwsWafSoftblockMessage()
+end
+
+--- Challenge table / A-string from softblock check, or nil to continue login.
+function amazonLoginHaltIfAwsWaf(htmlNode, refererUrl, interactive, challengeLog, haltLog)
+  local wafResult = takeAwsWafCaptchaChallengeOrSoftblockMessage(
+    htmlNode, refererUrl, interactive)
+  if type(wafResult) == "table" then
+    print(challengeLog or "AWS WAF captcha challenge; pause before claim")
+    return wafResult
+  end
+  if type(wafResult) == "string" then
+    print(haltLog or "AWS WAF / softblock; halt before claim")
+    MM.printStatus(wafResult)
+    return wafResult
+  end
+  return nil
+end
+
+--- After a normal (non-softblock) start page: order list, then softblock gate again.
+-- Returns challenge/A to abort, or nil to continue into the claim/password loop.
+function continueAmazonLoginAfterStartPage(interactive)
+  local early = amazonLoginHaltIfAwsWaf(
+    html, baseurl, interactive,
+    "AWS WAF captcha challenge; pause before claim",
+    "AWS WAF / softblock on start page; halt before claim")
+  if early ~= nil then
+    return early
+  end
+  enterOrderList()
+  return amazonLoginHaltIfAwsWaf(
+    html, baseurl, interactive,
+    "AWS WAF captcha challenge after order-list; pause before claim",
+    "AWS WAF / softblock after order-list entry; halt before claim")
 end
 
 function amazonImportedCookieSessionExpiredMessage()
@@ -7764,16 +7800,9 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       return "Amazon: "..akamaiError
     end
     html = resolvedHtml
-    local again = takeAwsWafCaptchaChallengeOrSoftblockMessage(html, baseurl, false)
-    if type(again) == "string" then
-      MM.printStatus(again)
-      return again
-    end
-    enterOrderList()
-    again = takeAwsWafCaptchaChallengeOrSoftblockMessage(html, baseurl, false)
-    if type(again) == "string" then
-      MM.printStatus(again)
-      return again
+    local wafResumeHalt = continueAmazonLoginAfterStartPage(false)
+    if wafResumeHalt ~= nil then
+      return wafResumeHalt
     end
     -- Fall through into the normal post-start login loop (claim / password / OTP).
   end
@@ -7844,28 +7873,9 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       return "Amazon: "..akamaiError
     end
     html = resolvedHtml
-    local wafResult = takeAwsWafCaptchaChallengeOrSoftblockMessage(
-      html, baseurl, interactive)
-    if type(wafResult) == "table" then
-      print("AWS WAF captcha challenge; pause before claim")
-      return wafResult
-    end
-    if type(wafResult) == "string" then
-      print("AWS WAF / softblock on start page; halt before claim")
-      MM.printStatus(wafResult)
-      return wafResult
-    end
-    enterOrderList()
-    wafResult = takeAwsWafCaptchaChallengeOrSoftblockMessage(
-      html, baseurl, interactive)
-    if type(wafResult) == "table" then
-      print("AWS WAF captcha challenge after order-list; pause before claim")
-      return wafResult
-    end
-    if type(wafResult) == "string" then
-      print("AWS WAF / softblock after order-list entry; halt before claim")
-      MM.printStatus(wafResult)
-      return wafResult
+    local wafStartHalt = continueAmazonLoginAfterStartPage(interactive)
+    if wafStartHalt ~= nil then
+      return wafStartHalt
     end
   end
 
