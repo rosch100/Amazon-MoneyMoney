@@ -58,8 +58,10 @@ Wenn Username/Passwort an der AWS-WAF hängen bleibt: Session aus dem Browser
 [Hub — Cookie-Import](https://github.com/rosch100/moneymoney-extensions#cookie-import-beta-extensions)).
 
 1. Im Browser bei [amazon.de](https://www.amazon.de) anmelden (WAF und 2FA lösen).
-2. Mit dem **MoneyMoney Helper** Cookies kopieren (oder manuell
-   `COOKIE:session-id=…; at-acbde=…; …`).
+2. Mit der [MoneyMoney-Helper-Erweiterung](https://github.com/rosch100/moneymoney-extensions/tree/main/browser-extension)
+   Cookies kopieren. Alternativ kann eine Browser-Erweiterung wie
+   [Cookie-Editor](https://cookie-editor.com/) den Cookie-Header exportieren;
+   daraus `COOKIE:session-id=…; at-acbde=…; …` bilden.
 3. In MoneyMoney als **Passwort** einfügen (E-Mail unverändert lassen).
 4. Zugang aktualisieren — Claim-Login entfällt; die Session kommt aus den Cookies.
 
