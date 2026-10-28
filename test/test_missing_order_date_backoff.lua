@@ -17,8 +17,6 @@ end
 local variants = {
   missing_component = '<div data-component="orderId">303-9800000-3000000</div><div data-component="purchasedItems">Artikel</div>',
   empty_component   = '<div data-component="orderDate"></div><div data-component="orderId">303-9800000-3000000</div>',
-  nbsp_component    = '<div data-component="orderDate"><span>Bestellt am</span> <span>23.&nbsp;Oktober&nbsp;2026</span></div>',
-  legacy_layout     = '<div class="order-date-invoice-item">Bestellt am 12. M&auml;rz 2014</div><div class="od-shipping-address-container"><div class="a-row">Name</div></div>',
 }
 
 for name, inner in pairs(variants) do

@@ -291,7 +291,8 @@ local authHtml = loadAuthPromptHtml()
 assert(env.switchAuthBlockReason(authHtml) == "interactive login")
 
 local missing = env.finishAccountSwitchLanding(authHtml)
-assert(type(missing.error) == "string" and missing.error:find("password missing", 1, true),
+assert(type(missing.error) == "string"
+    and missing.error:find("ohne gespeichertes Passwort", 1, true),
   "without credentials: " .. tostring(missing.error))
 
 env.rememberShopCredentials("user@example.com", "secret")

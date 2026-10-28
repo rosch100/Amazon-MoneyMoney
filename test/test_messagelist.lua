@@ -17,6 +17,7 @@ env.LocalStorage = {
   OrderCache = {
     ["303-1111111-1111111"] = {
       orderCode = "303-1111111-1111111",
+      bookingDate = now - 86400,
       detailsDate = now + 86400,
       orderPositions = { { purpose = "A", amount = 1, qty = 1 } },
       orderTotal = 1,
@@ -48,6 +49,7 @@ env.LocalStorage = {
   OrderCache = {
     ["303-5555555-6666666"] = {
       orderCode = "303-5555555-6666666",
+      bookingDate = now - 86400,
       detailsDate = now + 86400,
       orderTotal = 1,
       orderPositions = { { purpose = "W", amount = 1, qty = 1 } },

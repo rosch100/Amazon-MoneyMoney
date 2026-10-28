@@ -1508,6 +1508,8 @@ function getDate(text)
   if type(text)~='string' then
     return invalidDate
   end
+  -- Amazon sometimes serializes the separators as UTF-8/Latin-1 NBSP.
+  text=text:gsub("\194\160"," "):gsub("\160"," ")
   local day,month,year=string.match(text,"(%d+)%.%s+([%S]+)%s+(%d+)")
   if day == nil then
     day,month,year=string.match(text,"(%d+)%s+([%S]+)%s+(%d+)")
@@ -1518,6 +1520,50 @@ function getDate(text)
   end
   --error(text)
   return invalidDate -- error value
+end
+
+--- Parse the order date from stable semantic anchors and expose diagnostics
+-- without logging order-page contents (which may contain personal data).
+function getOrderDateFromDetails(orderDetails)
+  local candidates = {
+    {
+      source = "data-component=orderDate",
+      xpath = './/*[@data-component="orderDate"]',
+    },
+    {
+      source = "class=order-date-invoice-item",
+      xpath = './/*[contains(concat(" ",normalize-space(@class)," "),'
+        .. '" order-date-invoice-item ")]',
+    },
+    {
+      source = "data-testid=order-date",
+      xpath = './/*[@data-testid="order-date"]',
+    },
+  }
+  local diagnostics = {}
+  for _, candidate in ipairs(candidates) do
+    local nodes = orderDetails:xpath(candidate.xpath)
+    local nodeCount = 0
+    local textLength = 0
+    local date = invalidDate
+    nodes:each(function(index, node)
+      nodeCount = nodeCount + 1
+      local nodeText = node:text()
+      textLength = textLength + #nodeText
+      if date == invalidDate then
+        local candidateDate = getDate(nodeText)
+        if candidateDate ~= invalidDate then
+          date = candidateDate
+        end
+      end
+    end)
+    diagnostics[#diagnostics + 1] = candidate.source .. "="
+      .. tostring(nodeCount) .. "/" .. tostring(textLength)
+    if date ~= invalidDate then
+      return date, candidate.source, diagnostics
+    end
+  end
+  return invalidDate, nil, diagnostics
 end
 
 function getPrice(text)
@@ -2664,7 +2710,7 @@ end
 
 --- Handle Bestelldetails HTML that has a root but no parseable orderDate.
 --- @return boolean true when the fetch counts as successfully resolved
-function resolveOrderDetailsWithoutDate(order, orderDetails)
+function resolveOrderDetailsWithoutDate(order, orderDetails, orderDateDiagnostics)
   local now=os.time()
   if isCancelledOrderDetailsStub(orderDetails) then
     completeCancelledOrderDetailsStub(order, now, orderDetails)
@@ -2677,7 +2723,8 @@ function resolveOrderDetailsWithoutDate(order, orderDetails)
   end
   -- Ohne Datum neu terminieren, damit die Bestellung nicht bei jedem Abruf erneut geladen wird (#3).
   scheduleNextDetailsDate(order, now)
-  debugBuffer.print("getOrderDetails missing order date",order.orderCode)
+  debugBuffer.print("getOrderDetails missing order date",order.orderCode,
+    table.concat(orderDateDiagnostics or {}, ","))
   return false
 end
 
@@ -2698,6 +2745,10 @@ function getSummaryExtrasFromDetails(orderDetails)
     local amount=signedSummaryAmount(row:xpath('.//*[contains(@class,"od-line-item-row-content")]'):text(), kind)
     if amount == invalidPrice or amount == 0 then
       return
+    end
+    if kind == 'other' then
+      debugBuffer.print("getOrderDetails unclassified summary row",
+        "labelLength",#name,"amountCents",amount)
     end
     table.insert(extras,{name=name,amount=amount})
   end)
@@ -3019,13 +3070,18 @@ function getOrderDetails(order)
   local orderDetails=html:xpath('//div[contains(@id,"orderDetails")]')
   if orderDetails:text() ~= "" then
     local hadPositionsBeforeParse=orderHasPositions(order)
-    local date=getDate(orderDetails:xpath('.//*[@data-component="orderDate"]'):text())
+    local date,orderDateSource,orderDateDiagnostics=getOrderDateFromDetails(orderDetails)
     if date == invalidDate then
-      local resolved=resolveOrderDetailsWithoutDate(order, orderDetails)
+      local resolved=resolveOrderDetailsWithoutDate(
+        order, orderDetails, orderDateDiagnostics)
       debugBuffer.context=''
       return resolved
     end
     order.bookingDate=date
+    if orderDateSource ~= "data-component=orderDate" then
+      debugBuffer.print("getOrderDetails alternate order date",order.orderCode,
+        orderDateSource)
+    end
 
     if isUnbilledCancellation(orderDetails) then
       order.unbilledCancel=true
