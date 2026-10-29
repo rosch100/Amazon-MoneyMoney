@@ -83,8 +83,7 @@ jobs:
       - name: Install bandit
         run: |
           set -euo pipefail
-          python3 -m pip install --upgrade pip
-          python3 -m pip install bandit==1.9.4
+          python3 -m pip install --require-hashes -r .github/requirements-security.txt
 
       - name: Run bandit (tracked Python files)
         run: |
