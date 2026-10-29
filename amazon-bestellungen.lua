@@ -8630,3 +8630,5 @@ function EndSession ()
   secUsername=nil
   cookieImportSession=false
 end
+
+-- SIGNATURE: MC0CFDVvYq/DHM906QAMjqe/HXm3BBQ+AhUAg91tj9i3HKBEMaT6/U/c5KDkZ9s=
