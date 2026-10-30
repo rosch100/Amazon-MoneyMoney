@@ -2651,6 +2651,8 @@ function appendOrderToRefresh(ctx, order, orderCode)
   end
   emitOrderAdjustments(ctx, order, orderCode, report)
   if dropZeroNetOrderTransactions(ctx.transactions, firstTransactionIndex) then
+    -- The dropped purchase must not stay marked as emitted: keepStorno may be enabled later.
+    clearOrderEmissionForAccount(order, ctx.accountNumber)
     return
   end
   if #ctx.transactions >= firstTransactionIndex then
@@ -6687,7 +6689,7 @@ function sessionMatchesSubAccountKind(kind)
     return isAmazonBusinessSession(html) or isAmazonBusinessOrdersSpa(html)
   end
   if kind == 'personal' then
-    return not isAmazonBusinessSession(html)
+    return not isAmazonBusinessSession(html) and not isAmazonBusinessOrdersSpa(html)
   end
   return false
 end
