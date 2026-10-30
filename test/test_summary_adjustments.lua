@@ -152,7 +152,10 @@ do
   assert(math.abs(item.amount - (-6.57)) < 0.001, "item incl. USt 6,57, got " .. tostring(item.amount))
   local ship = findByName(txs, "Verpackung & Versand")
   assert(ship ~= nil, "must emit Verpackung & Versand, got " .. names(txs))
-  assert(math.abs(ship.amount - (-13.40)) < 0.001, "Versand 13,40, got " .. tostring(ship.amount))
+  -- Shipping 13,40 net + 19 % VAT 2,55 = 15,95 gross; items 6,57 + 15,95 = 22,52 total.
+  assert(math.abs(ship.amount - (-15.95)) < 0.001, "Versand 15,95 brutto, got " .. tostring(ship.amount))
+  assert(math.abs(item.amount + ship.amount - (-22.52)) < 0.001,
+    "items plus shipping must equal the order total 22,52, got " .. tostring(item.amount + ship.amount))
 end
 
 ------------------------------------------------------------------ COUPON
@@ -319,7 +322,7 @@ do
   </div>
   <div class="od-line-item-row">
     <span class="od-line-item-row-label a-text-bold">Gesamtsumme:</span>
-    <span class="od-line-item-row-content a-text-bold">EUR 20,99</span>
+    <span class="od-line-item-row-content a-text-bold">EUR 21,98</span>
   </div>
 </div>
 ]])
@@ -345,10 +348,12 @@ do
   assert(#env.resolvedSummaryExtras(order) == 7,
     "without an order reference, do not infer a shipping offset")
 
+  -- A return does not hide a Prime shipping refund: the voucher cancels the shipping, so the pair
+  -- is removed, while unrelated credits of a return order are not booked.
   order.orderCode = "303-8797934-4603536"
   order.returnActivity = true
-  assert(#env.resolvedSummaryExtras(order) == 7,
-    "return activity disables inferred shipping-offset matching")
+  assert(#env.resolvedSummaryExtras(order) == 5,
+    "return activity keeps the shipping-voucher pair out of the booking list")
 end
 
 ------------------------------------------------------------------ VAT-ADJUSTED SHIPPING OFFSET
@@ -384,7 +389,7 @@ do
   </div>
   <div class="od-line-item-row">
     <span class="od-line-item-row-label a-text-bold">Gesamtsumme:</span>
-    <span class="od-line-item-row-content a-text-bold">EUR 17,34</span>
+    <span class="od-line-item-row-content a-text-bold">EUR 17,99</span>
   </div>
 </div>
 ]])

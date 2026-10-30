@@ -65,25 +65,39 @@ jobs:
             python3 "$file"
           done
 
-      - name: Setup Lua
-        uses: leafo/gh-actions-lua@6919171ccf181b826f44b9bca76307b577217377 # v13.0.0
+      - name: Setup LuaJIT
+        uses: leafo/gh-actions-lua@32909a2dea0a48c433aec79e7fcd31b4cd55800f # v13.1.0
         with:
-          luaVersion: "5.4"
+          luaVersion: "luajit-2.1"
           buildCache: "false"
+
+      - name: Setup LuaRocks
+        uses: leafo/gh-actions-luarocks@ccc91d934fc4e0583abb56b4296799b010d6130c # v6.1.1
+
+      - name: Install Lua test dependencies
+        run: |
+          set -euo pipefail
+          if [ "${RUNNER_OS}" != "Linux" ]; then
+            echo "::error::Lua test dependencies are installed with apt-get; CI_RUNS_ON must select a Linux runner."
+            exit 1
+          fi
+          sudo apt-get update
+          sudo apt-get install -y libxml2-dev lua5.4
+          luarocks --lua-version=5.1 install xmlua
 
       - name: Lua unit tests
         run: |
           set -euo pipefail
           files_list="$(mktemp)"
           trap 'rm -f "${files_list}"' EXIT
-          git ls-files -z 'tests/*.lua' > "${files_list}"
+          git ls-files -z 'test/test_*.lua' 'test/selftest.lua' > "${files_list}"
           mapfile -d '' -t files < "${files_list}"
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No Lua tests tracked."
-            exit 0
+            exit 1
           fi
           for file in "${files[@]}"; do
-            lua "$file"
+            ./test/run.sh "${file}"
           done
 
       - name: Lua syntax check (all tracked .lua)
@@ -97,6 +111,7 @@ jobs:
             echo "No Lua files tracked."
             exit 0
           fi
+          # Standard Lua 5.4: LuaJIT accepts non-ASCII identifiers that standard Lua rejects.
           for file in "${files[@]}"; do
-            LUA_FILE="${file}" lua -e 'assert(loadfile(os.getenv("LUA_FILE")))'
+            luac5.4 -p "${file}"
           done

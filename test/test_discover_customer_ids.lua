@@ -101,7 +101,7 @@ assert(emptyErr == nil, tostring(emptyErr))
 assert(#emptyOptions == 0, "benign no-switcher page must return empty options")
 assert(#env.LocalStorage.discoveredSubAccounts == 0)
 
--- Happy path: enrich both options and restore the personal starting session.
+-- Happy path: enrich both options; the active personal session is read first without a switch.
 installSwitcher()
 env.LocalStorage = {}
 env.bindActiveHtml(accountPage("personal", "A3STARTPERSONAL"))
@@ -123,8 +123,9 @@ for _, option in ipairs(env.LocalStorage.discoveredSubAccounts) do
 end
 assert(byKind.personal.accountNumber == "A3PERSONALID01")
 assert(byKind.business.accountNumber == "A3BUSINESSID02")
-assert(switches[#switches] == "personal", "discovery must restore the personal starting session")
-assert(env.sessionMatchesSubAccountKind("personal") == true)
+assert(#switches == 2 and switches[1] == "personal" and switches[2] == "business",
+  "active personal is read first; only business needs a switch, and there is no switch back")
+assert(env.sessionMatchesSubAccountKind("business") == true, "session stays on the last read sub-account")
 assert(harvestCalls == 0)
 
 -- A landing page without customerId is retried on the css order-history page.
@@ -207,29 +208,24 @@ assert(#env.LocalStorage.discoveredSubAccounts == 1)
 assert(env.LocalStorage.discoveredSubAccounts[1].accountNumber == "A3PREVIOUSID01",
   "failed discovery must preserve the previous complete snapshot")
 
--- A failed restore is a hard discovery error and must not commit new IDs.
+-- A failed switch to the other sub-account is a hard discovery error and must not commit new IDs.
 installSwitcher()
 env.LocalStorage = {}
 env.bindActiveHtml(accountPage("personal", "A3STARTPERSONAL"))
-local personalSwitches = 0
 env.ensureAmazonSubAccountSession = function(kind)
-  if kind == "personal" then
-    personalSwitches = personalSwitches + 1
-    if personalSwitches > 1 then
-      return "restore blocked"
-    end
-    env.bindActiveHtml(accountPage("personal", "A3PERSONALID01"))
-    return nil
+  if kind == "business" then
+    return "switch blocked"
   end
-  env.bindActiveHtml(accountPage("business", "A3BUSINESSID02"))
+  env.bindActiveHtml(accountPage("personal", "A3PERSONALID01"))
   return nil
 end
 
-local restoreResult, restoreErr = env.discoverAmazonSubAccounts()
-assert(restoreResult == nil)
-assert(type(restoreErr) == "string" and restoreErr:find("Ausgangskonto", 1, true), tostring(restoreErr))
+local switchResult, switchErr = env.discoverAmazonSubAccounts()
+assert(switchResult == nil)
+assert(type(switchErr) == "string" and switchErr:find("Unterkonto-Ermittlung fehlgeschlagen", 1, true),
+  tostring(switchErr))
 assert(env.LocalStorage.discoveredSubAccounts == nil or #env.LocalStorage.discoveredSubAccounts == 0,
-  "restore failure must not commit the newly discovered snapshot")
+  "switch failure must not commit the newly discovered snapshot")
 assert(harvestCalls == 0)
 
 -- Refresh harvest reuses stored customerIds and skips enrichment switches.

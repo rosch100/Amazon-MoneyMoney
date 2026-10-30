@@ -175,8 +175,16 @@ function activateAmazonLoginStorage(username)
 end
 
 local html
+-- Login stage of the last handled page (for error messages and the log).
+local loginStage="Start"
+-- Codes submitted in the current login (instrumentation only).
+local otpSubmitCount=0
 local configDirty=false
 local webCache=false
+-- Developer switch in code only (not an account note): webCache replay and regression
+-- comparison. The regression run replaces the transactions with its differences, so it must
+-- never be enabled for production; the account note debug=true only enables logging.
+local devHarness=false
 local webCacheFolder='webCache'
 local webCacheHit=false
 local webCacheState='start'
@@ -206,9 +214,53 @@ local config={
   resyncDeletedTransactions='',
 }
 
+-- Buffer functions are defined before the first call: logDebug runs while the
+-- account configuration is read at load time, when debug=true is already set.
+function debugBuffer.tablePrint(tbl)
+  local t={}
+  for k,v in pairs(tbl) do
+    if type(v)=='table' then
+      table.insert(t,k.."(#table)={"..debugBuffer.tablePrint(v).."}")
+    else
+      table.insert(t,k.."#"..type(v).."='"..tostring(v).."'")
+    end
+  end
+  return table.concat(t,",")
+end
+
+function debugBuffer.print(...)
+  if debugBuffer.context == nil then
+    debugBuffer.context=''
+  end
+  --local args={debugBuffer.getStack(),debugBuffer.context}
+  local args={debugBuffer.context}
+  for _,v in pairs({...}) do
+    local n
+    if type(v)=='table' then
+      n=type(v).."='"..debugBuffer.tablePrint(v).."'"
+    else
+      n=type(v).."='"..tostring(v).."'"
+    end
+    table.insert(args,n)
+  end
+  table.insert(debugBuffer,table.concat(args," "))
+end
+
+-- Detail trace. The only log channel for diagnostics: active only with the account
+-- note debug=true (writes to the MoneyMoney log and amazon-debug.log). Plain print()
+-- is reserved for outcomes, warnings and errors that are always logged.
+function logDebug(...)
+  if not config.debug then
+    return
+  end
+  debugBuffer.print(...)
+end
+
 local daySeconds=24*60*60
 local const={
   daySeconds=daySeconds,
+  -- Sprache für Amazon-Seiten, wenn die Notiz cookieLanguage leer ist.
+  defaultCookieLanguageTag="de-DE",
   regexOrderCodeNew="([D%d]%d%d%-%d%d%d%d%d%d%d%-%d%d%d%d%d%d%d)",
   regexPriceOld="EUR%s+(%d+),(%d%d)",
   regexPriceNew="€(%d+),(%d%d)",
@@ -351,7 +403,26 @@ local accountPowerUserKeys={
   'scanFiltersMonths',
   'cookieLanguage',
   'orderDetailsUrl',
+  'debug',
 }
+
+-- Defaults of config (after amazon_orders.json is merged, see below) before any account note is applied.
+local configDefaults={}
+
+-- Default of const.orderDetailsUrl; applyAccountAttribute overrides the const table per account.
+local orderDetailsUrlDefault=const.orderDetailsUrl
+
+-- Account-note settings start from the defaults for every refresh and login. Without this,
+-- a value of one account (e.g. debug=true) would stay active for the next account.
+function resetAccountNoteSettings()
+  for _,key in ipairs(accountOptionKeys) do
+    config[key]=configDefaults[key]
+  end
+  for _,key in ipairs(accountPowerUserKeys) do
+    config[key]=configDefaults[key]
+  end
+  const.orderDetailsUrl=orderDetailsUrlDefault
+end
 
 -- MoneyMoney note key aliases (read → canonical). Not OrderCache legacy.
 local accountAttributeAliases={
@@ -475,11 +546,16 @@ if configFile~=nil then
   if configTemp['configOk'] then
     configDirty=false
     mergeConfig(config,configTemp)
-    print('config read...')
+    logDebug('config read...')
   end
   io.close(configFile)
 else
   configDirty=true
+end
+
+-- Snapshot after the config file is merged, so its values survive the per-account reset.
+for key,value in pairs(config) do
+  configDefaults[key]=value
 end
 
 
@@ -1065,7 +1141,7 @@ if LocalStorage ~=nil then
 end
 
 if configDirty and io ~= nil and io.open ~= nil then
-  print('write config...')
+  logDebug('write config...')
   local configFile, configError=io.open(configFileName,"wb")
   if configFile == nil then
     error("cannot write config file: "..tostring(configError))
@@ -1082,40 +1158,10 @@ end
 local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters).
-WebBanking{version  = 2.08,
+WebBanking{version  = 2.09,
   url         = baseurl,
   services    = const.services,
   description = const.description}
-
-function debugBuffer.tablePrint(tbl)
-  local t={}
-  for k,v in pairs(tbl) do
-    if type(v)=='table' then
-      table.insert(t,k.."(#table)={"..debugBuffer.tablePrint(v).."}")
-    else
-      table.insert(t,k.."#"..type(v).."='"..tostring(v).."'")
-    end
-  end
-  return table.concat(t,",")
-end
-
-function debugBuffer.print(...)
-  if debugBuffer.context == nil then
-    debugBuffer.context=''
-  end
-  --local args={debugBuffer.getStack(),debugBuffer.context}
-  local args={debugBuffer.context}
-  for _,v in pairs({...}) do
-    local n
-    if type(v)=='table' then
-      n=type(v).."='"..debugBuffer.tablePrint(v).."'"
-    else
-      n=type(v).."='"..tostring(v).."'"
-    end
-    table.insert(args,n)
-  end
-  table.insert(debugBuffer,table.concat(args," "))
-end
 
 function debugBuffer.getStack(skip)
   local stack={}
@@ -1131,19 +1177,19 @@ function debugBuffer.getStack(skip)
 end
 
 function debugBuffer.flush()
-  if io ~= nil and config.debug then
-    local debugFile=io.open("amazon-debug.log","a")
-    if debugFile ~= nil then
-      for i,v in ipairs(debugBuffer) do
-        debugFile:write(v.."\n")
-        debugBuffer[i]=nil
-      end
-      debugFile:close()
-    end
+  local debugFile=nil
+  if io ~= nil and io.open ~= nil and config.debug then
+    debugFile=io.open("amazon-debug.log","a")
   end
   for i,v in ipairs(debugBuffer) do
+    if debugFile ~= nil then
+      debugFile:write(v.."\n")
+    end
     print(v)
     debugBuffer[i]=nil
+  end
+  if debugFile ~= nil then
+    debugFile:close()
   end
 
 end
@@ -1152,7 +1198,7 @@ function removeWebCacheLastItem()
   if webCache then
     os.remove(webCacheFolder..'/'..webCacheLastId..'.html')
     os.remove(webCacheFolder..'/'..webCacheLastId..'.json')
-    print("remove",webCacheLastId,"from webCache")
+    logDebug("remove",webCacheLastId,"from webCache")
   end
 end
 
@@ -1211,7 +1257,7 @@ function ensureAmazonShopConnection()
   connection = Connection()
   local ok, err = pcall(restoreAmazonShopCookiesFromLocalStorage)
   if not ok then
-    print("ensureAmazonShopConnection cookie restore:", err)
+    logDebug("ensureAmazonShopConnection cookie restore:", err)
   end
 end
 
@@ -1225,6 +1271,17 @@ function applyAmazonAwsWafCaptchaToken(token)
       .. "; Domain=" .. const.domain
       .. "; Path=/; Secure")
   return nil
+end
+
+--- Value of the Amazon language cookie lc-acbde, e.g. "de_DE".
+-- The account note cookieLanguage uses the BCP form "de-DE"; Amazon expects "de_DE".
+-- Without the note, German is used so the parser matches the German order pages.
+function amazonLanguageCookieValue()
+  local tag=LocalStorage.patcher and LocalStorage.patcher.cookieLanguage
+  if type(tag) ~= 'string' or tag == '' then
+    tag=const.defaultCookieLanguageTag
+  end
+  return (tag:gsub('-', '_'))
 end
 
 function connectShopRaw(method, url, postContent, postContentType, headers)
@@ -1243,15 +1300,14 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
   end
 
   if method == 'POST' then
-    if config.debug and type(postContent) == 'string' then
+    -- Field names only for form bodies: a JSON body has no '&' and would be logged whole (Akamai token).
+    local isFormBody=type(postContentType) == 'string'
+      and postContentType:find('application/x-www-form-urlencoded', 1, true) ~= nil
+    if config.debug and type(postContent) == 'string' and isFormBody then
+      -- Only field names: values can hold tokens (CsrfToken) or e-mail addresses.
       for i in string.gmatch(postContent, "([^&]+)") do
         local name=i:match("^([^=]+)") or ""
-        if name:lower():find("pass", 1, true) or name:lower():find("pwd", 1, true)
-            or name:lower():find("otp", 1, true) or name:lower():find("secret", 1, true) then
-          print("post='"..name.."=<redacted>'")
-        else
-          print("post='"..i.."'")
-        end
+        logDebug("post field='"..name.."'")
       end
     end
   end
@@ -1278,7 +1334,7 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
         filename=meta['filename']
         headers=meta['headers']
         cached=true
-        print("webCache id="..webCacheLastId.." read.")
+        logDebug("webCache id="..webCacheLastId.." read.")
         webCacheHit=true
       end
       writeCache=false
@@ -1291,11 +1347,7 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
 
   if not cached then
     -- issue #28
-    if LocalStorage.patcher and LocalStorage.patcher.cookieLanguage then
-      connection:setCookie('lc-acbde='..LocalStorage.patcher.cookieLanguage..'; Domain='..const.domain..'; Expires=Tue, 01-Jan-2036 08:00:01 GMT; Path=/')
-    else
-      connection:setCookie('lc-acbde=; Domain='..const.domain..'; Expires=Thu, 01-Jan-1970 00:00:10 GMT; Path=/')
-    end
+    connection:setCookie('lc-acbde='..amazonLanguageCookieValue()..'; Domain='..const.domain..'; Expires=Tue, 01-Jan-2036 08:00:01 GMT; Path=/')
     content, charset, mimeType, filename, headers = connection:request(method, url, postContent, postContentType, headers)
     if writeCache then
       local metadataPath=webCacheFolder..'/'..webCacheLastId..'.json'
@@ -1326,7 +1378,7 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
       end
       webFile:write(content)
       webFile:close()
-      print("webCache id="..webCacheLastId.." written.")
+      logDebug("webCache id="..webCacheLastId.." written.")
     end
   end
 
@@ -1341,7 +1393,7 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
 
     if config.debug then
       if LocalStorage.cookies~=connection:getCookies() then
-        print("store cookies=<redacted>")
+        logDebug("store cookies=<redacted>")
       end
     end
 
@@ -1414,7 +1466,7 @@ function RegressionTest.run(transactions,regTestPre)
     local transFile=io.open(regTestPre.."_transactions_master.json",'rb')
     if transFile ~= nil then
 
-      debugBuffer.print("run regression test")
+      logDebug("run regression test")
 
       local master=JSON(transFile:read('*all')):dictionary()
       transFile:close()
@@ -1443,7 +1495,7 @@ function RegressionTest.run(transactions,regTestPre)
         table.insert(transactions,v)
       end
 
-      debugBuffer.print("regression test finish")
+      logDebug("regression test finish")
       table.insert(transactions,{
         name="regression test finish",
         amount = #differences,
@@ -1462,7 +1514,7 @@ function RegressionTest.run(transactions,regTestPre)
       })
     end
   end
-  debugBuffer.print(transactions)
+  logDebug(transactions)
   debugBuffer.flush()
 end
 
@@ -1482,7 +1534,7 @@ function connectShopWithCheck(method, url, postContent, postContentType, headers
   -- Stop if Amazon already rejected credentials (do not resubmit the same login).
   local steps=0
   while html ~= nil and html:xpath(xpform):attr("name") ~= '' and steps < 3 do
-    local authError=html:xpath('//div[@id="auth-error-message-box"]'):text()
+    local authError=amazonAuthAlertText(html)
     if type(authError) == 'string' and authError ~= '' then
       print("Forced re-login stopped: auth error on sign-in page")
       return html
@@ -1564,6 +1616,55 @@ function getOrderDateFromDetails(orderDetails)
     end
   end
   return invalidDate, nil, diagnostics
+end
+
+--- @function textShape
+-- Format of a text for diagnostics: digits become 9, whitespace is collapsed.
+-- Shows e.g. a date format without logging the date itself.
+local shapeKeptWords={
+  Januar=true, Februar=true, ["März"]=true, April=true, Mai=true, Juni=true, Juli=true,
+  August=true, September=true, Oktober=true, November=true, Dezember=true,
+  January=true, February=true, March=true, May=true, June=true, July=true,
+  October=true, December=true,
+}
+
+function textShape(text)
+  local shape=(text or ''):gsub("\194\160"," "):gsub("%s+"," ")
+  shape=shape:gsub("%d","9")
+  -- Words become "a" (letters and non-ASCII bytes), so a node text cannot leak a customer name.
+  -- Month names and punctuation stay, they show the date format.
+  local parts={}
+  for word in shape:gmatch("%S+") do
+    if shapeKeptWords[word] then
+      parts[#parts+1]=word
+    else
+      parts[#parts+1]=(word:gsub("[^%p9]","a"))
+    end
+  end
+  return table.concat(parts," "):sub(1,80)
+end
+
+--- @function orderDateNodeShapes
+-- Debug only (#3): date-like nodes with digits (data-component, data-testid or class
+-- contains "date"/"Datum") as attribute values plus text shape. Used when no order date parsed.
+function orderDateNodeShapes(orderDetails)
+  local shapes={}
+  local query='.//*[contains(@data-component,"ate") or contains(@data-testid,"ate") '
+    ..'or contains(@class,"ate") or contains(@class,"atum")]'
+  orderDetails:xpath(query):each(function(index,node)
+    if #shapes >= 12 then
+      return false
+    end
+    local text=node:text()
+    if text:find('%d') == nil then
+      return
+    end
+    shapes[#shapes+1]="dc="..node:attr('data-component')
+      .." testid="..node:attr('data-testid')
+      .." class="..node:attr('class'):sub(1,60)
+      .." shape="..textShape(text)
+  end)
+  return shapes
 end
 
 function getPrice(text)
@@ -2506,6 +2607,26 @@ function emitPurchaseLines(ctx, order, orderCode)
   end
 end
 
+--- Removes the transactions of one order from firstIndex on when they net to exactly 0 €
+--- (an item fully offset by a promotion or gift card). Returns true when they were removed.
+--- keepStorno keeps item and Storno pairs on purpose, so nothing is removed then.
+function dropZeroNetOrderTransactions(transactions, firstIndex)
+  if config.keepStorno or #transactions < firstIndex then
+    return false
+  end
+  local sum=0
+  for i=firstIndex,#transactions do
+    sum=sum+transactions[i].amount
+  end
+  if math.abs(sum) >= 0.005 then
+    return false
+  end
+  for i=#transactions,firstIndex,-1 do
+    table.remove(transactions, i)
+  end
+  return true
+end
+
 function appendOrderToRefresh(ctx, order, orderCode)
   local firstTransactionIndex=#ctx.transactions+1
   local isResync=ctx.resyncDeletedTransactions == true
@@ -2529,6 +2650,11 @@ function appendOrderToRefresh(ctx, order, orderCode)
     emitPurchaseLines(ctx, order, orderCode)
   end
   emitOrderAdjustments(ctx, order, orderCode, report)
+  if dropZeroNetOrderTransactions(ctx.transactions, firstTransactionIndex) then
+    -- The dropped purchase must not stay marked as emitted: keepStorno may be enabled later.
+    clearOrderEmissionForAccount(order, ctx.accountNumber)
+    return
+  end
   if #ctx.transactions >= firstTransactionIndex then
     rememberOrderTransactions(
       order, ctx.accountNumber, ctx.transactions, firstTransactionIndex, isResync)
@@ -2580,6 +2706,9 @@ function summaryLabelKind(name)
     return 'skip'
   end
   if name == 'Summe' or name:find('Summe ohne') or name:find('Gesamt vor') then
+    return 'skip'
+  end
+  if name:find('Gesamtbetrag') then
     return 'skip'
   end
   if name:find('Zwischensumme') or name:find('Subtotal') then
@@ -2718,14 +2847,45 @@ function resolveOrderDetailsWithoutDate(order, orderDetails, orderDateDiagnostic
   end
   if isUnloadableOrderDetailsPage(orderDetails) then
     scheduleNextDetailsDate(order, now)
-    debugBuffer.print("getOrderDetails unloadable page",order.orderCode)
+    logDebug("getOrderDetails unloadable page",order.orderCode)
     return false
   end
   -- Ohne Datum neu terminieren, damit die Bestellung nicht bei jedem Abruf erneut geladen wird (#3).
   scheduleNextDetailsDate(order, now)
-  debugBuffer.print("getOrderDetails missing order date",order.orderCode,
+  logDebug("getOrderDetails missing order date",order.orderCode,
     table.concat(orderDateDiagnostics or {}, ","))
+  if config.debug then
+    logDebug("getOrderDetails date node shapes",order.orderCode,
+      table.concat(orderDateNodeShapes(orderDetails), " | "))
+  end
   return false
+end
+
+--- @function debugOrderTotals
+-- Debug only (#5): order total against booked parts, all in cents, to see which side is off.
+function debugOrderTotals(order)
+  local extras=order.summaryExtras or {}
+  local extrasSum=0
+  for _,extra in ipairs(extras) do
+    extrasSum=extrasSum+extra.amount
+  end
+  local _, leftover=resolvedSummaryExtras(order)
+  logDebug("getOrderDetails totals", "orderTotal", order.orderTotal,
+    "orderSum", order.orderSum, "summaryExtrasCount", #extras,
+    "summaryExtrasSum", extrasSum, "unbookedLeftover", leftover)
+end
+
+--- @function debugSummaryRow
+-- Debug only (account note debug=true, #5): one line per Bestellübersicht row with
+-- label, classification and outcome, so a missing or wrong discount can be traced.
+function debugSummaryRow(name, kind, outcome, amount)
+  if not config.debug then
+    return
+  end
+  -- Unclassified labels are free text; only their length is logged (see getSummaryExtrasFromDetails).
+  local label=kind == 'other' and '<unclassified>' or name
+  logDebug("getOrderDetails summary row", "label", label, "kind", kind,
+    "outcome", outcome, "amountCents", amount or "none")
 end
 
 --- @function getSummaryExtrasFromDetails
@@ -2736,26 +2896,33 @@ function getSummaryExtrasFromDetails(orderDetails)
   orderDetails:xpath('.//div[contains(@class,"od-line-item-row")]'):each(function(index,row)
     local name=normalizeSummaryLabel(row:xpath('.//*[contains(@class,"od-line-item-row-label")]'):text())
     local kind=summaryLabelKind(name)
+    local priceText=row:xpath('.//*[contains(@class,"od-line-item-row-content")]'):text()
+    local amount=signedSummaryAmount(priceText,kind)
     if kind == 'skip' then
-      return
+      debugSummaryRow(name,kind,'skipped',nil)
+    elseif amount == invalidPrice then
+      debugSummaryRow(name,kind,'dropped: amount not parseable',nil)
+    elseif amount == 0 then
+      debugSummaryRow(name,kind,'dropped: amount zero',0)
+    else
+      -- In a return order a credit is only kept to pair it with shipping (see resolvedSummaryExtras).
+      local returnCredit=skipReturnCredits and kind == 'credit'
+      debugSummaryRow(name,kind,returnCredit and 'return activity: kept for shipping pairing only' or 'booked',amount)
+      if kind == 'other' then
+        logDebug("getOrderDetails unclassified summary row",
+          "labelLength",#name,"amountCents",amount)
+      end
+      table.insert(extras,{name=name,amount=amount,returnCredit=returnCredit})
     end
-    if skipReturnCredits and kind == 'credit' then
-      return
-    end
-    local amount=signedSummaryAmount(row:xpath('.//*[contains(@class,"od-line-item-row-content")]'):text(), kind)
-    if amount == invalidPrice or amount == 0 then
-      return
-    end
-    if kind == 'other' then
-      debugBuffer.print("getOrderDetails unclassified summary row",
-        "labelLength",#name,"amountCents",amount)
-    end
-    table.insert(extras,{name=name,amount=amount})
   end)
   return extras
 end
 
---- Match equal net/gross shipping and voucher values at 19% VAT.
+-- Statutory German VAT rates in percent (19 % standard, 7 % reduced, e.g. books).
+-- Used to decide whether shipping and a voucher cancel out net or gross.
+local statutoryVatPercents={19,7}
+
+--- Match shipping and voucher that cancel out, net or gross at a statutory VAT rate.
 -- Amazon's summary omits the tax rate; round converted values to invoice cents.
 function shippingVoucherAmountsMatch(shippingCents, voucherCents)
   if type(shippingCents) ~= 'number' or type(voucherCents) ~= 'number'
@@ -2766,63 +2933,141 @@ function shippingVoucherAmountsMatch(shippingCents, voucherCents)
   if voucherValue == shippingCents then
     return true
   end
-  local shippingGross=math.floor((shippingCents*119+50)/100)
-  local voucherGross=math.floor((voucherValue*119+50)/100)
-  return voucherValue == shippingGross or shippingCents == voucherGross
+  for _,percent in ipairs(statutoryVatPercents) do
+    local shippingGross=math.floor((shippingCents*(100+percent)+50)/100)
+    local voucherGross=math.floor((voucherValue*(100+percent)+50)/100)
+    if voucherValue == shippingGross or shippingCents == voucherGross then
+      return true
+    end
+  end
+  return false
 end
 
---- Remove only shipping and its matching voucher, not unrelated cart-wide discounts.
-function omitAmazonCoveredShipping(order, extras)
+--- Shipping row label (not gift packaging).
+function isShippingExtraName(name)
+  local isGiftPackaging=name:find('Geschenk', 1, true) ~= nil
+    or name:find('[Gg]ift') ~= nil
+  return not isGiftPackaging and (
+    name:find('Versand', 1, true) ~= nil
+    or name:find('[Ss]hipping') ~= nil)
+end
+
+--- Remove only shipping and its matching voucher (Prime refund), not unrelated cart-wide discounts.
+-- Also applies to return orders: a voucher that cancels the shipping is not a return credit.
+--- Index pairs {shipping=i, voucher=j} of shipping and voucher that cancel out. Needs an order reference.
+function shippingVoucherPairs(order, extras)
   if type(order) ~= 'table' or type(order.orderCode) ~= 'string'
-      or order.orderCode == '' or orderHasReturnActivity(order) then
-    return extras
+      or order.orderCode == '' then
+    return {}
   end
   local shippingIndices={}
   local voucherIndices={}
   for index, extra in ipairs(extras) do
     local name=extra.name or ''
-    local isGiftPackaging=name:find('Geschenk', 1, true) ~= nil
-      or name:find('[Gg]ift') ~= nil
-    local isShipping=not isGiftPackaging and (
-      name:find('Versand', 1, true) ~= nil
-      or name:find('[Ss]hipping') ~= nil)
-    if isShipping and extra.amount > 0 then
+    if isShippingExtraName(name) and extra.amount > 0 then
       shippingIndices[#shippingIndices+1]=index
     elseif ((name:find('Gutschein', 1, true) and name:find('eingel', 1, true))
         or name:find('Aktionsrabatt', 1, true)) and extra.amount < 0 then
       voucherIndices[#voucherIndices+1]=index
     end
   end
-  local omitted={}
-  local matchedShippings={}
-  local matchedVouchers={}
-  for _, shippingIndex in ipairs(shippingIndices) do
-    local shipping=extras[shippingIndex]
+  -- Maximum matching (augmenting paths): a first-fit pairing can leave a shipping row
+  -- unpaired although another assignment pairs every row.
+  local voucherOwner={}
+  local function assignShipping(shippingIndex, tried)
     for _, voucherIndex in ipairs(voucherIndices) do
-      if not matchedShippings[shippingIndex] and not matchedVouchers[voucherIndex]
-          and shippingVoucherAmountsMatch(shipping.amount, extras[voucherIndex].amount) then
-        omitted[shippingIndex]=true
-        omitted[voucherIndex]=true
-        matchedShippings[shippingIndex]=true
-        matchedVouchers[voucherIndex]=true
-        break
+      if not tried[voucherIndex]
+          and shippingVoucherAmountsMatch(extras[shippingIndex].amount, extras[voucherIndex].amount) then
+        tried[voucherIndex]=true
+        local owner=voucherOwner[voucherIndex]
+        if owner == nil or assignShipping(owner, tried) then
+          voucherOwner[voucherIndex]=shippingIndex
+          return true
+        end
       end
     end
+    return false
   end
-  if next(omitted) == nil then
-    return extras
+  for _, shippingIndex in ipairs(shippingIndices) do
+    assignShipping(shippingIndex, {})
   end
-  local filtered={}
-  for index, extra in ipairs(extras) do
-    if not omitted[index] then
-      filtered[#filtered+1]=extra
+  local result={}
+  for _, voucherIndex in ipairs(voucherIndices) do
+    local shippingIndex=voucherOwner[voucherIndex]
+    if shippingIndex ~= nil then
+      result[#result+1]={shipping=shippingIndex, voucher=voucherIndex}
     end
   end
-  return filtered
+  return result
+end
+
+--- Order total minus items minus the given rows, in cents. nil when the totals say nothing:
+-- missing, or a total of 0 after a full return (the items then stay in orderSum).
+function unexplainedTotalCents(order, rows)
+  if type(order) ~= 'table' then
+    return nil
+  end
+  local orderSum=tonumber(order.orderSum)
+  local orderTotal=tonumber(order.orderTotal)
+  if orderSum == nil or orderTotal == nil or orderTotal == 0 then
+    return nil
+  end
+  local leftover=orderTotal-orderSum
+  for _,row in ipairs(rows) do
+    leftover=leftover-row.amount
+  end
+  return leftover
+end
+
+--- Rows that are booked. Pairs are dropped when dropPairs is true; unpaired return credits never are booked.
+local function bookableRows(extras, paired, dropPairs)
+  local rows={}
+  for index, extra in ipairs(extras) do
+    if paired[index] then
+      if not dropPairs then
+        rows[#rows+1]=extra
+      end
+    elseif not extra.returnCredit then
+      rows[#rows+1]=extra
+    end
+  end
+  return rows
+end
+
+--- @function grossUpShippingToTotal
+-- The summary lists shipping net, but the order total includes its VAT. The leftover
+-- (total minus items minus extras) is booked on the shipping row only if it equals a
+-- statutory VAT rate on that shipping to the cent (±1 ct). Otherwise nothing changes.
+-- Returns the leftover that is still unexplained.
+function grossUpShippingToTotal(extras, leftover)
+  if leftover <= 0 then
+    return leftover
+  end
+  local shippingIndex=nil
+  for index,extra in ipairs(extras) do
+    if extra.amount > 0 and isShippingExtraName(extra.name) then
+      if shippingIndex ~= nil then
+        return leftover
+      end
+      shippingIndex=index
+    end
+  end
+  if shippingIndex == nil then
+    return leftover
+  end
+  local netCents=extras[shippingIndex].amount
+  for _,percent in ipairs(statutoryVatPercents) do
+    if math.abs(leftover-netCents*percent/100) <= 1 then
+      extras[shippingIndex].amount=netCents+leftover
+      return 0
+    end
+  end
+  return leftover
 end
 
 --- @function resolvedSummaryExtras
--- Named extras (shipping, coupon, …). VAT and leftover are not booked.
+-- Named extras (shipping, coupon, …) in cents, plus the leftover that no row explains.
+-- Net shipping is grossed up to the order total when the difference proves its VAT.
 function resolvedSummaryExtras(order)
   local extras={}
   if type(order) == 'table' and type(order.summaryExtras) == 'table' then
@@ -2830,11 +3075,28 @@ function resolvedSummaryExtras(order)
       local amount=tonumber(extra.amount)
       local name=extra.name
       if type(name) == 'string' and name ~= '' and amount ~= nil and amount ~= 0 then
-        table.insert(extras,{name=name,amount=amount})
+        table.insert(extras,{name=name,amount=amount,returnCredit=extra.returnCredit==true})
       end
     end
   end
-  extras=omitAmazonCoveredShipping(order, extras)
+  -- A shipping/voucher pair is removed (Amazon covered the shipping), unless the order
+  -- total shows that the pair was charged: then the option that fits the total better wins.
+  local paired={}
+  for _,pair in ipairs(shippingVoucherPairs(order, extras)) do
+    paired[pair.shipping]=true
+    paired[pair.voucher]=true
+  end
+  local dropPairs=true
+  local omitLeft=unexplainedTotalCents(order, bookableRows(extras, paired, true))
+  local keepLeft=unexplainedTotalCents(order, bookableRows(extras, paired, false))
+  if omitLeft ~= nil and keepLeft ~= nil and math.abs(keepLeft) < math.abs(omitLeft) then
+    dropPairs=false
+  end
+  extras=bookableRows(extras, paired, dropPairs)
+  -- Items already add up to the order total: the summary rows are not part of the payment.
+  if unexplainedTotalCents(order, {}) == 0 then
+    extras={}
+  end
   local leftover=0
   if type(order) == 'table' then
     local orderSum=tonumber(order.orderSum)
@@ -2846,6 +3108,7 @@ function resolvedSummaryExtras(order)
   for _,extra in ipairs(extras) do
     leftover=leftover-extra.amount
   end
+  leftover=grossUpShippingToTotal(extras, leftover)
   return extras, leftover
 end
 
@@ -3063,7 +3326,7 @@ function getOrderDetails(order)
   end
   local html=connectShopWithCheck("GET",order.detailsUrl)
   if html == nil then
-    debugBuffer.print("getOrderDetails request failed",order.orderCode)
+    logDebug("getOrderDetails request failed",order.orderCode)
     debugBuffer.context=''
     return false
   end
@@ -3079,7 +3342,7 @@ function getOrderDetails(order)
     end
     order.bookingDate=date
     if orderDateSource ~= "data-component=orderDate" then
-      debugBuffer.print("getOrderDetails alternate order date",order.orderCode,
+      logDebug("getOrderDetails alternate order date",order.orderCode,
         orderDateSource)
     end
 
@@ -3105,6 +3368,9 @@ function getOrderDetails(order)
     end
     order.returnActivity=orderDetailsHasReturnActivity(orderDetails)
     order.summaryExtras=getSummaryExtrasFromDetails(orderDetails)
+    if config.debug then
+      debugOrderTotals(order)
+    end
     if not hadPositionsBeforeParse and orderHasPositions(order) then
       -- Empty/failed parse must not permanently block a later real position emit.
       clearOrderEmittedFlags(order, true)
@@ -3118,7 +3384,7 @@ function getOrderDetails(order)
     scheduleNextDetailsDate(order, os.time())
     parsed=true
   else
-    debugBuffer.print("getOrderDetails no details",order.orderCode)
+    logDebug("getOrderDetails no details",order.orderCode)
   end
   if html ~= nil then
     order.encodingRepairDone=true
@@ -3414,7 +3680,7 @@ function scanOrderFilterPages(orderFilterVal, orderCache, orderFilterCache, subA
     if nextPage:text() ~= "" then
       local nextHtml=connectShop(nextPage:click())
       if nextHtml == nil then
-        print("scanOrderFilterPages: next page nil, stop pagination")
+        logDebug("scanOrderFilterPages: next page nil, stop pagination")
         setOrderListHarvestIncomplete(subAccountLabel, true)
         paginationComplete=false
         foundEnd=true
@@ -3786,16 +4052,26 @@ function isAmazonAppApprovalPollingPage(htmlNode)
   return htmlNode:xpath('//form[@id="pollingForm"]'):length() > 0
 end
 
+-- subPageType values Amazon uses for the email step (older and current markup).
+local AMAZON_CLAIM_COLLECT_SUBPAGE_TYPES = {
+  SignInClaimCollect = true,
+  FullPageUnifiedClaimCollect = true,
+}
+
 --- Email step of Amazon's claim flow. The password input on this page is the
--- hidden autofill hint (ap-credential-autofill-hint), not the password step.
+-- hidden autofill hint (ap-/auth-credential-autofill-hint), not the password step.
 function isAmazonClaimCollectPage(htmlNode)
   if htmlNode == nil then
     return false
   end
-  if htmlNode:xpath('//input[@name="subPageType"]'):attr('value') == 'SignInClaimCollect' then
+  local subPageType=htmlNode:xpath('//input[@name="subPageType"]'):attr('value')
+  if AMAZON_CLAIM_COLLECT_SUBPAGE_TYPES[subPageType] then
     return true
   end
-  return htmlNode:xpath('//*[@id="ap-credential-autofill-hint"]'):length() > 0
+  if htmlNode:xpath('//input[@name="appAction"]'):attr('value') == 'SIGNIN_CLAIM_COLLECT' then
+    return true
+  end
+  return htmlNode:xpath('//*[@id="ap-credential-autofill-hint" or @id="auth-credential-autofill-hint"]'):length() > 0
     and htmlNode:xpath('//*[@id="ap_password"]'):length() == 0
 end
 
@@ -3902,7 +4178,7 @@ function applyPreferredAmazonAuthDeviceSelection(authSelectForm)
   authSelectForm:xpath('.//input[@type="radio"]'):each(function(_, element)
     if element:attr('value') == otpDeviceContext then
       element:attr('checked', 'checked')
-      print("select device channel "..tostring(otpDeviceContext))
+      logDebug("select device channel "..tostring(otpDeviceContext))
     else
       element:attr('checked', '')
     end
@@ -4120,7 +4396,7 @@ function submitSwitchAuthPrompt(htmlNode)
     return nil, "signIn form missing on auth_prompt"
   end
   fillAmazonSignInFields(htmlNode)
-  print("switch auth_prompt: submitting password")
+  logDebug("switch auth_prompt: submitting password")
   return submitAmazonShopForm(form, "auth_prompt submit failed")
 end
 
@@ -4160,7 +4436,7 @@ function finishAccountSwitchLanding(htmlNode, opts)
   end
   html=htmlNode
   if opts.switchKind == 'business' then
-    print("Business switch: load Your Account homepage (HAR landing)")
+    logDebug("Business switch: load Your Account homepage (HAR landing)")
     html=connectShop("GET", baseurl..const.businessHomepageAfterSwitch)
   end
   return {ok=true}
@@ -4314,7 +4590,8 @@ function extractAmazonAwsWafSitekey(htmlNode, scriptUrl)
   end
   return raw:match('data%-sitekey%s*=%s*["\']([^"\']+)["\']')
     or raw:match('["\']sitekey["\']%s*:%s*["\']([^"\']+)["\']')
-    or raw:match("gokuProps%s*=%s*{[^}]*key%s*:%s*[\"']([^\"']+)[\"']")
+    or raw:match("gokuProps%s*=%s*{%s*[\"']?key[\"']?%s*:%s*[\"']([^\"']+)[\"']")
+    or raw:match("gokuProps%s*=%s*{[^}]*,%s*[\"']?key[\"']?%s*:%s*[\"']([^\"']+)[\"']")
 end
 
 --- Caller must pass a non-empty refererUrl (typically baseurl); no silent baseurl fallback.
@@ -4466,7 +4743,7 @@ function haltMessageIfAmazonAwsWaf(htmlNode, logMsg)
     return nil
   end
   if type(logMsg) == 'string' and logMsg ~= '' then
-    print(logMsg)
+    logDebug(logMsg)
   end
   return amazonAwsWafSoftblockMessage()
 end
@@ -4520,7 +4797,7 @@ function finishAmazonLoginDisplayNameFromHtml(htmlNode)
   if name == "" then
     name="Unkown"
   else
-    print("name="..name)
+    logDebug("name="..name)
   end
   aName=name
 end
@@ -4577,7 +4854,7 @@ function followAkamaiMetaRefresh(challenge)
   if refresh == nil then
     return nil, "Akamai meta-refresh missing"
   end
-  print("Akamai interstitial: follow meta-refresh")
+  logDebug("Akamai interstitial: follow meta-refresh")
   return connectShop("GET", refresh), nil
 end
 
@@ -4609,11 +4886,11 @@ function followAkamaiVerifyResponse(content)
   if location ~= nil and location ~= '' then
     location=location:gsub("\\/", "/")
     location=absoluteAmazonShopUrl(location)
-    print("Akamai interstitial: follow location")
+    logDebug("Akamai interstitial: follow location")
     return connectShop("GET", location)
   end
   if string.find(content, '"reload"%s*:%s*true') then
-    print("Akamai interstitial: reload after verify")
+    logDebug("Akamai interstitial: reload after verify")
     return connectShop("GET", baseurl.."/")
   end
   return nil
@@ -5536,7 +5813,7 @@ function shouldRunAccountHarvest(refreshSince, now)
   -- Details-only wins over a fresh login when the last list scan is still warm.
   if isIncrementalMoneyMoneyRefresh(refreshSince, now)
       and not incrementalListHarvestNeeded(refreshSince, now) then
-    print("skip incremental list harvest (details-only; last list scan still fresh)")
+    logDebug("skip incremental list harvest (details-only; last list scan still fresh)")
     return false
   end
   if LocalStorage.loginCounter ~= LocalStorage.lastLoginCounter then
@@ -5551,17 +5828,17 @@ end
 
 function logHarvestMode(refreshSince, now, incrementalMsg, fullMsg)
   if isIncrementalMoneyMoneyRefresh(refreshSince, now) then
-    print(incrementalMsg)
+    logDebug(incrementalMsg)
     return
   end
-  print(fullMsg)
+  logDebug(fullMsg)
 end
 
 function logMoneyMoneyRefreshMode(refreshSince, now)
   if isIncrementalMoneyMoneyRefresh(refreshSince, now) then
     local cutoff=incrementalHarvestCutoff(refreshSince, now)
     if type(cutoff) == 'number' then
-      print("incremental refresh since "..formatAbaDateLabel(refreshSince)
+      logDebug("incremental refresh since "..formatAbaDateLabel(refreshSince)
         .." (list cutoff "..formatAbaDateLabel(cutoff)..")")
       return
     end
@@ -5695,10 +5972,10 @@ function logAbaRollupHarvestSummary(logPrefix, pageNum, totalOrders, truncatedBy
     return
   end
   if pageNum > 1 then
-    print(logPrefix, "rollupTable paginated", pageNum, "pages,", totalOrders, "unique orders")
+    logDebug(logPrefix, "rollupTable paginated", pageNum, "pages,", totalOrders, "unique orders")
     return
   end
-  print(logPrefix, "rollupTable orders found,", totalOrders, "unique orders")
+  logDebug(logPrefix, "rollupTable orders found,", totalOrders, "unique orders")
 end
 
 function finalizeAbaRollupTableResult(logPrefix, span, combined, totalOrders, pageNum, paginationFailed, truncatedByLimit)
@@ -5729,7 +6006,7 @@ function fetchAbaRollupTable(reportType, span, csrf, referer, logPrefix, fromPar
   -- MoneyMoney aborts the whole refresh on HTTP 400. ABA rollupTable rejects GET
   -- (Bad Request); the UI always POSTs JSON. scheduler GET with CUSTOM_RANGE also
   -- returns 400 — never fall back to it for custom date windows.
-  print(logPrefix, "try rollupTable POST")
+  logDebug(logPrefix, "try rollupTable POST")
   local combined=nil
   local seenOrders={}
   local totalOrders=0
@@ -5768,11 +6045,11 @@ function fetchAbaRollupTable(reportType, span, csrf, referer, logPrefix, fromPar
     end
     if pageNum >= const.abaRollupMaxPages then
       truncatedByLimit=true
-      print(logPrefix, "rollupTable pagination limit reached at", const.abaRollupMaxPages, "pages")
+      logDebug(logPrefix, "rollupTable pagination limit reached at", const.abaRollupMaxPages, "pages")
       break
     end
     pageMarker=nextMarker
-    print(logPrefix, "rollupTable page", pageNum, "orders=", pageOrders, "nextPageMarker=", nextMarker)
+    logDebug(logPrefix, "rollupTable page", pageNum, "orders=", pageOrders, "nextPageMarker=", nextMarker)
   end
   return finalizeAbaRollupTableResult(
     logPrefix, span, combined, totalOrders, pageNum, paginationFailed, truncatedByLimit)
@@ -5823,7 +6100,7 @@ function pollAbaReportStatus(statusUrl, csrf, referer, logPrefix)
   local attempts=const.abaReportPollAttempts
   local sleepSec=const.abaReportPollSleepSec
   for attempt=1, attempts do
-    print(logPrefix, "status poll", attempt)
+    logDebug(logPrefix, "status poll", attempt)
     local content, err=fetchAbaAjaxContent(statusUrl, csrf, referer)
     if content == nil then
       print(logPrefix, "status poll failed:", tostring(err))
@@ -5842,17 +6119,17 @@ end
 
 function fetchAbaGenerateDownloadLinks(reportType, span, csrf, referer, logPrefix)
   local url=buildAbaAjaxUrl(const.abaGenerateDownloadLinksPath, reportType, span)
-  print(logPrefix, "try generate-download-links GET")
+  logDebug(logPrefix, "try generate-download-links GET")
   return fetchAbaAjaxContent(url, csrf, referer)
 end
 
 function scheduleAndDownloadAbaReport(reportType, span, csrf, referer, logPrefix)
   if span == const.abaCustomRangeSpan then
-    print(logPrefix, "scheduler skipped for CUSTOM_RANGE (Amazon returns HTTP 400)")
+    logDebug(logPrefix, "scheduler skipped for CUSTOM_RANGE (Amazon returns HTTP 400)")
     return nil
   end
   local schedUrl=buildAbaAjaxUrl(const.abaReportSchedulerPath, reportType, span)
-  print(logPrefix, "try scheduler GET")
+  logDebug(logPrefix, "try scheduler GET")
   local schedRaw, err=fetchAbaAjaxContent(schedUrl, csrf, referer)
   if schedRaw == nil then
     print(logPrefix, "scheduler failed:", tostring(err))
@@ -5868,7 +6145,7 @@ function scheduleAndDownloadAbaReport(reportType, span, csrf, referer, logPrefix
     end
   end
   if isAbaCsvOrOrderText(statusRaw) then
-    print(logPrefix, "scheduler/status returned order text")
+    logDebug(logPrefix, "scheduler/status returned order text")
     return statusRaw
   end
   local fromStatus=harvestAbaDownloadUrls(statusRaw, logPrefix.." status")
@@ -5892,7 +6169,7 @@ function harvestAbaDownloadUrls(raw, logPrefix)
   for _, dlUrl in ipairs(extractAbaDownloadUrls(raw)) do
     local csv=fetchAbaGetContent(dlUrl)
     if csv ~= nil and isAbaCsvOrOrderText(csv) then
-      print(logPrefix.." download", dlUrl)
+      logDebug(logPrefix.." download", dlUrl)
       return csv
     end
   end
@@ -6023,7 +6300,7 @@ function fetchAbaGetContent(url)
   local content, err=fetchShopRawContent('GET', url, nil, nil, nil)
   if content == nil then
     if err == "empty response" then
-      print("ABA GET empty:", url)
+      logDebug("ABA GET empty:", url)
     else
       print("ABA GET failed:", url, err)
     end
@@ -6160,7 +6437,7 @@ function collectOrdersFromAbaReports(subAccountLabel, kind, refreshSince)
     if job.span == const.abaCustomRangeSpan and not found then
       emptyCustomRangeStreak=emptyCustomRangeStreak+1
       if emptyCustomRangeStreak >= const.abaEmptyCustomRangeHorizon then
-        print("ABA CUSTOM_RANGE empty horizon: skip remaining older windows")
+        logDebug("ABA CUSTOM_RANGE empty horizon: skip remaining older windows")
         completeAbaFullHarvestBatch(refreshSince)
         break
       end
@@ -6185,7 +6462,7 @@ end
 -- ABA session failure aborts (no Gap-GET pretending the last 12 months were covered).
 -- @return newCount, errString
 function collectBusinessSpaOrders(subAccountLabel, kind, refreshSince)
-  print("Business SPA harvest: ABA items_report windows; GET years when order list is scrapable")
+  logDebug("Business SPA harvest: ABA items_report windows; GET years when order list is scrapable")
   local now=os.time()
   local nAba, abaErr=collectOrdersFromAbaReports(subAccountLabel, kind, refreshSince)
   if abaErr ~= nil then
@@ -6224,7 +6501,7 @@ end
 
 function tryEnterOrderListGet(url, logMsg)
   if logMsg ~= nil then
-    print(logMsg)
+    logDebug(logMsg)
   end
   local page=connectShop("GET", url)
   -- Stop fallbacks on WAF so a later non-ready GET cannot overwrite the softblock.
@@ -6247,7 +6524,7 @@ end
 -- Opens scrapable order history. Business: css order-history (not SPA nav).
 function enterOrderList ()
   if html ~= nil and isAmazonBusinessSession(html) then
-    print("Business session: open css order-history")
+    logDebug("Business session: open css order-history")
     if tryEnterOrderListGet(buildOrderHistoryUrl('css')) then
       return
     end
@@ -6387,7 +6664,7 @@ function loadYourOrdersFilterPage(filterVal)
     if type(url) == 'string' and url ~= '' then
       local page, akamaiErr=resolveAkamaiInterstitial(connectShop('GET', url))
       if akamaiErr ~= nil then
-        print("Akamai on order filter GET:", akamaiErr)
+        logDebug("Akamai on order filter GET:", akamaiErr)
       end
       lastPage=page
       if orderListPageReady(page) then
@@ -6412,7 +6689,7 @@ function sessionMatchesSubAccountKind(kind)
     return isAmazonBusinessSession(html) or isAmazonBusinessOrdersSpa(html)
   end
   if kind == 'personal' then
-    return not isAmazonBusinessSession(html)
+    return not isAmazonBusinessSession(html) and not isAmazonBusinessOrdersSpa(html)
   end
   return false
 end
@@ -6495,12 +6772,12 @@ end
 -- last30 is often SPA-only; year-YYYY pages can still have scrapable order cards.
 function collectOrdersViaYourOrdersGet(subAccountLabel, kind, refreshSince, opts)
   opts=type(opts) == 'table' and opts or {}
-  print("SPA/Business shell: harvest via GET timeFilter (css order-history first)")
+  logDebug("SPA/Business shell: harvest via GET timeFilter (css order-history first)")
   ensureOrderCache()
   local now=os.time()
   local filters
   if opts.abaGapOnly then
-    print("GET harvest: year filters outside ABA window only")
+    logDebug("GET harvest: year filters outside ABA window only")
     filters=enumerateYourOrdersGetFiltersForAbaGap(now)
   else
     filters=enumerateYourOrdersGetFilters(refreshSince, now)
@@ -6557,7 +6834,7 @@ function collectOrdersFromOrderList(subAccountLabel, kind, refreshSince)
   local now=os.time()
   -- Incremental Business: skip SPA order-history probes; ABA uses the cutoff window.
   if kind == 'business' and isIncrementalMoneyMoneyRefresh(refreshSince, now) then
-    print("Business incremental: ABA cutoff harvest (skip order-list SPA probes)")
+    logDebug("Business incremental: ABA cutoff harvest (skip order-list SPA probes)")
     return collectBusinessSpaOrders(subAccountLabel, kind, refreshSince)
   end
   enterOrderList()
@@ -6575,7 +6852,7 @@ function collectOrdersFromOrderList(subAccountLabel, kind, refreshSince)
   local scannedFilters={}
   local scanMonths=effectiveScanFiltersMonths(refreshSince, now)
   if scanMonths ~= nil and scanMonths > 0 then
-    print("scanFiltersMonths=", scanMonths)
+    logDebug("scanFiltersMonths=", scanMonths)
   end
 
   local offeredVals={}
@@ -6629,14 +6906,15 @@ end
 
 --- Switch Amazon web session to the given sub-account kind before order-detail fetches.
 --- @return nil on success, error string on failure
-function ensureAmazonSubAccountSession(kind)
+--- @param switcherPage #table|nil already loaded switcher page of the current session; nil opens a new one
+function ensureAmazonSubAccountSession(kind, switcherPage)
   if type(kind) ~= 'string' or kind == '' then
     return nil
   end
   if sessionMatchesSubAccountKind(kind) then
     return nil
   end
-  local page=openAccountSwitcherEmbed()
+  local page=switcherPage or openAccountSwitcherEmbed()
   if page == nil then
     return "Kontenwechsel nicht verfügbar"
   end
@@ -7407,42 +7685,45 @@ function runSubAccountScanLoop()
   end
   while state.index <= #state.plan do
     local want=state.plan[state.index]
-    local page=openAccountSwitcherEmbed()
-    if page == nil then
-      clearSubAccountScanState()
-      return "Amazon: Kontenwechsel nicht verfügbar – Unterkonto \""
-        ..tostring(want.label).."\" nicht erreichbar"
+    -- Switch only when the session is not already on this sub-account.
+    if not sessionMatchesSubAccountKind(want.kind) then
+      local page=openAccountSwitcherEmbed()
+      if page == nil then
+        clearSubAccountScanState()
+        return "Amazon: Kontenwechsel nicht verfügbar – Unterkonto \""
+          ..tostring(want.label).."\" nicht erreichbar"
+      end
+      local options=parseAccountSwitcher(page)
+      local match=findSubAccountByKind(options, want.kind)
+      if match == nil then
+        clearSubAccountScanState()
+        return "Amazon-Unterkonto nicht im Switcher: "..tostring(want.label)
+      end
+      local result=switchAmazonSubAccount(match)
+      if result.needsMfa then
+        state.phase='await_mfa'
+        print("switch requires MFA for "..tostring(match.label))
+        return result.challenge
+      end
+      if result.error then
+        clearSubAccountScanState()
+        return "Amazon Kontowechsel fehlgeschlagen ("..tostring(match.label).."): "..result.error
+      end
     end
-    local options=parseAccountSwitcher(page)
-    local match=findSubAccountByKind(options, want.kind)
-    if match == nil then
-      clearSubAccountScanState()
-      return "Amazon-Unterkonto nicht im Switcher: "..tostring(want.label)
-    end
-    local result=switchAmazonSubAccount(match)
-    if result.needsMfa then
-      state.phase='await_mfa'
-      print("switch requires MFA for "..tostring(match.label))
-      return result.challenge
-    end
-    if result.error then
-      clearSubAccountScanState()
-      return "Amazon Kontowechsel fehlgeschlagen ("..tostring(match.label).."): "..result.error
-    end
-    MM.printStatus("Amazon: Unterkonto \""..match.label.."\"")
+    MM.printStatus("Amazon: Unterkonto \""..want.label.."\"")
     local advance, harvestErr=harvestAndAdvanceSubAccountScan(
-      state, match.label, match.kind)
+      state, want.label, want.kind)
     if harvestErr ~= nil then
       return harvestErr
     end
     if advance == 'pause' then
       local open=state.plan[state.index]
-      local openLabel=(type(open) == 'table' and open.label) or match.label
+      local openLabel=(type(open) == 'table' and open.label) or want.label
       print("sub-account harvest batch paused; more orders for", tostring(openLabel))
       return nil
     end
     if advance == 'continue' and state.harvestHasMore then
-      print("sub-account harvest batch paused; more orders for", tostring(match.label),
+      print("sub-account harvest batch paused; more orders for", tostring(want.label),
         "; continuing other sub-accounts")
     elseif advance == 'done' then
       break
@@ -7518,7 +7799,7 @@ function readAmazonCustomerIdForSession()
   end
   local resolved, akamaiErr=resolveAkamaiInterstitial(probe)
   if akamaiErr ~= nil then
-    print("Akamai on customerId probe:", akamaiErr)
+    logDebug("Akamai on customerId probe:", akamaiErr)
   end
   return parseAmazonCustomerIdFromHtml(resolved)
 end
@@ -7611,7 +7892,7 @@ end
 
 --- @function discoverAmazonSubAccounts
 -- ListAccounts / "Nach neuen Konten suchen": read each sub-account customerId
--- via short session switches, then restore the session active at entry.
+-- via session switches only where the sub-account is not already active (no switch back).
 -- Does not harvest orders (no Umsätze); the customerId fallback loads the
 -- order-history shell only.
 -- opts.reuseCustomerIds: when true, skip switcher+enrichment if LocalStorage
@@ -7661,9 +7942,29 @@ function discoverAmazonSubAccounts(statusText, opts)
     return nil, "Amazon-Ausgangskonto konnte für die Unterkonto-Ermittlung nicht erkannt werden"
   end
 
-  local discoveryErr=nil
+  -- The active session is read first, so it needs no switch.
+  -- Only the other sub-accounts are switched to; the session is left on the last one read.
+  local ordered={}
   for _,option in ipairs(options) do
-    local switchErr=ensureAmazonSubAccountSession(option.kind)
+    if option.kind == startingKind then
+      table.insert(ordered, option)
+    end
+  end
+  for _,option in ipairs(options) do
+    if option.kind ~= startingKind then
+      table.insert(ordered, option)
+    end
+  end
+
+  local discoveryErr=nil
+  -- The switcher page loaded above is valid until the first switch; after that it is stale.
+  local switcherPage=switcherHtml
+  for _,option in ipairs(ordered) do
+    local needsSwitch=not sessionMatchesSubAccountKind(option.kind)
+    local switchErr=ensureAmazonSubAccountSession(option.kind, switcherPage)
+    if needsSwitch then
+      switcherPage=nil
+    end
     if switchErr ~= nil then
       discoveryErr="Amazon-Unterkonto-Ermittlung fehlgeschlagen: "..switchErr
       break
@@ -7673,10 +7974,6 @@ function discoverAmazonSubAccounts(statusText, opts)
     option.accountNumber=customerId
   end
 
-  local restoreErr=ensureAmazonSubAccountSession(startingKind)
-  if restoreErr ~= nil then
-    return nil, "Amazon-Ausgangskonto konnte nicht wiederhergestellt werden: "..restoreErr
-  end
   if discoveryErr ~= nil then
     return nil, discoveryErr
   end
@@ -7786,24 +8083,24 @@ function applyAccountAttribute(k, v, allowConfigStrings)
   end
   if type(config[canonical]) == 'boolean' then
     local flag=(v == 'true')
-    print("set config",canonical,"=", flag and "true" or "false")
+    logDebug("set config",canonical,"=", flag and "true" or "false")
     config[canonical]=flag
   end
   if type(config[canonical]) == 'number' then
     local n=tonumber(v)
     if n ~= nil then
-      print("set config",canonical,n)
+      logDebug("set config",canonical,n)
       config[canonical]=n
     else
-      print("ignore non-numeric config",canonical,v)
+      logDebug("ignore non-numeric config",canonical,v)
     end
   end
   if allowConfigStrings and type(config[canonical]) == 'string' then
-    print("set config",canonical,v)
+    logDebug("set config",canonical,v)
     config[canonical]=v
   end
   if type(const[canonical]) == 'string' then
-    print("const k=",v)
+    logDebug("const k=",v)
     if canonical == 'orderDetailsUrl' and type(v) == 'string' and v:match("^https?://") then
       absoluteAmazonUrl(v) -- reject foreign hosts for account-note overrides
     end
@@ -7832,6 +8129,24 @@ function failMissingLoginPage(stage)
   return message
 end
 
+--- Records the login stage (log and error texts) and shows the same step in
+-- MoneyMoney's status line. Otherwise MoneyMoney keeps its own "Lade Kontenliste" text.
+function enterLoginStage(stage, statusText)
+  loginStage=stage
+  MM.printStatus(statusText)
+end
+
+--- Text of Amazon's server-side alert box ("Ein Problem ist aufgetreten: …") with
+-- whitespace collapsed to single spaces. Empty string when no alert is shown.
+function amazonAuthAlertText(htmlNode)
+  if htmlNode == nil then
+    return ''
+  end
+  local raw=htmlNode:xpath('//div[@id="auth-error-message-box"]'):text()
+  local collapsed=raw:gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
+  return collapsed
+end
+
 function isCredentialRejectionMessage(message)
   if type(message) ~= 'string' then
     return false
@@ -7856,11 +8171,23 @@ function isCredentialRejectionMessage(message)
   return false
 end
 
+-- Login entry point. The debug buffer is flushed on every exit, so the login stage
+-- traces also appear when the login fails (refresh would otherwise never flush them).
 function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
+  local ok, result=pcall(loginSteps, protocol, bankCode, step, credentials, interactive)
+  debugBuffer.flush()
+  if not ok then
+    error(result, 0)
+  end
+  return result
+end
+
+function loginSteps (protocol, bankCode, step, credentials, interactive)
   -- Login.
+  resetAccountNoteSettings()
   if type(LocalStorage.patcher) == 'table' then
     for k,v in pairs(LocalStorage.patcher) do
-      print("attribut",k,v)
+      logDebug("attribut",k,v)
       applyAccountAttribute(k, v, false)
     end
   end
@@ -7914,6 +8241,9 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     captcha1run=true
     mfa1run=true
     claimsVerify1run=true
+    loginStage="Start"
+    otpSubmitCount=0
+    MM.printStatus("Amazon: Anmeldung läuft…")
     aName=nil
     if not shouldPreserveSubAccountScanOnLogin() then
       clearSubAccountScanState()
@@ -7925,12 +8255,12 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     end
     LocalStorage.loginCounter=LocalStorage.loginCounter+1
     syncSubAccountScanLoginCounter()
-    print("run=",LocalStorage.loginCounter)
+    logDebug("run=",LocalStorage.loginCounter)
 
-    if config.debug then
+    if devHarness then
       webCache=os.rename(webCacheFolder,webCacheFolder) and true or false
       if webCache then
-        print("webcache on")
+        logDebug("webcache on")
         config.limitOrders=1e99
         local temp=webCacheFolder.."/cleanLocalStorage"
         local cleanLocalStorage=os.rename(temp,temp) and true or false
@@ -7943,7 +8273,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     end
 
     if cookieImport then
-      print("cookie import login")
+      logDebug("cookie import login")
       local cookieErr=establishAmazonSessionFromImportedCookies(password:sub(8))
       if cookieErr ~= nil then
         MM.printStatus(cookieErr)
@@ -7977,17 +8307,21 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
   repeat
     leaveLoginLoop=true
     webCacheState="login"..loginLoops
-    print("login "..loginLoops..". try")
+    logDebug("login "..loginLoops..". try")
 
     if html == nil then
       return failMissingLoginPage("Start")
     end
 
     -- $x('//div[@id="auth-error-message-box"]')
-    local authError=html:xpath('//div[@id="auth-error-message-box"]'):text()
+    local authError=amazonAuthAlertText(html)
+    -- A wrong OTP code keeps the OTP form on screen with an error box. The OTP
+    -- branch below asks for the code again instead of ending the login.
+    local otpFormOnScreen=isAmazonEnterableOtpPage(html)
 
-    if authError ~= '' then
+    if authError ~= '' and not otpFormOnScreen then
       MM.printStatus(authError)
+      print("login error at stage "..loginStage..": "..authError)
       if isCredentialRejectionMessage(authError) then
         print('login failed, clean cookies text')
         LocalStorage.cookies=nil
@@ -7996,22 +8330,29 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       return "Amazon: "..authError
     end
 
-
-
     -- Enterable OTP (classic MFA / CVF SMS-TOTP) before app-approval polling.
     -- Amazon CVF approval pages often include both on the same HTML.
-    if isAmazonEnterableOtpPage(html) then
+    if otpFormOnScreen then
+      loginStage="2FA-Code"
       print("multi factor auth")
       leaveLoginLoop=false
-      if config.debug then print("login mfa") end
+      logDebug("login mfa")
       if mfa1run then
         mfa1run=false
         local otpChallenge=loginOtpChallengeFromHtml(html)
         if otpChallenge == nil then
           return failMissingLoginPage("Zwei-Faktor-Authentifizierung")
         end
+        if authError ~= '' then
+          print("login otp rejected by Amazon, asking again (submitted "..otpSubmitCount..")")
+          otpChallenge.challenge=authError.."\n"..otpChallenge.challenge
+        end
+        MM.printStatus("Amazon: Warte auf Eingabe des Zwei-Faktor-Codes…")
         return otpChallenge
       else
+        otpSubmitCount=otpSubmitCount+1
+        print("login otp submit "..otpSubmitCount)
+        MM.printStatus("Amazon: Zwei-Faktor-Code wird geprüft…")
         local mfaPage, mfaErr=submitAmazonMfa(html, credentials[1])
         if mfaErr ~= nil or mfaPage == nil then
           return failMissingLoginPage("Zwei-Faktor-Authentifizierung")
@@ -8023,18 +8364,19 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
 
     -- Channel picker (SMS / email / …) before waiting on app approval.
     if isAmazonClaimsPickerPage(html) then
-      print("passcode")
+      enterLoginStage("Bestätigungsmethode", "Amazon: Bestätigungsmethode wird gewählt…")
+      logDebug("passcode")
       leaveLoginLoop=false
       local text=''
       local number=0
       local passcode1run=true
-      if config.debug then print("passcode 1. part") end
+      logDebug("passcode 1. part")
       html:xpath('//input[@type="radio"]'):each(function (index,element)
         text=text..index..". "..element:xpath('..'):text().."\n"
         number=index
         if  tonumber(index) == tonumber(credentials[1]) then
           element:attr('checked','checked')
-          if config.debug then print("select",element:xpath('..'):text()) end
+          logDebug("select",element:xpath('..'):text())
           passcode1run=false
         else
           element:attr('checked','')
@@ -8070,9 +8412,10 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
 
     -- Claims verify OTP (field name=code) after channel selection.
     if isAmazonClaimsVerifyPage(html) then
-      print("passcode part 2")
+      enterLoginStage("Bestätigungscode", "Amazon: Bestätigungscode wird angefordert…")
+      logDebug("passcode part 2")
       leaveLoginLoop=false
-      if config.debug then print("passcode 2. part") end
+      logDebug("passcode 2. part")
       if claimsVerify1run then
         return returnClaimsVerifyChallengeOrFail(html)
       else
@@ -8087,7 +8430,8 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
 
     -- Device select (TOTP / SMS / WhatsApp / EMAIL / VOICE) before app-approval polling.
     if isAmazonAuthDeviceSelectPage(html) then
-      print("auth selector")
+      enterLoginStage("Geräteauswahl", "Amazon: Anmeldemethode wird gewählt…")
+      logDebug("auth selector")
       leaveLoginLoop=false
       local authSelect=html:xpath('//form[@id="auth-select-device-form"]')
       applyPreferredAmazonAuthDeviceSelection(authSelect)
@@ -8099,7 +8443,8 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
 
     -- App approval polling only when no enterable OTP is on the page.
     if isAmazonAppApprovalPollingPage(html) then
-      print("auth link sended")
+      enterLoginStage("App-Freigabe", "Amazon: Anmeldung in der Amazon-App bestätigen…")
+      logDebug("auth link sended")
       local authLink=html:xpath('//form[@id="pollingForm"]')
       local waitUntil=os.time()+300
       local poll
@@ -8112,7 +8457,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
           return failMissingLoginPage("Anmeldebestätigung")
         end
         poll=pollPage:xpath('//input[@name="transactionApprovalStatus"]'):attr('value')
-        print("poll="..poll)
+        logDebug("poll="..poll)
       until( poll == 'TransactionCompleted' or waitUntil<os.time())
       if poll ~= 'TransactionCompleted' then
         return "Amazon: Anmeldebestätigung in der App nicht rechtzeitig erfolgt"
@@ -8128,9 +8473,10 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     --
     local arbToken=html:xpath('//div[@data-arbtoken]'):attr('data-arbtoken')
     if arbToken ~= '' then
-      print("account selector")
+      enterLoginStage("Kontowahl", "Amazon: Kontowahl wird geladen…")
+      logDebug("account selector")
       leaveLoginLoop=false
-      print('Account selector arbToken=<redacted>')
+      logDebug('Account selector arbToken=<redacted>')
       local embed=accountSwitcherEmbedUrl(arbToken, cvfEmbedVersionQuery(html))
       html=connectShop('GET', absoluteAmazonUrl(embed))
       if html == nil then
@@ -8141,7 +8487,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
       local signInLink=html:xpath('//a[@id="cvf-account-switcher-add-accounts-link"]'):attr('href')
       if type(signInLink) == 'string' and signInLink ~= '' then
         local logPath=signInLink:match("^([^?#]+)") or signInLink
-        print('signInLink='..logPath)
+        logDebug('signInLink='..logPath)
         html=connectShop('GET',signInLink)
         if html == nil then
           return failMissingLoginPage("Zusätzliches Konto")
@@ -8152,9 +8498,10 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     -- Captcha
     local captcha=html:xpath('//img[@id="auth-captcha-image"]'):attr('src')
     if captcha ~= "" then
+      enterLoginStage("Captcha", "Amazon: Sicherheitsprüfung (Captcha) erforderlich…")
       print("captcha")
       leaveLoginLoop=false
-      if config.debug then print("login captcha") end
+      logDebug("login captcha")
       if captcha1run then
         local pic=connectShopRaw("GET",captcha)
         captcha1run=false
@@ -8175,7 +8522,17 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     local xpform='//*[@name="signIn"]'
     if html:xpath(xpform):attr("name") ~= '' then
       leaveLoginLoop=false
-      print("enter username/password")
+      -- Claim-collect (email) and password step post to the same form; name them apart in the log.
+      if isAmazonClaimCollectPage(html) then
+        enterLoginStage("E-Mail-Schritt", "Amazon: E-Mail-Adresse wird übermittelt…")
+      else
+        enterLoginStage("Passwort-Schritt", "Amazon: Passwort wird geprüft…")
+      end
+      logDebug("login step: "..loginStage)
+      if config.debug then
+        logDebug("login markup subPageType="..html:xpath('//input[@name="subPageType"]'):attr('value')
+          ..", appAction="..html:xpath('//input[@name="appAction"]'):attr('value'))
+      end
       if config.forceCaptcha then
         print("force captcha with wrong password")
         html:xpath('//*[@name="email"]'):attr("value", secUsername.."a")
@@ -8191,7 +8548,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     end
 
     if html:xpath('//a[@id="ap-account-fixup-phone-skip-link"]'):attr('id') ~= '' then
-      print("skip phone dialog...")
+      logDebug("skip phone dialog...")
       enterOrderList()
     end
 
@@ -8202,7 +8559,7 @@ function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
     print('login success')
     finishAmazonLoginDisplayNameFromHtml(html)
   else
-    return failMissingLoginPage("Unerwartete Antwort")
+    return failMissingLoginPage("Unerwartete Antwort nach Stufe "..loginStage)
   end
 
   -- Account search: discover sub-accounts only (no order harvest / no Umsätze).
@@ -8429,7 +8786,17 @@ function fetchPendingOrderDetails(accountNumber, now)
   return fetchState
 end
 
+-- Refresh entry point. The debug buffer is flushed on every exit, also when the refresh fails.
 function RefreshAccount (account, since)
+  local ok, result=pcall(refreshAccountSteps, account, since)
+  debugBuffer.flush()
+  if not ok then
+    error(result, 0)
+  end
+  return result
+end
+
+function refreshAccountSteps (account, since)
   assertCurrentMoneyMoneyAccountNumber(account and account.accountNumber)
   local now=os.time()
 
@@ -8437,16 +8804,14 @@ function RefreshAccount (account, since)
 
   applyImportSchemaUpgrade()
 
-  config.keepStorno=false
-  config.nameMaxLength=0
-  config.resyncDeletedTransactions=''
+  resetAccountNoteSettings()
   if type(account.attributes) == 'table' then
     LocalStorage.patcher={}
     for k,v in pairs(account.attributes) do
       if type(k) == 'string' and type(v) == 'string' then
         local canonical=canonicalAccountAttributeKey(k)
         if canonical ~= nil and isSupportedAccountAttributeKey(k) then
-          print("attribut",canonical,v)
+          logDebug("attribut",canonical,v)
           LocalStorage.patcher[canonical]=v
           applyAccountAttribute(k, v, true)
           if canonical == 'resetCache' and v ~= '' and v ~= LocalStorage.resetCache then
@@ -8568,14 +8933,12 @@ function RefreshAccount (account, since)
 
   -- Amazon Ausgleich temporarily disabled.
 
-  if config.debug then
+  if devHarness then
     RegressionTest.run(transactions,account.accountNumber)
     if LocalStorage.OrderCache[config.rescanOrder] ~= nil then
-      debugBuffer.print(LocalStorage.OrderCache[config.rescanOrder])
+      logDebug(LocalStorage.OrderCache[config.rescanOrder])
     end
   end
-  debugBuffer.flush()
-
   if webCache then
     for _,v in pairs(transactions) do
       v.booked=false
@@ -8630,5 +8993,3 @@ function EndSession ()
   secUsername=nil
   cookieImportSession=false
 end
-
--- SIGNATURE: MC0CFDVvYq/DHM906QAMjqe/HXm3BBQ+AhUAg91tj9i3HKBEMaT6/U/c5KDkZ9s=

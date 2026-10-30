@@ -17,10 +17,31 @@ body:
         Stattdessen: Ausschnitte aus **Fenster → Protokollfenster** und/oder Screenshots davon —
         vorher **redigieren**.
 
+        ### Debug-Protokoll
+
+        1. Unter **Konto → Einstellungen → Notizen** `debug` auf `true` setzen.
+        2. Den Abruf wiederholen, bis der Fehler erscheint.
+        3. Die Zeilen rund um den Fehler aus dem Protokollfenster kopieren und redigieren.
+        4. `debug` danach wieder entfernen.
+
+        Die Zeilen können Bestellnummern, Links, Notiz-Werte und Texte aus Login-Seiten enthalten.
+        Passwörter und Cookies gehören nicht hinein.
+
         **Nie posten:** Passwörter, Cookie-Strings (`COOKIE:…`), Session-Tokens, OTP/TAN,
         vollständige Kontonummern/IBAN/PAN, unnötige Login-E-Mails, personenbezogene
         Bestell-/Vertragsdaten, HAR-Dateien, LocalStorage-/webCache-Dumps,
         Roh-Exports aus dem MoneyMoney Helper.
+
+  - type: dropdown
+    id: debug_enabled
+    attributes:
+      label: Debug-Protokoll (Notiz `debug`)
+      description: Mit `debug=true` enthält das Protokoll Detailzeilen. Bitte angeben, ob sie vorliegen.
+      options:
+        - "Ja: mit debug=true erzeugt"
+        - "Nein: Standardprotokoll"
+    validations:
+      required: true
 
   - type: input
     id: summary
@@ -99,7 +120,8 @@ body:
     attributes:
       label: Redigierter Protokoll-Ausschnitt
       description: |
-        Optional. Text aus dem Protokollfenster und/oder Hinweis auf einen Screenshot.
+        Optional. Zeilen aus dem Protokollfenster rund um den Fehler (mit `debug=true`: Detailzeilen)
+        und/oder Hinweis auf einen Screenshot. Bestellnummern, Namen, Links und Notiz-Werte redigieren,
         Secrets entfernen oder mit `[redacted]` ersetzen. Keine Logdatei anhängen.
       render: text
 

@@ -29,6 +29,32 @@ assert(parts.scriptUrl:find("token%.awswaf%.com", 1)
 assert(parts.sitekey == "test-sitekey-001", "sitekey must be extracted")
 assert(parts.referer == "https://www.amazon.de/", "referer must pass through")
 
+-- Amazon's live page quotes the gokuProps key as JSON: { "key":"..." }.
+local quotedGokuKey = mm.HTML([[<!DOCTYPE html><html lang="en"><head><title></title>
+<script src="https://1c5c1ecf7303.7a63328c.eu-central-1.token.awswaf.com/1c5c1ecf7303/0ed9a099d7e9/1c0aef3ebb0c/challenge.js"></script>
+<script type="text/javascript">window.gokuProps = { "key":"test-sitekey-quoted", "iv":"x", "context":"y"};</script>
+</head><body><div id="challenge-container"></div></body></html>]])
+local quotedParts = env.amazonAwsWafCaptchaChallengeParts(quotedGokuKey, "https://www.amazon.de/")
+assert(type(quotedParts) == "table" and quotedParts.sitekey == "test-sitekey-quoted",
+  "quoted gokuProps key must be extracted as sitekey")
+
+-- Only the exact "key" member counts, not a suffix such as "apikey".
+local suffixKey = mm.HTML([[<!DOCTYPE html><html lang="en"><head><title></title>
+<script src="https://1c5c1ecf7303.7a63328c.eu-central-1.token.awswaf.com/1c5c1ecf7303/0ed9a099d7e9/1c0aef3ebb0c/challenge.js"></script>
+<script type="text/javascript">window.gokuProps = { "key":"test-sitekey-quoted", "apikey":"wrong-value"};</script>
+</head><body><div id="challenge-container"></div></body></html>]])
+local suffixParts = env.amazonAwsWafCaptchaChallengeParts(suffixKey, "https://www.amazon.de/")
+assert(type(suffixParts) == "table" and suffixParts.sitekey == "test-sitekey-quoted",
+  "gokuProps must not take sitekey from a key ending in 'key'")
+
+local keyAfterSuffix = mm.HTML([[<!DOCTYPE html><html lang="en"><head><title></title>
+<script src="https://1c5c1ecf7303.7a63328c.eu-central-1.token.awswaf.com/1c5c1ecf7303/0ed9a099d7e9/1c0aef3ebb0c/challenge.js"></script>
+<script type="text/javascript">window.gokuProps = { "apikey":"wrong-value", "key":"test-sitekey-quoted"};</script>
+</head><body><div id="challenge-container"></div></body></html>]])
+local keyAfterParts = env.amazonAwsWafCaptchaChallengeParts(keyAfterSuffix, "https://www.amazon.de/")
+assert(type(keyAfterParts) == "table" and keyAfterParts.sitekey == "test-sitekey-quoted",
+  "gokuProps key after another member must be extracted")
+
 assert(env.amazonAwsWafCaptchaChallengeParts(noKey, "https://www.amazon.de/") == nil,
   "challenge.js without sitekey / wrong host must not enable C")
 assert(env.amazonAwsWafCaptchaChallengeParts(shell, "https://www.amazon.de/") == nil,

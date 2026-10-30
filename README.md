@@ -2,7 +2,7 @@
 
 Bestellungen von amazon.de als Umsätze in MoneyMoney.
 
-Version: **2.08**
+Version: **2.09**
 Repository: https://github.com/rosch100/Amazon-MoneyMoney
 Gemeinsame Infos: https://github.com/rosch100/moneymoney-extensions
 
@@ -14,10 +14,10 @@ Dateiname: **`amazon-bestellungen.lua`** (nicht `amazon-orders.lua` — der Name
 durch die Erweiterung von Michael Beutling belegt; alle Extensions liegen im selben
 Download-Verzeichnis).
 
-Aus diesem Repository (aktuell **unsigniert**, Version 2.08 — Signatur ausstehend):
+Aus diesem Repository (aktuell **unsigniert**, Version 2.09 — Signatur ausstehend):
 [amazon-bestellungen.lua](https://raw.githubusercontent.com/rosch100/Amazon-MoneyMoney/master/amazon-bestellungen.lua)
 
-Website-Download unter diesem Namen: **2.04** signiert; dieses Repo ist **2.08** (Signatur ausstehend).
+Website-Download unter diesem Namen: **2.04** signiert; dieses Repo ist **2.09** (Signatur ausstehend).
 
 Datei nach
 `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney/Extensions`
@@ -71,7 +71,7 @@ Pflicht: `session-id` und ein Auth-Cookie (`at-acbde` / `at-main` bzw.
 
 ### Lokal nachvollziehen (Kaltstart wie Nolif/#7)
 
-1. Plugin 2.08 in den Extensions-Ordner (`./link_ext.sh` oder Kopie), MoneyMoney-Beta,
+1. Plugin 2.09 in den Extensions-Ordner (`./link_ext.sh` oder Kopie), MoneyMoney-Beta,
    Signaturprüfung aus.
 2. Amazon-Zugang **neu anlegen** (oder bestehenden löschen), damit keine Alt-Cookies
    in `LocalStorage` helfen — so wie Nolifs Kaltstart.
@@ -90,9 +90,11 @@ erste vollständige Import kann mehrere Aktualisierungen brauchen.
 Die Bestellnummer steht unter **Referenz**, nicht in der Titelzeile. Käufe,
 Erstattungen und Rückgaben erscheinen als Umsätze. Wenn eine negative
 Gutschein- oder Aktionsrabatt-Gutschrift einer positiven Versandposition
-derselben Bestellung betragsgleich netto oder brutto (bei 19 % MwSt.)
-entspricht, werden beide als von Amazon übernommene Versandkosten unterdrückt.
-Nicht passende Warenkorb-Gutscheine bleiben erhalten. Der synthetische
+derselben Bestellung betragsgleich netto oder brutto (bei 19 % oder 7 % MwSt.)
+entspricht, werden beide als von Amazon (Prime) übernommene Versandkosten
+unterdrückt. Das gilt auch bei Rücksendungen. Nicht passende Warenkorb-Gutscheine
+bleiben in Bestellungen ohne Rückgabe erhalten; in Bestellungen mit Rückgabe
+werden nicht gepaarte Gutscheine und Rabatte nicht gebucht. Der synthetische
 **Amazon Ausgleich** ist derzeit deaktiviert.
 
 ## Umlaute und gelöschte Umsätze
@@ -113,8 +115,8 @@ gespeicherten Texte erneut geschickt.
 ## Konto-Notizen
 
 Schlüssel/Wert unter **Konto → Einstellungen → Notizen**. Die ersten sechs
-Felder bietet MoneyMoney beim Anlegen an; die vier erweiterten werden nur
-gelesen, wenn sie manuell eingetragen sind. Leere Werte behalten den Standard.
+Felder bietet MoneyMoney beim Anlegen an; die erweiterten werden nur gelesen,
+wenn sie manuell eingetragen sind. Leere Werte behalten den Standard.
 Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 
 | Feld | Standard | Wirkung |
@@ -127,14 +129,22 @@ Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 | `resyncDeletedTransactions` | leer | Gespeicherte Umsätze dieses Kontos erneut anbieten. Neuer, nichtleerer Wert je Wiederholung. |
 | `limitOrders` | `250` | Obergrenze neuer Bestellungen und Detailseiten pro Abruf. |
 | `scanFiltersMonths` | `0` | Altersfenster der Listenfilter in Monaten. `0` = alle angebotenen Zeiträume. |
-| `cookieLanguage` | leer | Sprachcookie, z. B. `de-DE`. Leer = Sprache der Amazon-Domain. |
+| `cookieLanguage` | leer | Sprache der Amazon-Seiten, z. B. `de-DE` oder `en-GB`. Leer = Deutsch (`de-DE`). Wird als Cookie `lc-acbde` mit Unterstrich gesetzt (`de_DE`). |
 | `orderDetailsUrl` | `/your-orders/order-details?orderID=` | Pfadpräfix der Bestelldetails; Bestellnummer wird angehängt. |
+| `debug` | `false` | `true` schaltet die Detail-Protokollierung ein. Die Zeilen stehen im MoneyMoney-Protokollfenster (Fenster → Protokollfenster). Sie können Bestellnummern, Links, Notiz-Werte und Texte aus Login-Seiten enthalten. Nur zur Fehlersuche verwenden und danach wieder entfernen. Ohne `debug` erscheinen nur Ergebnisse, Warnungen und Fehler. |
 
 ## Fehler & Ideen
 
 Issues bitte über GitHub melden:
 [Neues Issue](https://github.com/rosch100/Amazon-MoneyMoney/issues/new/choose).
 Keine MoneyMoney-Logdateien anhängen — Details stehen im Bug-Formular.
+
+So entsteht ein brauchbarer Fehlerbericht:
+
+1. Unter **Konto → Einstellungen → Notizen** `debug` auf `true` setzen.
+2. Den Abruf wiederholen, bis der Fehler erscheint.
+3. Im Protokollfenster die Zeilen rund um den Fehler kopieren und redigieren: Bestellnummern, Namen, Adressen, Links und Notiz-Werte entfernen. Cookies gehören ohnehin nicht hinein.
+4. Die Zeilen im Bug-Formular einfügen und `debug` danach wieder entfernen.
 
 ## Haftung
 
