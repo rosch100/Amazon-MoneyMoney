@@ -1613,7 +1613,7 @@ end
 -- Format of a text for diagnostics: digits become 9, whitespace is collapsed.
 -- Shows e.g. a date format without logging the date itself.
 local shapeKeptWords={
-  Januar=true, Februar=true, März=true, April=true, Mai=true, Juni=true, Juli=true,
+  Januar=true, Februar=true, ["März"]=true, April=true, Mai=true, Juni=true, Juli=true,
   August=true, September=true, Oktober=true, November=true, Dezember=true,
   January=true, February=true, March=true, May=true, June=true, July=true,
   October=true, December=true,

@@ -78,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y libxml2-dev
+          sudo apt-get install -y libxml2-dev lua5.4
           luarocks --lua-version=5.1 install xmlua
 
       - name: Lua unit tests
@@ -107,6 +107,7 @@ jobs:
             echo "No Lua files tracked."
             exit 0
           fi
+          # Standard Lua 5.4: LuaJIT accepts non-ASCII identifiers that standard Lua rejects.
           for file in "${files[@]}"; do
-            LUA_FILE="${file}" luajit -e 'assert(loadfile(os.getenv("LUA_FILE")))'
+            luac5.4 -p "${file}"
           done
