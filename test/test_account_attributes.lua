@@ -13,7 +13,7 @@ assert(env.isSupportedAccountAttributeKey("stornoAnzeigen") == false)
 assert(env.isSupportedAccountAttributeKey("resetCache") == true)
 assert(env.isSupportedAccountAttributeKey("resyncDeletedTransactions") == true)
 assert(env.isSupportedAccountAttributeKey("limitOrders") == true)
-assert(env.isSupportedAccountAttributeKey("debug") == false)
+assert(env.isSupportedAccountAttributeKey("debug") == true, "debug note is a supported key")
 
 local merged = env.mergeAccountAttributes(env.defaultAccountAttributes(), {
   blacklistOrders = "303-1111111-1111111",
@@ -25,7 +25,7 @@ assert(merged.blacklistOrders == "303-1111111-1111111")
 assert(merged.blackListOrders == nil)
 assert(merged.stornoAnzeigen == nil)
 assert(merged.keepStorno == "true")
-assert(merged.debug == nil, "internal flags must not merge from known accounts")
+assert(merged.debug == "true", "debug note must merge like other supported keys")
 
 local mergedAlias = env.mergeAccountAttributes(env.defaultAccountAttributes(), {
   blackListOrders = "303-legacy-1111111-1111111",

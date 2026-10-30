@@ -132,6 +132,12 @@ end
 assert(env.isValidUtf8("ä") == true, "valid UTF-8 must remain accepted")
 env.applyAccountAttribute("nameMaxLength", "0", true)
 
+-- A note value must not survive into the next refresh: reset restores the default.
+env.applyAccountAttribute("nameMaxLength", "70", true)
+env.resetAccountNoteSettings()
+local txReset = env.makeAccountTransaction(order, "304-1111111-1111111", longTitle, -1, 1669593600)
+assert(txReset.name == longTitle, "reset must restore default nameMaxLength, got " .. #txReset.name)
+
 local tx2 = env.makeAccountTransaction(
   order,
   "304-1111111-1111111",

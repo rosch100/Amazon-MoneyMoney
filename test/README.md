@@ -38,14 +38,14 @@ The complete suite is organized by behavior:
 | Area | Tests |
 |------|-------|
 | Host shim and HTML parser | `selftest.lua`, `test_parse.lua`, `test_html_encoding.lua`, `test_akamai_interstitial.lua` |
-| Login / WAF / cookie import | `test_aws_waf_softblock.lua`, `test_claim_collect_signin.lua`, `test_cookie_import.lua` |
+| Login / WAF / cookie import | `test_aws_waf_softblock.lua`, `test_claim_collect_signin.lua`, `test_claim_collect_amazon_markup_2026.lua`, `test_login_otp_reprompt_and_stage.lua`, `test_cookie_import.lua` |
 | Account discovery, attributes and emit keys | `test_list_accounts.lua`, `test_account_attributes.lua`, `test_account_switcher.lua`, `test_emit_account_key.lua` |
 | Account setup and initial sync | `test_account_setup_no_harvest.lua`, `test_initial_sync_*.lua`, `test_full_refresh.lua`, `test_full_reimport.lua`, `test_empty_emit_misaligned.lua` |
 | Sub-account scheduling | `test_sub_account_scan_refresh.lua`, `test_mix_scan_round_robin.lua`, `test_realign_scan_priority.lua`, `test_preserve_incomplete_scan_login.lua` |
 | Order-list and Business harvest | `test_order_filter_scan.lua`, `test_scan_filters_months.lua`, `test_business_*.lua`, `test_ab_order_history.lua` |
 | Amazon Business Analytics | `test_aba_*.lua` |
-| Detail retrieval and incomplete-refresh marker | `test_details_rescan.lua`, `test_missing_order_date_backoff.lua`, `test_order_date_parsing.lua`, `test_incomplete_refresh_dummy.lua`, `test_emit_no_dummies.lua`, `test_login_nil_page.lua` |
-| Transactions, refunds, returns and cancellations | `test_transaction_fields.lua`, `test_summary_adjustments.lua`, `test_refund_reimport.lua`, `test_storno_omit.lua`, `test_partial_return.lua`, `test_full_return_retained_shipping.lua`, `test_floating_ausgleich.lua`, `test_messagelist.lua` |
+| Detail retrieval and incomplete-refresh marker | `test_details_rescan.lua`, `test_missing_order_date_backoff.lua`, `test_order_date_parsing.lua`, `test_diagnostics_debug.lua`, `test_business_unloadable_order_details.lua`, `test_incomplete_refresh_dummy.lua`, `test_emit_no_dummies.lua`, `test_login_nil_page.lua` |
+| Transactions, refunds, returns and cancellations | `test_transaction_fields.lua`, `test_summary_adjustments.lua`, `test_prime_shipping_pairing.lua`, `test_refund_reimport.lua`, `test_storno_omit.lua`, `test_partial_return.lua`, `test_full_return_retained_shipping.lua`, `test_floating_ausgleich.lua`, `test_messagelist.lua` |
 | Conformity and schema regressions | `test_conformity_regressions.lua`, `test_schema_upgrade_load.lua` |
 
 The wildcard rows refer to every matching `test/test_*.lua` file, so the loop

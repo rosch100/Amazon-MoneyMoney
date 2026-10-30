@@ -90,9 +90,11 @@ erste vollständige Import kann mehrere Aktualisierungen brauchen.
 Die Bestellnummer steht unter **Referenz**, nicht in der Titelzeile. Käufe,
 Erstattungen und Rückgaben erscheinen als Umsätze. Wenn eine negative
 Gutschein- oder Aktionsrabatt-Gutschrift einer positiven Versandposition
-derselben Bestellung betragsgleich netto oder brutto (bei 19 % MwSt.)
-entspricht, werden beide als von Amazon übernommene Versandkosten unterdrückt.
-Nicht passende Warenkorb-Gutscheine bleiben erhalten. Der synthetische
+derselben Bestellung betragsgleich netto oder brutto (bei 19 % oder 7 % MwSt.)
+entspricht, werden beide als von Amazon (Prime) übernommene Versandkosten
+unterdrückt. Das gilt auch bei Rücksendungen. Nicht passende Warenkorb-Gutscheine
+bleiben in Bestellungen ohne Rückgabe erhalten; in Bestellungen mit Rückgabe
+werden nicht gepaarte Gutscheine und Rabatte nicht gebucht. Der synthetische
 **Amazon Ausgleich** ist derzeit deaktiviert.
 
 ## Umlaute und gelöschte Umsätze
@@ -127,7 +129,7 @@ Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 | `resyncDeletedTransactions` | leer | Gespeicherte Umsätze dieses Kontos erneut anbieten. Neuer, nichtleerer Wert je Wiederholung. |
 | `limitOrders` | `250` | Obergrenze neuer Bestellungen und Detailseiten pro Abruf. |
 | `scanFiltersMonths` | `0` | Altersfenster der Listenfilter in Monaten. `0` = alle angebotenen Zeiträume. |
-| `cookieLanguage` | leer | Sprachcookie, z. B. `de-DE`. Leer = Sprache der Amazon-Domain. |
+| `cookieLanguage` | leer | Sprache der Amazon-Seiten, z. B. `de-DE` oder `en-GB`. Leer = Deutsch (`de-DE`). Wird als Cookie `lc-acbde` mit Unterstrich gesetzt (`de_DE`). |
 | `orderDetailsUrl` | `/your-orders/order-details?orderID=` | Pfadpräfix der Bestelldetails; Bestellnummer wird angehängt. |
 
 ## Fehler & Ideen
