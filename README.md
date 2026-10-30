@@ -2,7 +2,7 @@
 
 Bestellungen von amazon.de als Umsätze in MoneyMoney.
 
-Version: **2.08**
+Version: **2.09**
 Repository: https://github.com/rosch100/Amazon-MoneyMoney
 Gemeinsame Infos: https://github.com/rosch100/moneymoney-extensions
 
@@ -14,10 +14,10 @@ Dateiname: **`amazon-bestellungen.lua`** (nicht `amazon-orders.lua` — der Name
 durch die Erweiterung von Michael Beutling belegt; alle Extensions liegen im selben
 Download-Verzeichnis).
 
-Aus diesem Repository (aktuell **unsigniert**, Version 2.08 — Signatur ausstehend):
+Aus diesem Repository (aktuell **unsigniert**, Version 2.09 — Signatur ausstehend):
 [amazon-bestellungen.lua](https://raw.githubusercontent.com/rosch100/Amazon-MoneyMoney/master/amazon-bestellungen.lua)
 
-Website-Download unter diesem Namen: **2.04** signiert; dieses Repo ist **2.08** (Signatur ausstehend).
+Website-Download unter diesem Namen: **2.04** signiert; dieses Repo ist **2.09** (Signatur ausstehend).
 
 Datei nach
 `~/Library/Containers/com.moneymoney-app.retail/Data/Library/Application Support/MoneyMoney/Extensions`
@@ -71,7 +71,7 @@ Pflicht: `session-id` und ein Auth-Cookie (`at-acbde` / `at-main` bzw.
 
 ### Lokal nachvollziehen (Kaltstart wie Nolif/#7)
 
-1. Plugin 2.08 in den Extensions-Ordner (`./link_ext.sh` oder Kopie), MoneyMoney-Beta,
+1. Plugin 2.09 in den Extensions-Ordner (`./link_ext.sh` oder Kopie), MoneyMoney-Beta,
    Signaturprüfung aus.
 2. Amazon-Zugang **neu anlegen** (oder bestehenden löschen), damit keine Alt-Cookies
    in `LocalStorage` helfen — so wie Nolifs Kaltstart.

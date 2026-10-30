@@ -412,6 +412,9 @@ for key,value in pairs(config) do
   configDefaults[key]=value
 end
 
+-- Default of const.orderDetailsUrl; applyAccountAttribute overrides the const table per account.
+local orderDetailsUrlDefault=const.orderDetailsUrl
+
 -- Account-note settings start from the defaults for every refresh and login. Without this,
 -- a value of one account (e.g. debug=true) would stay active for the next account.
 function resetAccountNoteSettings()
@@ -421,6 +424,7 @@ function resetAccountNoteSettings()
   for _,key in ipairs(accountPowerUserKeys) do
     config[key]=configDefaults[key]
   end
+  const.orderDetailsUrl=orderDetailsUrlDefault
 end
 
 -- MoneyMoney note key aliases (read → canonical). Not OrderCache legacy.
@@ -1152,7 +1156,7 @@ end
 local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters).
-WebBanking{version  = 2.08,
+WebBanking{version  = 2.09,
   url         = baseurl,
   services    = const.services,
   description = const.description}
@@ -2598,6 +2602,26 @@ function emitPurchaseLines(ctx, order, orderCode)
   end
 end
 
+--- Removes the transactions of one order from firstIndex on when they net to exactly 0 €
+--- (an item fully offset by a promotion or gift card). Returns true when they were removed.
+--- keepStorno keeps item and Storno pairs on purpose, so nothing is removed then.
+function dropZeroNetOrderTransactions(transactions, firstIndex)
+  if config.keepStorno or #transactions < firstIndex then
+    return false
+  end
+  local sum=0
+  for i=firstIndex,#transactions do
+    sum=sum+transactions[i].amount
+  end
+  if math.abs(sum) >= 0.005 then
+    return false
+  end
+  for i=#transactions,firstIndex,-1 do
+    table.remove(transactions, i)
+  end
+  return true
+end
+
 function appendOrderToRefresh(ctx, order, orderCode)
   local firstTransactionIndex=#ctx.transactions+1
   local isResync=ctx.resyncDeletedTransactions == true
@@ -2621,6 +2645,9 @@ function appendOrderToRefresh(ctx, order, orderCode)
     emitPurchaseLines(ctx, order, orderCode)
   end
   emitOrderAdjustments(ctx, order, orderCode, report)
+  if dropZeroNetOrderTransactions(ctx.transactions, firstTransactionIndex) then
+    return
+  end
   if #ctx.transactions >= firstTransactionIndex then
     rememberOrderTransactions(
       order, ctx.accountNumber, ctx.transactions, firstTransactionIndex, isResync)
@@ -2672,6 +2699,9 @@ function summaryLabelKind(name)
     return 'skip'
   end
   if name == 'Summe' or name:find('Summe ohne') or name:find('Gesamt vor') then
+    return 'skip'
+  end
+  if name:find('Gesamtbetrag') then
     return 'skip'
   end
   if name:find('Zwischensumme') or name:find('Subtotal') then
@@ -2845,7 +2875,9 @@ function debugSummaryRow(name, kind, outcome, amount)
   if not config.debug then
     return
   end
-  logDebug("getOrderDetails summary row", "label", name, "kind", kind,
+  -- Unclassified labels are free text; only their length is logged (see getSummaryExtrasFromDetails).
+  local label=kind == 'other' and '<unclassified>' or name
+  logDebug("getOrderDetails summary row", "label", label, "kind", kind,
     "outcome", outcome, "amountCents", amount or "none")
 end
 
@@ -3054,6 +3086,10 @@ function resolvedSummaryExtras(order)
     dropPairs=false
   end
   extras=bookableRows(extras, paired, dropPairs)
+  -- Items already add up to the order total: the summary rows are not part of the payment.
+  if unexplainedTotalCents(order, {}) == 0 then
+    extras={}
+  end
   local leftover=0
   if type(order) == 'table' then
     local orderSum=tonumber(order.orderSum)
@@ -6863,14 +6899,15 @@ end
 
 --- Switch Amazon web session to the given sub-account kind before order-detail fetches.
 --- @return nil on success, error string on failure
-function ensureAmazonSubAccountSession(kind)
+--- @param switcherPage #table|nil already loaded switcher page of the current session; nil opens a new one
+function ensureAmazonSubAccountSession(kind, switcherPage)
   if type(kind) ~= 'string' or kind == '' then
     return nil
   end
   if sessionMatchesSubAccountKind(kind) then
     return nil
   end
-  local page=openAccountSwitcherEmbed()
+  local page=switcherPage or openAccountSwitcherEmbed()
   if page == nil then
     return "Kontenwechsel nicht verfügbar"
   end
@@ -7641,42 +7678,45 @@ function runSubAccountScanLoop()
   end
   while state.index <= #state.plan do
     local want=state.plan[state.index]
-    local page=openAccountSwitcherEmbed()
-    if page == nil then
-      clearSubAccountScanState()
-      return "Amazon: Kontenwechsel nicht verfügbar – Unterkonto \""
-        ..tostring(want.label).."\" nicht erreichbar"
+    -- Switch only when the session is not already on this sub-account.
+    if not sessionMatchesSubAccountKind(want.kind) then
+      local page=openAccountSwitcherEmbed()
+      if page == nil then
+        clearSubAccountScanState()
+        return "Amazon: Kontenwechsel nicht verfügbar – Unterkonto \""
+          ..tostring(want.label).."\" nicht erreichbar"
+      end
+      local options=parseAccountSwitcher(page)
+      local match=findSubAccountByKind(options, want.kind)
+      if match == nil then
+        clearSubAccountScanState()
+        return "Amazon-Unterkonto nicht im Switcher: "..tostring(want.label)
+      end
+      local result=switchAmazonSubAccount(match)
+      if result.needsMfa then
+        state.phase='await_mfa'
+        print("switch requires MFA for "..tostring(match.label))
+        return result.challenge
+      end
+      if result.error then
+        clearSubAccountScanState()
+        return "Amazon Kontowechsel fehlgeschlagen ("..tostring(match.label).."): "..result.error
+      end
     end
-    local options=parseAccountSwitcher(page)
-    local match=findSubAccountByKind(options, want.kind)
-    if match == nil then
-      clearSubAccountScanState()
-      return "Amazon-Unterkonto nicht im Switcher: "..tostring(want.label)
-    end
-    local result=switchAmazonSubAccount(match)
-    if result.needsMfa then
-      state.phase='await_mfa'
-      print("switch requires MFA for "..tostring(match.label))
-      return result.challenge
-    end
-    if result.error then
-      clearSubAccountScanState()
-      return "Amazon Kontowechsel fehlgeschlagen ("..tostring(match.label).."): "..result.error
-    end
-    MM.printStatus("Amazon: Unterkonto \""..match.label.."\"")
+    MM.printStatus("Amazon: Unterkonto \""..want.label.."\"")
     local advance, harvestErr=harvestAndAdvanceSubAccountScan(
-      state, match.label, match.kind)
+      state, want.label, want.kind)
     if harvestErr ~= nil then
       return harvestErr
     end
     if advance == 'pause' then
       local open=state.plan[state.index]
-      local openLabel=(type(open) == 'table' and open.label) or match.label
+      local openLabel=(type(open) == 'table' and open.label) or want.label
       print("sub-account harvest batch paused; more orders for", tostring(openLabel))
       return nil
     end
     if advance == 'continue' and state.harvestHasMore then
-      print("sub-account harvest batch paused; more orders for", tostring(match.label),
+      print("sub-account harvest batch paused; more orders for", tostring(want.label),
         "; continuing other sub-accounts")
     elseif advance == 'done' then
       break
@@ -7845,7 +7885,7 @@ end
 
 --- @function discoverAmazonSubAccounts
 -- ListAccounts / "Nach neuen Konten suchen": read each sub-account customerId
--- via short session switches, then restore the session active at entry.
+-- via session switches only where the sub-account is not already active (no switch back).
 -- Does not harvest orders (no Umsätze); the customerId fallback loads the
 -- order-history shell only.
 -- opts.reuseCustomerIds: when true, skip switcher+enrichment if LocalStorage
@@ -7895,9 +7935,29 @@ function discoverAmazonSubAccounts(statusText, opts)
     return nil, "Amazon-Ausgangskonto konnte für die Unterkonto-Ermittlung nicht erkannt werden"
   end
 
-  local discoveryErr=nil
+  -- The active session is read first, so it needs no switch.
+  -- Only the other sub-accounts are switched to; the session is left on the last one read.
+  local ordered={}
   for _,option in ipairs(options) do
-    local switchErr=ensureAmazonSubAccountSession(option.kind)
+    if option.kind == startingKind then
+      table.insert(ordered, option)
+    end
+  end
+  for _,option in ipairs(options) do
+    if option.kind ~= startingKind then
+      table.insert(ordered, option)
+    end
+  end
+
+  local discoveryErr=nil
+  -- The switcher page loaded above is valid until the first switch; after that it is stale.
+  local switcherPage=switcherHtml
+  for _,option in ipairs(ordered) do
+    local needsSwitch=not sessionMatchesSubAccountKind(option.kind)
+    local switchErr=ensureAmazonSubAccountSession(option.kind, switcherPage)
+    if needsSwitch then
+      switcherPage=nil
+    end
     if switchErr ~= nil then
       discoveryErr="Amazon-Unterkonto-Ermittlung fehlgeschlagen: "..switchErr
       break
@@ -7907,10 +7967,6 @@ function discoverAmazonSubAccounts(statusText, opts)
     option.accountNumber=customerId
   end
 
-  local restoreErr=ensureAmazonSubAccountSession(startingKind)
-  if restoreErr ~= nil then
-    return nil, "Amazon-Ausgangskonto konnte nicht wiederhergestellt werden: "..restoreErr
-  end
   if discoveryErr ~= nil then
     return nil, discoveryErr
   end
@@ -8111,8 +8167,11 @@ end
 -- Login entry point. The debug buffer is flushed on every exit, so the login stage
 -- traces also appear when the login fails (refresh would otherwise never flush them).
 function InitializeSession2 (protocol, bankCode, step, credentials, interactive)
-  local result=loginSteps(protocol, bankCode, step, credentials, interactive)
+  local ok, result=pcall(loginSteps, protocol, bankCode, step, credentials, interactive)
   debugBuffer.flush()
+  if not ok then
+    error(result, 0)
+  end
   return result
 end
 
@@ -8720,7 +8779,17 @@ function fetchPendingOrderDetails(accountNumber, now)
   return fetchState
 end
 
+-- Refresh entry point. The debug buffer is flushed on every exit, also when the refresh fails.
 function RefreshAccount (account, since)
+  local ok, result=pcall(refreshAccountSteps, account, since)
+  debugBuffer.flush()
+  if not ok then
+    error(result, 0)
+  end
+  return result
+end
+
+function refreshAccountSteps (account, since)
   assertCurrentMoneyMoneyAccountNumber(account and account.accountNumber)
   local now=os.time()
 
@@ -8863,8 +8932,6 @@ function RefreshAccount (account, since)
       logDebug(LocalStorage.OrderCache[config.rescanOrder])
     end
   end
-  debugBuffer.flush()
-
   if webCache then
     for _,v in pairs(transactions) do
       v.booked=false

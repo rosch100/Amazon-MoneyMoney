@@ -246,7 +246,9 @@ env.bindActiveHtml(env.html)
 local mid = env.runSubAccountScanLoop()
 assert(type(mid) == "string" and mid:find("Kontenwechsel nicht verfügbar"), tostring(mid))
 assert(env.LocalStorage.subAccountScan == nil)
-assert(#softCalls == 0, "must not scrape when switcher unavailable mid-plan")
+-- Personal is already the active session: harvested without a switch; business needs the switcher.
+assert(#softCalls == 1 and softCalls[1].label == "Personal",
+  "only the already active sub-account may be scraped before the switcher fails")
 
 -- Fresh scan after hard fail still works when switcher returns
 env.openAccountSwitcherEmbed = function()
