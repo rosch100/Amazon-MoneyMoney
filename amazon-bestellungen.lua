@@ -406,11 +406,8 @@ local accountPowerUserKeys={
   'debug',
 }
 
--- Defaults of config before any account note is applied.
+-- Defaults of config (after amazon_orders.json is merged, see below) before any account note is applied.
 local configDefaults={}
-for key,value in pairs(config) do
-  configDefaults[key]=value
-end
 
 -- Default of const.orderDetailsUrl; applyAccountAttribute overrides the const table per account.
 local orderDetailsUrlDefault=const.orderDetailsUrl
@@ -554,6 +551,11 @@ if configFile~=nil then
   io.close(configFile)
 else
   configDirty=true
+end
+
+-- Snapshot after the config file is merged, so its values survive the per-account reset.
+for key,value in pairs(config) do
+  configDefaults[key]=value
 end
 
 
@@ -1298,7 +1300,10 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
   end
 
   if method == 'POST' then
-    if config.debug and type(postContent) == 'string' then
+    -- Field names only for form bodies: a JSON body has no '&' and would be logged whole (Akamai token).
+    local isFormBody=type(postContentType) == 'string'
+      and postContentType:find('application/x-www-form-urlencoded', 1, true) ~= nil
+    if config.debug and type(postContent) == 'string' and isFormBody then
       -- Only field names: values can hold tokens (CsrfToken) or e-mail addresses.
       for i in string.gmatch(postContent, "([^&]+)") do
         local name=i:match("^([^=]+)") or ""

@@ -77,6 +77,10 @@ jobs:
       - name: Install Lua test dependencies
         run: |
           set -euo pipefail
+          if [ "${RUNNER_OS}" != "Linux" ]; then
+            echo "::error::Lua test dependencies are installed with apt-get; CI_RUNS_ON must select a Linux runner."
+            exit 1
+          fi
           sudo apt-get update
           sudo apt-get install -y libxml2-dev lua5.4
           luarocks --lua-version=5.1 install xmlua
