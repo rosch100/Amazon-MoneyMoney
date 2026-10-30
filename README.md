@@ -115,8 +115,8 @@ gespeicherten Texte erneut geschickt.
 ## Konto-Notizen
 
 Schlüssel/Wert unter **Konto → Einstellungen → Notizen**. Die ersten sechs
-Felder bietet MoneyMoney beim Anlegen an; die vier erweiterten werden nur
-gelesen, wenn sie manuell eingetragen sind. Leere Werte behalten den Standard.
+Felder bietet MoneyMoney beim Anlegen an; die erweiterten werden nur gelesen,
+wenn sie manuell eingetragen sind. Leere Werte behalten den Standard.
 Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 
 | Feld | Standard | Wirkung |
@@ -131,12 +131,20 @@ Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 | `scanFiltersMonths` | `0` | Altersfenster der Listenfilter in Monaten. `0` = alle angebotenen Zeiträume. |
 | `cookieLanguage` | leer | Sprache der Amazon-Seiten, z. B. `de-DE` oder `en-GB`. Leer = Deutsch (`de-DE`). Wird als Cookie `lc-acbde` mit Unterstrich gesetzt (`de_DE`). |
 | `orderDetailsUrl` | `/your-orders/order-details?orderID=` | Pfadpräfix der Bestelldetails; Bestellnummer wird angehängt. |
+| `debug` | `false` | `true` schaltet die Detail-Protokollierung ein. Die Zeilen stehen im MoneyMoney-Protokollfenster (Fenster → Protokollfenster). Sie können Bestellnummern, Links, Notiz-Werte und Texte aus Login-Seiten enthalten. Nur zur Fehlersuche verwenden und danach wieder entfernen. Ohne `debug` erscheinen nur Ergebnisse, Warnungen und Fehler. |
 
 ## Fehler & Ideen
 
 Issues bitte über GitHub melden:
 [Neues Issue](https://github.com/rosch100/Amazon-MoneyMoney/issues/new/choose).
 Keine MoneyMoney-Logdateien anhängen — Details stehen im Bug-Formular.
+
+So entsteht ein brauchbarer Fehlerbericht:
+
+1. Unter **Konto → Einstellungen → Notizen** `debug` auf `true` setzen.
+2. Den Abruf wiederholen, bis der Fehler erscheint.
+3. Im Protokollfenster die Zeilen rund um den Fehler kopieren und redigieren: Bestellnummern, Namen, Adressen, Links und Notiz-Werte entfernen. Cookies gehören ohnehin nicht hinein.
+4. Die Zeilen im Bug-Formular einfügen und `debug` danach wieder entfernen.
 
 ## Haftung
 
