@@ -54,7 +54,7 @@ anlegen — sie werden nicht mehr aktualisiert.
 ## Cookie-Import (bei Bot-Prüfung / Softblock)
 
 Wenn Username/Passwort an der AWS-WAF hängen bleibt: Session aus dem Browser
-übernehmen (gleicher Ablauf wie BoA/Fidelity/MLP im
+übernehmen (gleicher Ablauf wie BoA/Fidelity im
 [Hub — Cookie-Import](https://github.com/rosch100/moneymoney-extensions#cookie-import-beta-extensions)).
 
 1. Im Browser bei [amazon.de](https://www.amazon.de) anmelden (WAF und 2FA lösen).
