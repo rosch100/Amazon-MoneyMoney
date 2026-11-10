@@ -66,6 +66,7 @@ local AMAZON_LOGIN_STATE_KEYS = {
   'abaFullHarvestJobIndex',
   'abaFullHarvestHasMore',
   'abaFullHarvestHarvestSince',
+  'abaFullHarvestScanMonths',
   'abaFullHarvestCompleteKey',
   'abaFullHarvestReplayRequired',
   'abaRollupPaginationVersion',
@@ -363,7 +364,7 @@ local const={
     'Bestellnummer', 'Order ID', 'Bestell-ID', 'Order Number', 'Amazon Order ID',
     'Bestellnummer ', 'Order Id',
   },
-  combinedAccountListName="Amazon",
+  combinedAccountListName="Amazon (Privat + Geschäftlich)",
   subAccountListNamePersonal="Persönlich",
   subAccountListNameBusiness="Geschäftlich",
   -- MoneyMoney-Kontonummer = Prefix + customerId ohne führendes „A“.
@@ -581,6 +582,7 @@ function clearAbaFullHarvestBatch()
   LocalStorage.abaFullHarvestJobIndex=nil
   LocalStorage.abaFullHarvestHasMore=nil
   LocalStorage.abaFullHarvestHarvestSince=nil
+  LocalStorage.abaFullHarvestScanMonths=nil
   clearAbaRollupHarvestIncomplete()
 end
 
@@ -2683,7 +2685,25 @@ function dropZeroNetOrderTransactions(transactions, firstIndex)
   return true
 end
 
+function orderOutsideScanFiltersMonths(order, now)
+  local scanMonths=tonumber(config.scanFiltersMonths)
+  if scanMonths == nil or scanMonths <= 0
+      or type(order) ~= 'table'
+      or type(now) ~= 'number' then
+    return false
+  end
+  if type(order.bookingDate) ~= 'number' or order.bookingDate == invalidDate then
+    return false
+  end
+  local scanStart=addCalendarMonths(now, -scanMonths)
+  return type(scanStart) == 'number' and order.bookingDate < scanStart
+end
+
 function appendOrderToRefresh(ctx, order, orderCode)
+  if not ctx.resyncDeletedTransactions
+      and orderOutsideScanFiltersMonths(order, type(ctx.now) == 'number' and ctx.now or os.time()) then
+    return
+  end
   local firstTransactionIndex=#ctx.transactions+1
   local isResync=ctx.resyncDeletedTransactions == true
   local hasEmittedTransactions=orderHasEmittedTransactionsForAccount(order, ctx.accountNumber)
@@ -5603,19 +5623,48 @@ function addCalendarMonths(unixTime, deltaMonths)
   return os.time({year=year, month=month, day=day, hour=parts.hour, min=parts.min, sec=parts.sec})
 end
 
---- Full Business harvest: PAST_12_MONTHS plus older 12-month CUSTOM_RANGE windows.
+--- Full Business harvest, bounded by scanFiltersMonths when configured.
 function enumerateAbaFullHarvestJobs(now)
   now=now or os.time()
-  local jobs={{
-    reportType=const.abaItemsReportType,
-    span=const.abaFullHarvestSpan,
-  }}
+  local jobs={}
+  local monthsLimit=tonumber(config.scanFiltersMonths)
   local minUnix=os.time({year=2000, month=1, day=1})
-  local windowEnd=addCalendarMonths(now, -const.abaCoverageMonths)
-  while windowEnd > minUnix do
+  local scanStart=nil
+  if monthsLimit ~= nil and monthsLimit > 0 then
+    scanStart=addCalendarMonths(now, -monthsLimit)
+    if scanStart < minUnix then
+      scanStart=minUnix
+    end
+  end
+  local coverageStart=addCalendarMonths(now, -const.abaCoverageMonths)
+  if scanStart == nil or scanStart <= coverageStart then
+    table.insert(jobs, {
+      reportType=const.abaItemsReportType,
+      span=const.abaFullHarvestSpan,
+    })
+  else
+    local fromParts=unixToAbaDateParts(scanStart)
+    local toParts=unixToAbaDateParts(now)
+    if fromParts ~= nil and toParts ~= nil then
+      table.insert(jobs, {
+        reportType=const.abaItemsReportType,
+        span=const.abaCustomRangeSpan,
+        fromDate=fromParts,
+        toDate=toParts,
+        fromUnix=scanStart,
+        toUnix=now,
+      })
+    end
+    return jobs
+  end
+  local windowEnd=coverageStart
+  while windowEnd > minUnix and (scanStart == nil or windowEnd > scanStart) do
     local windowStart=addCalendarMonths(windowEnd, -const.abaCoverageMonths)
     if windowStart < minUnix then
       windowStart=minUnix
+    end
+    if scanStart ~= nil and windowStart < scanStart then
+      windowStart=scanStart
     end
     local fromParts=unixToAbaDateParts(windowStart)
     local toParts=unixToAbaDateParts(windowEnd)
@@ -5629,7 +5678,7 @@ function enumerateAbaFullHarvestJobs(now)
         toUnix=windowEnd,
       })
     end
-    if windowStart <= minUnix then
+    if windowStart <= minUnix or (scanStart ~= nil and windowStart <= scanStart) then
       break
     end
     windowEnd=windowStart
@@ -5783,6 +5832,7 @@ end
 
 function initAbaFullHarvestBatch(refreshSince, now)
   LocalStorage.abaFullHarvestHarvestSince=refreshSince
+  LocalStorage.abaFullHarvestScanMonths=tonumber(config.scanFiltersMonths) or 0
   LocalStorage.abaFullHarvestJobs=enumerateAbaFullHarvestJobs(now)
   LocalStorage.abaFullHarvestJobIndex=1
 end
@@ -5809,6 +5859,11 @@ function ensureAbaFullHarvestBatch(refreshSince, now)
   if abaHarvestStillOpen()
       and type(LocalStorage.abaFullHarvestJobs) == 'table'
       and type(LocalStorage.abaFullHarvestHarvestSince) == 'number' then
+    local scanMonths=tonumber(config.scanFiltersMonths) or 0
+    if LocalStorage.abaFullHarvestScanMonths ~= scanMonths then
+      beginAbaFullHarvestBatch(refreshSince, now)
+      return
+    end
     return
   end
   if type(LocalStorage.abaFullHarvestHarvestSince) ~= 'number'
@@ -6046,7 +6101,8 @@ function logMoneyMoneyRefreshMode(refreshSince, now)
   end
   logHarvestMode(refreshSince, now,
     "incremental refresh since "..formatAbaDateLabel(refreshSince),
-    "full refresh: harvest all order history (empty cache, since=0, or since > 366 days)")
+    "full refresh: scanFiltersMonths="..tostring(config.scanFiltersMonths)
+      .." (0 = all order history)")
 end
 
 function logAbaHarvestMode(refreshSince, now)
@@ -6539,7 +6595,7 @@ function abaPrimaryReportJob(refreshSince, now, reportType)
   }
 end
 
---- ABA jobs: incremental CUSTOM_RANGE; full harvest adds older 12-month windows.
+--- ABA jobs: incremental CUSTOM_RANGE; full harvest uses bounded windows.
 function enumerateAbaReportJobs(refreshSince, now)
   now=now or os.time()
   if isIncrementalMoneyMoneyRefresh(refreshSince, now) then
@@ -6846,8 +6902,19 @@ end
 function enumerateYourOrdersGetFiltersForAbaGap(now)
   now=now or os.time()
   local list={}
+  local scanMonths=tonumber(config.scanFiltersMonths)
+  local scanStart=nil
+  if scanMonths ~= nil and scanMonths > 0 then
+    scanStart=addCalendarMonths(now, -scanMonths)
+  end
+  local abaStart=addCalendarMonths(now, -const.abaCoverageMonths)
   appendYearGetFilters(list, now, function(val, asOf)
-    return not orderFilterWithinScanMonths(val, const.abaCoverageMonths, asOf)
+    local year=tonumber(string.match(val, "^year%-(%d%d%d%d)$"))
+    if year == nil then
+      return false
+    end
+    local yearEnd=os.time({year=year, month=12, day=31, hour=23, min=59, sec=59})
+    return yearEnd < abaStart and (scanStart == nil or yearEnd >= scanStart)
   end)
   return list
 end
@@ -7167,6 +7234,18 @@ function subAccountKindDisplayLabel(kind)
 end
 
 function combinedAccountListLabel()
+  local discovered=LocalStorage and LocalStorage.discoveredSubAccounts
+  local completeCount=0
+  if type(discovered) == 'table' then
+    for _,sub in ipairs(discovered) do
+      if isCompleteDiscoveredSubAccount(sub) then
+        completeCount=completeCount+1
+      end
+    end
+  end
+  if completeCount < 2 then
+    return "Amazon"
+  end
   return const.combinedAccountListName
 end
 
@@ -7622,6 +7701,9 @@ function orderNeedsDetailsForAccount(order, now, accountNumber)
   if not orderMatchesMoneyMoneyAccount(order, accountNumber) then
     return false
   end
+  if orderOutsideScanFiltersMonths(order, now) then
+    return false
+  end
   if orderTextHasBrokenEncoding(order) then
     return true
   end
@@ -7671,6 +7753,7 @@ function ordersNeedingDetailsInCache(now)
     return type(order) == 'table'
       and type(order.detailsDate) == 'number'
       and order.detailsDate < now
+      and not orderOutsideScanFiltersMonths(order, now)
   end)
 end
 
@@ -8318,7 +8401,7 @@ end
 
 function startSubAccountScan(priorityKind)
   local options, discoveryErr=discoverAmazonSubAccounts(
-    "Amazon: Bestellhistorie wird geladen…",
+    "Amazon: Bestellungen im eingestellten Zeitraum werden geladen…",
     {reuseCustomerIds=true})
   if discoveryErr ~= nil then
     return discoveryErr
@@ -9000,6 +9083,7 @@ function ListAccounts (knownAccounts)
     end
   end
   if #completeDiscovered > 1 then
+    accounts[1].name=combinedAccountListLabel()
     for _,sub in ipairs(completeDiscovered) do
       local mmNumber=moneyMoneyAccountNumberForCustomerId(sub.accountNumber)
       table.insert(accounts, makeListAccountEntry(
@@ -9146,7 +9230,7 @@ function refreshAccountSteps (account, since, isKnownTransactionId)
           if canonical == 'resetCache' and v ~= '' and v ~= LocalStorage.resetCache then
             startFullHistoryReimport()
             LocalStorage.resetCache=v
-            MM.printStatus("Amazon: Cache zurückgesetzt – gesamte Bestellhistorie wird neu geladen…")
+            MM.printStatus("Amazon: Cache zurückgesetzt – Bestellungen im eingestellten Zeitraum werden neu geladen…")
           end
         end
       end
@@ -9171,7 +9255,7 @@ function refreshAccountSteps (account, since, isKnownTransactionId)
 
   local refreshSince=effectiveRefreshSince(since)
   if isPendingInitialSync() and not isAccountSetupSession() and not isInitialSyncHarvestDone() then
-    MM.printStatus("Amazon: Erstimport – gesamte Bestellhistorie wird geladen…")
+    MM.printStatus("Amazon: Erstimport – Bestellungen im eingestellten Zeitraum werden geladen…")
   end
   LocalStorage.refreshSince=refreshSince
   local harvest=shouldRunAccountHarvest(refreshSince, now)
