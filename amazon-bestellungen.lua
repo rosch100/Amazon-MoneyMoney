@@ -212,6 +212,7 @@ local config={
   keepStorno=false,
   nameMaxLength=0,
   resyncDeletedTransactions='',
+  ledgerMode='normal',
 }
 
 -- Buffer functions are defined before the first call: logDebug runs while the
@@ -395,6 +396,7 @@ local accountOptionKeys={
   'keepStorno',
   'nameMaxLength',
   'resyncDeletedTransactions',
+  'ledgerMode',
 }
 
 -- Supported in notes but not pre-filled in ListAccounts.
@@ -2667,6 +2669,9 @@ function appendOrderToRefresh(ctx, order, orderCode)
     -- The dropped purchase must not stay marked as emitted: keepStorno may be enabled later.
     clearOrderEmissionForAccount(order, ctx.accountNumber)
     return
+  end
+  if ctx.contra == 'order' and #ctx.transactions >= firstTransactionIndex then
+    appendOrderContraTransactions(ctx,order,orderCode,firstTransactionIndex)
   end
   if #ctx.transactions >= firstTransactionIndex then
     rememberOrderTransactions(
@@ -7355,9 +7360,97 @@ function orderMatchesMoneyMoneyAccount(order, accountNumber)
   return order.subAccountKind == wantKind
 end
 
---- Current MoneyMoney accounts always use the mixed ledger (Ausgleich).
+local ledgerModes={
+  normal={divisor=-100},
+  inverse={divisor=100},
+  mix={divisor=-100,contra='order'},
+  monthly={divisor=-100,contra='period',periodFmt='%Y-%m',periodLabel='Monatsausgleich'},
+  yearly={divisor=-100,contra='period',periodFmt='%Y',periodLabel='Jahresausgleich'},
+}
+
+local function roundTransactionAmount(amount)
+  if amount<0 then return -math.floor(-amount*100+0.5)/100 end
+  return math.floor(amount*100+0.5)/100
+end
+
+function ledgerModeProfile(mode)
+  local key=type(mode)=='string' and string.lower(trim(mode)) or ''
+  if key=='' then key='normal' end
+  local profile=ledgerModes[key]
+  if profile==nil then
+    print("unknown ledgerMode '"..tostring(mode).."' (allowed: normal, inverse, mix, monthly, yearly); using normal")
+    key='normal'
+    profile=ledgerModes.normal
+  end
+  return {
+    mode=key,
+    divisor=profile.divisor,
+    contra=profile.contra,
+    periodFmt=profile.periodFmt,
+    periodLabel=profile.periodLabel,
+  }
+end
+
 function refreshAccountLedgerProfile(_accountNumber)
-  return { divisor=-100 }
+  return ledgerModeProfile(config.ledgerMode)
+end
+
+function appendOrderContraTransactions(ctx,order,orderCode,firstIndex)
+  local sums={}
+  local dates={}
+  for index=firstIndex,#ctx.transactions do
+    local transaction=ctx.transactions[index]
+    local date=transaction.bookingDate
+    if type(date)=='number' and type(transaction.amount)=='number' then
+      if sums[date]==nil then
+        sums[date]=0
+        dates[#dates+1]=date
+      end
+      sums[date]=sums[date]+transaction.amount
+    end
+  end
+  table.sort(dates)
+  for _,date in ipairs(dates) do
+    local amount=roundTransactionAmount(-sums[date])
+    if amount~=0 then
+      local transaction=makeAccountTransaction(
+        order,orderCode,"Amazon Gegenbuchung",amount,date,
+        "Gegenbuchung für Bestellung "..orderCode)
+      table.insert(ctx.transactions,transaction)
+    end
+  end
+end
+
+function appendPeriodContraTransactions(ctx,profile)
+  local sums={}
+  local periods={}
+  for _,transaction in ipairs(ctx.transactions) do
+    if type(transaction.bookingDate)=='number'
+        and type(transaction.amount)=='number' and transaction.amount~=0 then
+      local period=os.date(profile.periodFmt,transaction.bookingDate)
+      if sums[period]==nil then
+        sums[period]=0
+        periods[#periods+1]=period
+      end
+      sums[period]=sums[period]+transaction.amount
+    end
+  end
+  table.sort(periods)
+  local runLabel=os.date('%d.%m.%Y %H:%M:%S',ctx.now)
+  for _,period in ipairs(periods) do
+    local amount=roundTransactionAmount(-sums[period])
+    if amount~=0 then
+      local bookingDate=math.min(getLastDayOfPeriod(period),ctx.now)
+      local transaction={
+        name=encodeFormText('Amazon '..profile.periodLabel..' '..period),
+        amount=amount,
+        bookingDate=bookingDate,
+        purpose=encodeFormText(profile.periodLabel..' '..period..' (Abruf '..runLabel..')'),
+        endToEndReference='AMAZON-'..string.upper(profile.periodLabel)..'-'..period,
+      }
+      table.insert(ctx.transactions,transaction)
+    end
+  end
 end
 
 --- @function detailsRescanDelaySec
@@ -8937,8 +9030,8 @@ function fetchPendingOrderDetails(accountNumber, now)
 end
 
 -- Refresh entry point. The debug buffer is flushed on every exit, also when the refresh fails.
-function RefreshAccount (account, since)
-  local ok, result=pcall(refreshAccountSteps, account, since)
+function RefreshAccount (account, since, isKnownTransactionId)
+  local ok, result=pcall(refreshAccountSteps, account, since, isKnownTransactionId)
   debugBuffer.flush()
   if not ok then
     error(result, 0)
@@ -8946,7 +9039,7 @@ function RefreshAccount (account, since)
   return result
 end
 
-function refreshAccountSteps (account, since)
+function refreshAccountSteps (account, since, isKnownTransactionId)
   assertCurrentMoneyMoneyAccountNumber(account and account.accountNumber)
   local now=os.time()
 
@@ -8984,9 +9077,9 @@ function refreshAccountSteps (account, since)
   local resyncDeletedTransactions=resyncDeletedTransactionsForAccount(
     account.accountNumber, config.resyncDeletedTransactions)
 
-  local divisor=refreshAccountLedgerProfile(account.accountNumber).divisor
-
-  print("Refresh",accountNumberForLog(account.accountNumber))
+  local ledgerProfile=refreshAccountLedgerProfile(account.accountNumber)
+  local divisor=ledgerProfile.divisor
+  print("Refresh",accountNumberForLog(account.accountNumber),"ledgerMode="..ledgerProfile.mode)
 
   local transactions={}
 
@@ -9069,6 +9162,7 @@ function refreshAccountSteps (account, since)
     accountNumber=account.accountNumber,
     resyncDeletedTransactions=resyncDeletedTransactions,
     divisor=divisor,
+    contra=ledgerProfile.contra,
     now=now,
     balance=0,
   }
@@ -9081,7 +9175,13 @@ function refreshAccountSteps (account, since)
     end
   end
 
-  -- Amazon Ausgleich temporarily disabled.
+  if ledgerProfile.contra == 'period' then
+    if resyncDeletedTransactions then
+      print("ledgerMode "..ledgerProfile.mode..": period offsets skipped during transaction resync")
+    else
+      appendPeriodContraTransactions(ctx, ledgerProfile)
+    end
+  end
 
   if devHarness then
     RegressionTest.run(transactions,account.accountNumber)

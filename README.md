@@ -94,8 +94,22 @@ derselben Bestellung betragsgleich netto oder brutto (bei 19 % oder 7 % MwSt.)
 entspricht, werden beide als von Amazon (Prime) übernommene Versandkosten
 unterdrückt. Das gilt auch bei Rücksendungen. Nicht passende Warenkorb-Gutscheine
 bleiben in Bestellungen ohne Rückgabe erhalten; in Bestellungen mit Rückgabe
-werden nicht gepaarte Gutscheine und Rabatte nicht gebucht. Der synthetische
-**Amazon Ausgleich** ist derzeit deaktiviert.
+werden nicht gepaarte Gutscheine und Rabatte nicht gebucht.
+
+### Buchungsarten
+
+Die Kontonotiz `ledgerMode` legt fest, wie Käufe und Erstattungen gebucht werden.
+Standard ist `normal`.
+Setze `ledgerMode` unter **Konto → Einstellungen → Notizen** auf einen der Werte
+in der Tabelle.
+
+| Wert | Wirkung |
+|------|---------|
+| `normal` | Käufe sind Ausgaben, Erstattungen Einnahmen. |
+| `inverse` | Umgekehrte Vorzeichen: Käufe sind Einnahmen, Erstattungen Ausgaben. |
+| `mix` | Gleicht jede Bestellung für jeden Buchungstag mit einer Gegenbuchung aus. |
+| `monthly` | Gleicht die Umsätze jedes Monats mit einer Sammelbuchung aus. |
+| `yearly` | Gleicht die Umsätze jedes Jahres mit einer Sammelbuchung aus. |
 
 ## Umlaute und gelöschte Umsätze
 
