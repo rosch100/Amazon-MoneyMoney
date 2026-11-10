@@ -1289,6 +1289,19 @@ function connectShopRaw(method, url, postContent, postContentType, headers)
   if type(url) == 'string' and url ~= '' then
     url = absoluteAmazonUrl(url)
   end
+  if type(postContent) == 'string' and postContent ~= '' then
+    local fixedBody
+    if postContentType == nil or (type(postContentType) == 'string'
+        and postContentType:find('application/x-www-form-urlencoded',1,true)~=nil) then
+      fixedBody=stripAmazonInternalPortFromForm(postContent)
+    else
+      fixedBody=stripAmazonInternalPort(postContent)
+    end
+    if fixedBody ~= postContent then
+      print("removed Amazon internal port 8443 from request body")
+      postContent=fixedBody
+    end
+  end
   -- postContentType=postContentType or "application/json"
   if headers == nil then
     headers={
@@ -3697,10 +3710,147 @@ function scanOrderFilterPages(orderFilterVal, orderCache, orderFilterCache, subA
   return foundOrders, foundNewOrders, newCountTotal, paginationComplete
 end
 
+local amazonBase64Alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+function amazonBase64Decode(value)
+  if type(value) ~= 'string' or #value % 4 ~= 0 then
+    return nil
+  end
+  local output={}
+  for index=1,#value,4 do
+    local chunk=value:sub(index,index+3)
+    local padding=chunk:match("(=*)$")
+    if #padding > 2 or (padding ~= '' and index+3 ~= #value)
+        or chunk:sub(1,4-#padding):find("[^%w%+/]") then
+      return nil
+    end
+    local a=amazonBase64Alphabet:find(chunk:sub(1,1),1,true)
+    local b=amazonBase64Alphabet:find(chunk:sub(2,2),1,true)
+    local c=chunk:sub(3,3) == '=' and 1 or amazonBase64Alphabet:find(chunk:sub(3,3),1,true)
+    local d=chunk:sub(4,4) == '=' and 1 or amazonBase64Alphabet:find(chunk:sub(4,4),1,true)
+    if a == nil or b == nil or c == nil or d == nil
+        or (#padding == 1 and chunk:sub(3,3) == '=')
+        or (#padding == 2 and chunk:sub(3,3) ~= '=') then
+      return nil
+    end
+    local bits=(a-1)*262144+(b-1)*4096+(c-1)*64+(d-1)
+    output[#output+1]=string.char(math.floor(bits/65536)%256)
+    if #padding < 2 then output[#output+1]=string.char(math.floor(bits/256)%256) end
+    if #padding < 1 then output[#output+1]=string.char(bits%256) end
+  end
+  return table.concat(output)
+end
+
+function amazonBase64Encode(value)
+  local output={}
+  for index=1,#value,3 do
+    local first,second,third=value:byte(index,index+2)
+    local bits=first*65536+(second or 0)*256+(third or 0)
+    local a=math.floor(bits/262144)%64+1
+    local b=math.floor(bits/4096)%64+1
+    local c=math.floor(bits/64)%64+1
+    local d=bits%64+1
+    output[#output+1]=amazonBase64Alphabet:sub(a,a)
+    output[#output+1]=amazonBase64Alphabet:sub(b,b)
+    output[#output+1]=second and amazonBase64Alphabet:sub(c,c) or '='
+    output[#output+1]=third and amazonBase64Alphabet:sub(d,d) or '='
+  end
+  return table.concat(output)
+end
+
+function stripAmazonInternalPort(value)
+  if type(value) ~= 'string' then
+    return value
+  end
+  local amazonDomain="([Aa][Mm][Aa][Zz][Oo][Nn]%.[Dd][Ee])"
+  local normalized=value:gsub(amazonDomain..":8443([/%?#&])",function(host,suffix)
+    return host..suffix
+  end)
+  normalized=normalized:gsub(amazonDomain..":8443(%%[%x][%x])",function(host,suffix)
+    if suffix:lower() == "%2f" or suffix:lower() == "%3f" or suffix:lower() == "%23" then
+      return host..suffix
+    end
+    return host..":8443"..suffix
+  end)
+  normalized=normalized:gsub(amazonDomain..":8443$",function(host)
+    return host
+  end)
+  local function stripEncodedPort(host,suffix,encodedPort)
+    local allowedSuffixes={["%2f"]=true,["%3f"]=true,["%23"]=true}
+    if allowedSuffixes[suffix:lower()] then
+      return host..suffix
+    end
+    return host..encodedPort..suffix
+  end
+  normalized=normalized:gsub(amazonDomain.."%%3[Aa]8443([/%?#&])",
+    function(host,suffix) return host..suffix end)
+  normalized=normalized:gsub(amazonDomain.."%%3[Aa]8443(%%[%x][%x])",
+    function(host,suffix) return stripEncodedPort(host,suffix,"%3A8443") end)
+  normalized=normalized:gsub(amazonDomain.."%%3[Aa]8443$",function(host) return host end)
+  normalized=normalized:gsub(amazonDomain.."%%253[Aa]8443([/%?#&])",
+    function(host,suffix) return host..suffix end)
+  normalized=normalized:gsub(amazonDomain.."%%253[Aa]8443(%%[%x][%x])",
+    function(host,suffix) return stripEncodedPort(host,suffix,"%253A8443") end)
+  normalized=normalized:gsub(amazonDomain.."%%253[Aa]8443$",function(host) return host end)
+  return normalized
+end
+
+local function decodeFormValue(value)
+  value=value:gsub("%+"," ")
+  return (value:gsub("%%(%x%x)",function(hex)
+    return string.char(tonumber(hex,16))
+  end))
+end
+
+local function encodeFormValue(value)
+  return (value:gsub("[^%w%-%._~]",function(character)
+    return string.format("%%%02X",character:byte())
+  end))
+end
+
+function stripAmazonInternalPortFromForm(body)
+  if type(body) ~= 'string' then
+    return body
+  end
+  local fields={}
+  local start=1
+  repeat
+    local separator=body:find("&",start,true)
+    local field=body:sub(start,separator and separator-1 or #body)
+    local equals=field:find("=",1,true)
+    if equals ~= nil then
+      local name=field:sub(1,equals-1)
+      local encodedValue=field:sub(equals+1)
+      local decodedValue=decodeFormValue(encodedValue)
+      local normalizedValue=decodedValue
+      local encodedPayload=decodedValue:match("^ape:(.+)$")
+      if encodedPayload ~= nil then
+        local decodedPayload=amazonBase64Decode(encodedPayload)
+        if decodedPayload ~= nil then
+          local normalizedPayload=stripAmazonInternalPort(decodedPayload)
+          if normalizedPayload ~= decodedPayload then
+            normalizedValue="ape:"..amazonBase64Encode(normalizedPayload)
+          end
+        end
+      else
+        normalizedValue=stripAmazonInternalPort(decodedValue)
+      end
+      if normalizedValue ~= decodedValue then
+        field=name.."="..encodeFormValue(normalizedValue)
+      end
+    end
+    fields[#fields+1]=field
+    if separator == nil then break end
+    start=separator+1
+  until false
+  return table.concat(fields,"&")
+end
+
 function absoluteAmazonUrl(url)
   if type(url) ~= 'string' or url == '' then
     return url
   end
+  url=stripAmazonInternalPort(url)
   if string.match(url, "^https?://") then
     if not string.match(url, "^https://") then
       error("absoluteAmazonUrl: only https allowed")
