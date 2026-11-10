@@ -145,7 +145,7 @@ gespeicherten Texte erneut geschickt.
 
 ## Konto-Notizen
 
-Schlüssel/Wert unter **Konto → Einstellungen → Notizen**. Die ersten sechs
+Schlüssel/Wert unter **Konto → Einstellungen → Notizen**. Die ersten sieben
 Felder bietet MoneyMoney beim Anlegen an; die erweiterten werden nur gelesen,
 wenn sie manuell eingetragen sind. Leere Werte behalten den Standard.
 Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
@@ -163,6 +163,11 @@ Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 | `cookieLanguage` | leer | Sprache der Amazon-Seiten, z. B. `de-DE` oder `en-GB`. Leer = Deutsch (`de-DE`). Wird als Cookie `lc-acbde` mit Unterstrich gesetzt (`de_DE`). |
 | `orderDetailsUrl` | `/your-orders/order-details?orderID=` | Pfadpräfix der Bestelldetails; Bestellnummer wird angehängt. |
 | `debug` | `false` | `true` schaltet die Detail-Protokollierung ein. Die Zeilen stehen im MoneyMoney-Protokollfenster (Fenster → Protokollfenster). Sie können Bestellnummern, Links, Notiz-Werte und Texte aus Login-Seiten enthalten. Nur zur Fehlersuche verwenden und danach wieder entfernen. Ohne `debug` erscheinen nur Ergebnisse, Warnungen und Fehler. |
+
+`transactionId` ordnet bereits bekannte Umsätze zu, verhindert aber nicht
+MoneyMoneys Ähnlichkeits-Deduplizierung nach Buchungstag, Betrag, Name und
+Verwendungszweck. Wurden Zeilen zusammengefasst, müssen die betroffenen Umsätze
+gelöscht und per `resetCache` erneut importiert werden.
 
 ## Fehler & Ideen
 
