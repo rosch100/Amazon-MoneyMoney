@@ -3781,7 +3781,8 @@ function stripAmazonInternalPort(value)
     return host
   end)
   local function stripEncodedPort(host,suffix,encodedPort)
-    local allowedSuffixes={["%2f"]=true,["%3f"]=true,["%23"]=true}
+    local allowedSuffixes={["%2f"]=true,["%3f"]=true,["%23"]=true,
+      ["%252f"]=true,["%253f"]=true,["%2523"]=true}
     if allowedSuffixes[suffix:lower()] then
       return host..suffix
     end
@@ -3789,11 +3790,15 @@ function stripAmazonInternalPort(value)
   end
   normalized=normalized:gsub(amazonDomain.."%%3[Aa]8443([/%?#&])",
     function(host,suffix) return host..suffix end)
+  normalized=normalized:gsub(amazonDomain.."%%3[Aa]8443(%%25[%x][%x])",
+    function(host,suffix) return stripEncodedPort(host,suffix,"%3A8443") end)
   normalized=normalized:gsub(amazonDomain.."%%3[Aa]8443(%%[%x][%x])",
     function(host,suffix) return stripEncodedPort(host,suffix,"%3A8443") end)
   normalized=normalized:gsub(amazonDomain.."%%3[Aa]8443$",function(host) return host end)
   normalized=normalized:gsub(amazonDomain.."%%253[Aa]8443([/%?#&])",
     function(host,suffix) return host..suffix end)
+  normalized=normalized:gsub(amazonDomain.."%%253[Aa]8443(%%25[%x][%x])",
+    function(host,suffix) return stripEncodedPort(host,suffix,"%253A8443") end)
   normalized=normalized:gsub(amazonDomain.."%%253[Aa]8443(%%[%x][%x])",
     function(host,suffix) return stripEncodedPort(host,suffix,"%253A8443") end)
   normalized=normalized:gsub(amazonDomain.."%%253[Aa]8443$",function(host) return host end)
