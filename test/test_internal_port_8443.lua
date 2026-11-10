@@ -56,6 +56,28 @@ assertEqual(
   env.amazonBase64Decode(returnTo:match("^ape:(.+)$")),
   "base64-encoded return URL drops internal port")
 
+-- Keep the encoded delimiter intact, including inside base64 ape payloads.
+for _, port in ipairs({"%3A8443", "%253A8443"}) do
+  for _, suffix in ipairs({"%252Forders", "%253Fref=orders", "%2523orders",
+                          "%252forders", "%253fref=orders"}) do
+    local expected = "https%253A%252F%252Fwww.amazon.de" .. suffix
+    local original = "https%253A%252F%252Fwww.amazon.de" .. port .. suffix
+    assertEqual(expected, env.stripAmazonInternalPort(original),
+      "encoded URL drops " .. port .. " before " .. suffix)
+    local payload = env.amazonBase64Encode(original)
+    local form = "openid.return_to=ape%3A"
+      .. payload:gsub("%+", "%%2B"):gsub("/", "%%2F"):gsub("=", "%%3D")
+    local normalized = env.stripAmazonInternalPortFromForm(form)
+    local value = normalized:match("^openid%.return_to=(.*)$")
+      :gsub("%%(%x%x)", function(hex) return string.char(tonumber(hex, 16)) end)
+    assertEqual(expected, env.amazonBase64Decode(value:match("^ape:(.+)$")),
+      "ape payload drops " .. port .. " before " .. suffix)
+  end
+  assertEqual("https://www.amazon.de" .. port .. "%2541orders",
+    env.stripAmazonInternalPort("https://www.amazon.de" .. port .. "%2541orders"),
+    "double-encoded non-delimiter preserves port")
+end
+
 local ok = pcall(env.absoluteAmazonUrl, "https://evil.example:8443/x")
 assert(not ok, "foreign absolute hosts remain rejected")
 assertEqual("a=1&b=2", env.stripAmazonInternalPortFromForm("a=1&b=2"),
