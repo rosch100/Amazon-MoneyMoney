@@ -24,7 +24,7 @@ local function makeCache()
       orderCode="303-1111111-1111111",
       subAccountKind="business",
       orderPositions={
-        {purpose="Item A",amount=1000,qty=2},
+        {purpose="Item A",amount=2000,qty=1},
         {purpose="Item B",amount=550,qty=1},
       },
       orderSum=2550,
@@ -86,6 +86,17 @@ local inverse=refresh("inverse")
 assert(close(sum(inverse.transactions),39.99),
   "inverse flips booking signs, got "..tostring(sum(inverse.transactions)))
 
+local function resync(mode,token)
+  return env.RefreshAccount({
+    accountNumber="test@example.com",
+    owner="test@example.com",
+    attributes={
+      ledgerMode=mode,
+      resyncDeletedTransactions=token,
+    },
+  },os.time()-7*86400,function() return nil end)
+end
+
 local mixed=refresh("mix")
 assert(close(sum(mixed.transactions),0),"mix offsets emitted transactions")
 local contraCount=0
@@ -97,6 +108,16 @@ for _,transaction in ipairs(mixed.transactions) do
   end
 end
 assert(contraCount==3,"mix offsets each order and booking date")
+
+local savedMixCount=0
+for _,order in pairs(env.LocalStorage.OrderCache) do
+  local entries=env.cachedOrderTransactionsForAccount(order,"test@example.com")
+  savedMixCount=savedMixCount+#entries
+end
+local mixedResync=resync("mix","mix-resync")
+assert(#mixedResync.transactions==savedMixCount,
+  "mix resync restores all saved order transactions")
+assert(close(sum(mixedResync.transactions),0),"mix resync restores balanced order offsets")
 
 local monthly=refresh("monthly")
 local monthlyOffsets={}
@@ -113,6 +134,13 @@ assert(close(monthlyOffsets["Amazon Monatsausgleich 2026-09"].amount,19.99),
 assert(monthlyOffsets["Amazon Monatsausgleich 2026-10"].purpose:find("Abruf",1,true),
   "monthly offset distinguishes refresh runs")
 
+local monthlyResync=resync("monthly","monthly-resync")
+assert(#monthlyResync.transactions>0,"monthly resync restores saved order transactions")
+for _,transaction in ipairs(monthlyResync.transactions) do
+  assert(transaction.name:find("Amazon Monatsausgleich",1,true)~=1,
+    "monthly resync does not recreate period offsets")
+end
+
 local yearly=refresh("yearly")
 assert(close(sum(yearly.transactions),0),"yearly offsets emitted transactions")
 local yearOffsets=0
@@ -124,28 +152,22 @@ for _,transaction in ipairs(yearly.transactions) do
 end
 assert(yearOffsets==1,"yearly emits one offset per period")
 
--- Identical purchase positions must contribute only once to the period offset.
-local originalMakeCache=makeCache
-makeCache=function()
-  local cache=originalMakeCache()
-  local order=cache["303-2222222-2222222"]
-  order.orderPositions[2]={purpose="Item C",amount=1999,qty=1}
-  order.orderSum=3998
-  order.orderTotal=3998
-  return cache
-end
-for _,mode in ipairs({"monthly","yearly"}) do
-  local result=refresh(mode)
-  assert(close(sum(result.transactions),0),mode.." offsets only unique purchases")
-  local purchases=0
-  for _,transaction in ipairs(result.transactions) do
-    if transaction.name=="Item C" then purchases=purchases+1 end
-    if transaction.name=="Amazon Jahresausgleich 2026" then
-      assert(close(transaction.amount,39.99),"duplicate excluded from yearly sum")
-    end
-  end
-  assert(purchases==1,"identical purchases returned only once")
-end
+-- MoneyMoney's duplicate check ignores order references and account numbers.
+local duplicateDate=os.time({year=2026,month=10,day=5,hour=12})
+local duplicateTransactions={
+  {name="Item A",purpose="Item A",amount=-20,bookingDate=duplicateDate,
+    endToEndReference="303-1111111-1111111",accountNumber="Business"},
+  {name="Item A",purpose="Item A",amount=-20,bookingDate=duplicateDate,
+    endToEndReference="303-2222222-2222222",accountNumber="Personal"},
+}
+local duplicateContext={transactions=duplicateTransactions,now=duplicateDate}
+env.appendPeriodContraTransactions(duplicateContext,env.ledgerModeProfile("monthly"))
+assert(#duplicateContext.transactions==2,
+  "period calculation removes purchases MoneyMoney will deduplicate")
+assert(close(sum(duplicateContext.transactions),0),
+  "period offset balances the transaction MoneyMoney retains")
+assert(close(duplicateContext.transactions[2].amount,20),
+  "period offset counts the similar purchase only once")
 
 -- Equal refunds emitted in separate batches need distinct, replayable contras.
 local order={}

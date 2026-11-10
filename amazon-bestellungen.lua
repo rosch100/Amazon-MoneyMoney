@@ -7435,24 +7435,35 @@ function appendOrderContraTransactions(ctx,order,orderCode,firstIndex)
   end
 end
 
+local function moneyMoneyTransactionKey(transaction)
+  local fieldNames={'bookingDate','amount','name','purpose'}
+  local parts={}
+  for index,fieldName in ipairs(fieldNames) do
+    local value=transaction[fieldName]
+    if value==nil then
+      parts[index]="-1:"
+    else
+      local text=tostring(value)
+      parts[index]=tostring(#text)..":"..text
+    end
+  end
+  return table.concat(parts)
+end
+
 function appendPeriodContraTransactions(ctx,profile)
   local sums={}
   local periods={}
   local unique={}
+  local uniqueByKey={}
   for _,transaction in ipairs(ctx.transactions) do
-    local duplicate=false
-    for _,stored in ipairs(unique) do
-      if accountTransactionsEqual(stored,transaction) then
-        duplicate=true
-        break
-      end
-    end
-    if not duplicate then
+    local key=moneyMoneyTransactionKey(transaction)
+    if not uniqueByKey[key] then
+      uniqueByKey[key]=true
       unique[#unique+1]=transaction
     end
   end
-  -- Use the same equality as the replay snapshot, so discarded identical
-  -- purchase lines do not contribute to the period offset.
+  -- MoneyMoney's similarity check ignores order references and account IDs.
+  -- Remove matching rows before calculating offsets so they cannot skew totals.
   for _,transaction in ipairs(unique) do
     if type(transaction.bookingDate)=='number'
         and type(transaction.amount)=='number' and transaction.amount~=0 then
