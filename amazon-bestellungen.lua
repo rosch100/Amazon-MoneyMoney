@@ -7409,13 +7409,22 @@ function appendOrderContraTransactions(ctx,order,orderCode,firstIndex)
       sums[date]=sums[date]+transaction.amount
     end
   end
+  -- Continue the sequence from the persisted snapshot, including earlier refunds.
+  local contraIndex=0
+  for _,stored in ipairs(cachedOrderTransactionsForAccount(order,ctx.accountNumber) or {}) do
+    if type(stored.purpose)=='string'
+        and stored.purpose:find(encodeFormText("Gegenbuchung für Bestellung "..orderCode),1,true)==1 then
+      contraIndex=contraIndex+1
+    end
+  end
   table.sort(dates)
   for _,date in ipairs(dates) do
     local amount=roundTransactionAmount(-sums[date])
     if amount~=0 then
+      contraIndex=contraIndex+1
       local transaction=makeAccountTransaction(
         order,orderCode,"Amazon Gegenbuchung",amount,date,
-        "Gegenbuchung für Bestellung "..orderCode)
+        "Gegenbuchung für Bestellung "..orderCode.." ("..contraIndex..")")
       table.insert(ctx.transactions,transaction)
     end
   end
@@ -7424,7 +7433,22 @@ end
 function appendPeriodContraTransactions(ctx,profile)
   local sums={}
   local periods={}
+  local unique={}
   for _,transaction in ipairs(ctx.transactions) do
+    local duplicate=false
+    for _,stored in ipairs(unique) do
+      if accountTransactionsEqual(stored,transaction) then
+        duplicate=true
+        break
+      end
+    end
+    if not duplicate then
+      unique[#unique+1]=transaction
+    end
+  end
+  -- Use the same equality as the replay snapshot, so discarded identical
+  -- purchase lines do not contribute to the period offset.
+  for _,transaction in ipairs(unique) do
     if type(transaction.bookingDate)=='number'
         and type(transaction.amount)=='number' and transaction.amount~=0 then
       local period=os.date(profile.periodFmt,transaction.bookingDate)
@@ -7434,6 +7458,10 @@ function appendPeriodContraTransactions(ctx,profile)
       end
       sums[period]=sums[period]+transaction.amount
     end
+  end
+  for index=#ctx.transactions,1,-1 do ctx.transactions[index]=nil end
+  for _,transaction in ipairs(unique) do
+    table.insert(ctx.transactions,transaction)
   end
   table.sort(periods)
   local runLabel=os.date('%d.%m.%Y %H:%M:%S',ctx.now)

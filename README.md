@@ -111,6 +111,30 @@ in der Tabelle.
 | `monthly` | Gleicht die Umsätze jedes Monats mit einer Sammelbuchung aus. |
 | `yearly` | Gleicht die Umsätze jedes Jahres mit einer Sammelbuchung aus. |
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:7b9c28d8cf793da5dca732436ddc7a521ae6137369d3069f2686876a3e7cc5e6 -->
+
+Ein Wechsel von `ledgerMode` ändert vorhandene Umsätze nicht. Bei einem
+Neuimport mit `inverse` können deshalb Duplikate mit umgekehrten Vorzeichen
+entstehen.
+
+Bei `monthly` und `yearly` gleicht jede Sammelbuchung nur die im aktuellen Abruf
+neu ausgegebenen, um identische Buchungen bereinigten Umsätze des jeweiligen
+Zeitraums aus. Spätere Abrufe können weitere Sammelbuchungen für denselben
+Monat oder dasselbe Jahr erzeugen. Bei einem Periodensaldo von null entsteht
+keine Sammelbuchung. Ihr Buchungstag ist das Periodenende, höchstens jedoch der
+Tag des Abrufs.
+
+Perioden-Gegenbuchungen werden nicht im Bestell-Snapshot gespeichert.
+`resyncDeletedTransactions` stellt bei `monthly` und `yearly` gelöschte
+Perioden-Gegenbuchungen daher nicht wieder her; vorhandene Umsätze können dadurch
+unausgeglichen bleiben. `resetCache` kann beim Neuimport neue
+Perioden-Gegenbuchungen erzeugen; bereits vorhandene Umsätze bleiben dabei
+bestehen.
+
+<!-- /coderabbit-ai-generated:v1 -->
+
 ## Umlaute und gelöschte Umsätze
 
 Eine normale Aktualisierung ändert bereits gebuchte Zeilen nicht. Titel aus

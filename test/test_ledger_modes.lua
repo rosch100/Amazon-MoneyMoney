@@ -124,6 +124,51 @@ for _,transaction in ipairs(yearly.transactions) do
 end
 assert(yearOffsets==1,"yearly emits one offset per period")
 
+-- Identical purchase positions must contribute only once to the period offset.
+local originalMakeCache=makeCache
+makeCache=function()
+  local cache=originalMakeCache()
+  local order=cache["303-2222222-2222222"]
+  order.orderPositions[2]={purpose="Item C",amount=1999,qty=1}
+  order.orderSum=3998
+  order.orderTotal=3998
+  return cache
+end
+for _,mode in ipairs({"monthly","yearly"}) do
+  local result=refresh(mode)
+  assert(close(sum(result.transactions),0),mode.." offsets only unique purchases")
+  local purchases=0
+  for _,transaction in ipairs(result.transactions) do
+    if transaction.name=="Item C" then purchases=purchases+1 end
+    if transaction.name=="Amazon Jahresausgleich 2026" then
+      assert(close(transaction.amount,39.99),"duplicate excluded from yearly sum")
+    end
+  end
+  assert(purchases==1,"identical purchases returned only once")
+end
+
+-- Equal refunds emitted in separate batches need distinct, replayable contras.
+local order={}
+local code="303-3333333-3333333"
+local date=os.time({year=2026,month=10,day=20,hour=12})
+for index=1,2 do
+  local ctx={accountNumber="test@example.com",transactions={
+    {name="Refund "..index,amount=5,bookingDate=date,endToEndReference=code},
+  }}
+  env.appendOrderContraTransactions(ctx,order,code,1)
+  env.rememberOrderTransactions(order,ctx.accountNumber,ctx.transactions,1,false)
+end
+local replay={}
+assert(env.appendCachedOrderTransactions(replay,order,"test@example.com"))
+assert(#replay==4,"snapshot retains both equal refund contras")
+assert(not env.accountTransactionsEqual(replay[2],replay[4]),"contras have distinct identities")
+assert(close(sum(replay),0),"replayed refunds remain balanced")
+local purchase={name="Purchase",amount=-10,bookingDate=date,endToEndReference=code}
+env.rememberOrderTransactions(order,"test@example.com",{purchase},1,false)
+env.rememberOrderTransactions(order,"test@example.com",{purchase},1,false)
+assert(#env.cachedOrderTransactionsForAccount(order,"test@example.com")==5,
+  "reissued purchases still deduplicate")
+
 env.resetAccountNoteSettings()
 assert(env.defaultAccountAttributes().ledgerMode=="normal","default account note")
 assert(env.isSupportedAccountAttributeKey("ledgerMode"),"ledgerMode is supported")
