@@ -7572,6 +7572,7 @@ end
 
 function appendPeriodContraTransactions(ctx,profile)
   local sums={}
+  local transactionIdsByPeriod={}
   local periods={}
   local unique={}
   local uniqueByKey={}
@@ -7590,9 +7591,11 @@ function appendPeriodContraTransactions(ctx,profile)
       local period=os.date(profile.periodFmt,transaction.bookingDate)
       if sums[period]==nil then
         sums[period]=0
+        transactionIdsByPeriod[period]={}
         periods[#periods+1]=period
       end
       sums[period]=sums[period]+transaction.amount
+      transactionIdsByPeriod[period][#transactionIdsByPeriod[period]+1]=transactionIdentityHash(transaction)
     end
   end
   for index=#ctx.transactions,1,-1 do ctx.transactions[index]=nil end
@@ -7604,6 +7607,7 @@ function appendPeriodContraTransactions(ctx,profile)
   for _,period in ipairs(periods) do
     local amount=roundTransactionAmount(-sums[period])
     if amount~=0 then
+      table.sort(transactionIdsByPeriod[period])
       local bookingDate=math.min(getLastDayOfPeriod(period),ctx.now)
       local purpose=profile.periodLabel..' '..period
       local transaction={
@@ -7612,6 +7616,7 @@ function appendPeriodContraTransactions(ctx,profile)
         bookingDate=bookingDate,
         purpose=encodeFormText(purpose),
         endToEndReference='AMAZON-'..string.upper(profile.periodLabel)..'-'..period,
+        amazonPeriodTransactionSet=MM.md5(table.concat(transactionIdsByPeriod[period],'\0')),
       }
       table.insert(ctx.transactions,transaction)
     end
@@ -9401,7 +9406,8 @@ function assignAccountTransactionIds(transactions,accountNumber,now,isKnownTrans
       local occurrence=occurrences[identity]
       if type(transaction.endToEndReference)=='string'
           and transaction.endToEndReference:match('^AMAZON%-') then
-        transaction.transactionId="AMZ:"..transaction.endToEndReference
+        transaction.transactionId="AMZ:"..transaction.endToEndReference..":"
+          ..tostring(transaction.amazonPeriodTransactionSet or identity)
       else
         transaction.transactionId="AMZ:"..tostring(orderCode)..":"..identity
           ..":"..tostring(occurrence)
@@ -9411,6 +9417,7 @@ function assignAccountTransactionIds(transactions,accountNumber,now,isKnownTrans
         and isKnownTransactionId(transaction.transactionId)~=nil then
       transaction.knownTransactionId=true
     end
+    transaction.amazonPeriodTransactionSet=nil
   end
   for index=#transactions,1,-1 do
     if transactions[index].knownTransactionId then

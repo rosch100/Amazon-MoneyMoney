@@ -7,6 +7,9 @@ local mm = require("mm_shim")
 local env = mm.loadPlugin("amazon-bestellungen.lua")
 env.LocalStorage = { OrderCache = {}, loginCounter = 1 }
 env.applyAccountAttribute("scanFiltersMonths", "24", true)
+local gapYear = tonumber(os.date("%Y")) - 2
+local gapYearFilter = "year-" .. gapYear
+local gapOrderCode = "302-" .. gapYear .. "000-1111111"
 
 local spaFile = assert(io.open("test/fixtures/ab_your_orders_spa.html", "rb"))
 local spaHtml = spaFile:read("*all")
@@ -15,10 +18,10 @@ spaFile:close()
 local yearHtml = [[
 <html><body>
 <form action="/your-orders/orders"><select name="timeFilter">
-<option value="year-2024" selected>2024</option>
+<option value="]] .. gapYearFilter .. [[" selected>]] .. gapYear .. [[</option>
 </select></form>
 <div class="order-card js-order-card"
-     data-csa-c-slot-id="amzn1.yourorders.order-card.302-2024000-1111111"></div>
+     data-csa-c-slot-id="amzn1.yourorders.order-card.]] .. gapOrderCode .. [["></div>
 </body></html>
 ]]
 
@@ -26,7 +29,7 @@ local gets = {}
 env.connectShop = function(method, urlArg)
   if type(method) == "string" and method == "GET" and type(urlArg) == "string" then
     gets[#gets + 1] = urlArg
-    if urlArg:find("year-2024", 1, true) then
+    if urlArg:find(gapYearFilter, 1, true) then
       return mm.HTML(yearHtml)
     end
     return mm.HTML(spaHtml)
@@ -47,14 +50,14 @@ local n = env.collectOrdersViaYourOrdersGet("Altanis GmbH", "business", 0, {
   abaGapOnly = true,
 })
 assert(n >= 1, "year GET harvest must run despite last30 SPA, got " .. tostring(n))
-assert(env.LocalStorage.OrderCache["302-2024000-1111111"] ~= nil)
+assert(env.LocalStorage.OrderCache[gapOrderCode] ~= nil)
 
 local sawYear = false
 for _, url in ipairs(gets) do
-  if url:find("year%-2024") then
+  if url:find(gapYearFilter, 1, true) then
     sawYear = true
   end
 end
-assert(sawYear, "expected a year-2023 GET, urls=" .. table.concat(gets, " | "))
+assert(sawYear, "expected a " .. gapYearFilter .. " GET, urls=" .. table.concat(gets, " | "))
 
 print("test_business_get_gap_years_despite_spa OK")
