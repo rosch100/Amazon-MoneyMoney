@@ -7530,7 +7530,7 @@ function appendPeriodContraTransactions(ctx,profile)
     if amount~=0 then
       table.sort(transactionIdsByPeriod[period])
       local bookingDate=math.min(getLastDayOfPeriod(period),ctx.now)
-      local purpose=profile.periodLabel..' '..period
+      local purpose=profile.periodLabel..' '..period..' (Abruf '..runLabel..')'
       local transaction={
         name=encodeFormText('Amazon '..profile.periodLabel..' '..period),
         amount=amount,

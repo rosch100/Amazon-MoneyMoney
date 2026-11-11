@@ -9,21 +9,8 @@
 -- tests exercise parsing, not live scraping.
 
 local xmlua = require("xmlua")
-local ffi = require("ffi")
 
 local M = {}
-
-ffi.cdef[[
-  unsigned char *MD5(const unsigned char *d, size_t n, unsigned char *md);
-]]
-local crypto = assert(ffi.load("crypto"), "OpenSSL libcrypto is required for transaction-ID tests")
-local function md5(value)
-  local digest=ffi.new("unsigned char[16]")
-  assert(crypto.MD5(value,#value,digest)~=nil,"OpenSSL MD5 calculation failed")
-  return (ffi.string(digest,16):gsub(".",function(byte)
-    return string.format("%02x",string.byte(byte))
-  end))
-end
 
 ----------------------------------------------------------------------
 -- NodeSet: array-like (result[1] is the first element) AND method-bearing.
