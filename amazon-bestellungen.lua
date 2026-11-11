@@ -7587,9 +7587,33 @@ function appendPeriodContraTransactions(ctx,profile,isKnownTransactionId)
       unique[#unique+1]=transaction
     end
   end
+  local storedSourceKeys={}
+  local orderCache=LocalStorage and LocalStorage.OrderCache
+  if type(orderCache)=='table' then
+    for _,order in pairs(orderCache) do
+      local entries=cachedOrderTransactionsForAccount(order,ctx.accountNumber)
+      if type(entries)=='table' then
+        for _,stored in ipairs(entries) do
+          if type(isKnownTransactionId)=='function'
+              and type(stored.transactionId)=='string'
+              and isKnownTransactionId(stored.transactionId)~=nil
+              and type(stored.endToEndReference)=='string'
+              and not stored.endToEndReference:match('^AMAZON%-') then
+            storedSourceKeys[moneyMoneyTransactionKey(stored)]=true
+          end
+        end
+      end
+    end
+  end
+  local periodSources={}
+  for _,transaction in ipairs(unique) do
+    if not storedSourceKeys[moneyMoneyTransactionKey(transaction)] then
+      periodSources[#periodSources+1]=transaction
+    end
+  end
   -- MoneyMoney's similarity check ignores order references and account IDs.
   -- Remove matching rows before calculating offsets so they cannot skew totals.
-  for _,transaction in ipairs(unique) do
+  for _,transaction in ipairs(periodSources) do
     if type(transaction.bookingDate)=='number'
         and type(transaction.amount)=='number' and transaction.amount~=0 then
       local period=os.date(profile.periodFmt,transaction.bookingDate)

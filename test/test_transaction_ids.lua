@@ -147,6 +147,8 @@ assert(repeatedLegacyIds[1]==legacyLines[1].transactionId
   "legacy transaction IDs stay stable across identical refreshes")
 
 local offsetDate=os.time({year=2026,month=10,day=20,hour=12})
+local storedSourceIds={}
+local knownSimilarSourceIds={}
 local function makeMonthlyOffset(purchases,knownIds)
   local context={transactions=purchases,now=offsetDate}
   env.appendPeriodContraTransactions(context,env.ledgerModeProfile("monthly"))
@@ -156,11 +158,24 @@ local function makeMonthlyOffset(purchases,knownIds)
       offsets[#offsets+1]=transaction
     end
   end
-  env.assignAccountTransactionIds(offsets,account.accountNumber,offsetDate,
+  for _,transaction in ipairs(context.transactions) do
+    if type(transaction.endToEndReference) == "string"
+        and not transaction.endToEndReference:match("^AMAZON%-")
+        and type(transaction.transactionId) == "string" then
+      storedSourceIds[transaction.transactionId]=true
+    end
+  end
+  env.assignAccountTransactionIds(context.transactions,account.accountNumber,offsetDate,
     function(id)
       return knownIds[id] and {transactionId=id} or nil
     end)
-  return offsets
+  local newOffsets={}
+  for _,transaction in ipairs(offsets) do
+    if not knownIds[transaction.transactionId] then
+      newOffsets[#newOffsets+1]=transaction
+    end
+  end
+  return newOffsets
 end
 
 local existingPurchase={
@@ -173,6 +188,7 @@ local existingPurchase={
 local firstOffsets=makeMonthlyOffset({existingPurchase},{})
 assert(#firstOffsets==1,"first monthly batch creates a balancing offset")
 local firstOffsetId=firstOffsets[1].transactionId
+for id in pairs(storedSourceIds) do knownSimilarSourceIds[id]=true end
 
 local newPurchase={
   name="New purchase",
@@ -182,12 +198,23 @@ local newPurchase={
   endToEndReference="303-2222222-2222222",
 }
 local laterOffsets=makeMonthlyOffset(
-  {existingPurchase,newPurchase},{[firstOffsetId]=true})
+  {existingPurchase,newPurchase},
+  (function()
+    local known={}
+    for id in pairs(knownSimilarSourceIds) do
+      known[id]={transactionId=id}
+    end
+    if firstOffsetId ~= nil then
+      known[firstOffsetId]={transactionId=firstOffsetId}
+    end
+    return known
+  end)())
 assert(#laterOffsets==1,"a changed monthly batch still emits its new offset")
 assert(laterOffsets[1].transactionId~=firstOffsetId,
   "monthly offsets for changed period contents receive distinct IDs")
 local repeatedOffsets=makeMonthlyOffset(
-  {existingPurchase,newPurchase},{[laterOffsets[1].transactionId]=true})
+  {existingPurchase,newPurchase},
+  {[laterOffsets[1].transactionId]={transactionId=laterOffsets[1].transactionId}})
 assert(#repeatedOffsets==0,
   "an identical monthly batch retains the same known offset ID")
 
@@ -209,5 +236,39 @@ local sameTotalDifferentPurchases=makeMonthlyOffset({
 },{})
 assert(sameTotalDifferentPurchases[1].transactionId~=laterOffsets[1].transactionId,
   "offset identity includes its purchase set, not only amount and period")
+
+local previouslyImported={
+  transactionId="AMZ:previous-order:similar-source",
+  name="Same article",
+  purpose="Same article",
+  amount=-20,
+  bookingDate=offsetDate,
+  endToEndReference="303-5555555-5555555",
+}
+env.LocalStorage.OrderCache={
+  [previouslyImported.endToEndReference]={
+    emittedTransactionsByAccount={
+      [env.emitAccountKey(account.accountNumber)]={previouslyImported},
+    },
+  },
+}
+local similarKnownIds={[previouslyImported.transactionId]=true}
+local similarNewPurchase={
+  name="Same article",
+  purpose="Same article",
+  amount=-20,
+  bookingDate=offsetDate,
+  endToEndReference="303-6666666-6666666",
+}
+local similarContext={transactions={similarNewPurchase},now=offsetDate}
+local function knownTransaction(id)
+  return similarKnownIds[id] and {transactionId=id} or nil
+end
+env.assignAccountTransactionIds(
+  similarContext.transactions,account.accountNumber,offsetDate,knownTransaction)
+env.appendPeriodContraTransactions(
+  similarContext,env.ledgerModeProfile("monthly"),knownTransaction)
+assert(#similarContext.transactions==1,
+  "a purchase similar to a previously emitted source must not create an orphan period offset")
 
 print("test_transaction_ids OK")
