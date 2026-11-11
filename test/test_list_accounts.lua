@@ -82,8 +82,7 @@ local listed = env.ListAccounts({})
 assert(#listed == 3, "shared + 2 subs, got " .. #listed)
 local byNum = {}
 for _, a in ipairs(listed) do byNum[a.accountNumber] = a end
-assert(byNum["user@example.com"].name == "Amazon (Privat + Geschäftlich)",
-  "combined account must identify that it includes both sub-accounts")
+assert(byNum["user@example.com"].name == "Amazon")
 assert(byNum["AO.3PERSONALID01"].name == "Amazon Test User")
 assert(byNum["AO.3BUSINESSID02"].name == "Amazon Example GmbH")
 assert(byNum["AO.3PERSONALID01"].subAccount == nil)
@@ -105,9 +104,9 @@ env.rememberDiscoveredSubAccounts({
 })
 local reverseListed = env.ListAccounts({})
 assert(reverseListed[1].accountNumber == "user@example.com")
-assert(reverseListed[1].name == "Amazon (Privat + Geschäftlich)")
+assert(reverseListed[1].name == "Amazon")
 
-assert(env.listAccountDisplayLabel("user@example.com") == "Amazon (Privat + Geschäftlich)")
+assert(env.listAccountDisplayLabel("user@example.com") == "Amazon")
 assert(env.listAccountDisplayLabel("A3PERSONALID01", {
   kind = "personal", customerName = "Test User", accountNumber = "A3PERSONALID01",
 }) == "Test User")

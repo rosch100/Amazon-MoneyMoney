@@ -45,13 +45,8 @@ Benutzername = Amazon-E-Mail. Passwort = Amazon-Passwort **oder** Cookie-Import
 `COOKIE:…` (siehe unten). Mehrere Amazon-Konten: jeweils einen eigenen Bankzugang
 mit eigener E-Mail anlegen.
 
-Wenn Privat- und Firmenkonto vorhanden sind, erscheinen das Gesamtkonto
-**Amazon (Privat + Geschäftlich)** sowie beide Einzelkonten. Das Gesamtkonto
-enthält dieselben Bestellungen wie die beiden Einzelkonten zusammen. Wähle
-entweder das Gesamtkonto oder die Einzelkonten; wenn du nur Privat- oder nur
-Firmenbestellungen brauchst, wähle nur das betreffende Einzelkonto. So werden
-dieselben Bestellungen nicht in mehreren MoneyMoney-Konten geführt.
-Kontoart *Sonstige* belassen.
+Es erscheinen das gemeinsame Konto **Amazon** und ggf. getrennte Konten für
+persönlich und geschäftlich. Kontoart *Sonstige* belassen.
 
 Alte Zugänge (anderer Service-Name oder alte Kontonummern) löschen und neu
 anlegen — sie werden nicht mehr aktualisiert.
@@ -91,15 +86,6 @@ Pflicht: `session-id` und ein Auth-Cookie (`at-acbde` / `at-main` bzw.
 
 Den Zugang mehrfach aktualisieren, bis nichts Offenes mehr gemeldet wird. Der
 erste vollständige Import kann mehrere Aktualisierungen brauchen.
-
-Die Kontonotiz `scanFiltersMonths` begrenzt auch diesen Erstimport. Zum Beispiel
-setzt `6` das Altersfenster auf sechs Monate; `0` lässt alle Zeiträume zu. Bei
-Geschäftskonten gilt die Grenze für Business Analytics und ergänzende
-Jahresfilter. Amazon bietet in der Bestellliste nur ganze Kalenderjahre an;
-ein gewähltes Jahr kann deshalb auch ältere Bestellungen liefern. Deren Datum
-wird beim Abruf der Bestelldetails geprüft; Umsätze außerhalb des eingestellten
-Fensters werden nicht ausgegeben. Solche Bestellungen können beim Erstimport
-vorübergehend noch offene Bestelldetails verursachen.
 
 Die Bestellnummer steht unter **Referenz**, nicht in der Titelzeile. Käufe,
 Erstattungen und Rückgaben erscheinen als Umsätze. Wenn eine negative
@@ -173,7 +159,7 @@ Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 | `resyncDeletedTransactions` | leer | Gespeicherte Umsätze dieses Kontos erneut anbieten. Neuer, nichtleerer Wert je Wiederholung. |
 | `ledgerMode` | `normal` | Buchungsart festlegen. Siehe [Buchungsarten](#buchungsarten). |
 | `limitOrders` | `250` | Obergrenze neuer Bestellungen und Detailseiten pro Abruf. |
-| `scanFiltersMonths` | `0` | Altersfenster der Listenfilter in Monaten. Jahresfilter können zusätzliche ältere Bestellungen umfassen. `0` = alle angebotenen Zeiträume. |
+| `scanFiltersMonths` | `0` | Altersfenster der Listenfilter in Monaten. `0` = alle angebotenen Zeiträume. |
 | `cookieLanguage` | leer | Sprache der Amazon-Seiten, z. B. `de-DE` oder `en-GB`. Leer = Deutsch (`de-DE`). Wird als Cookie `lc-acbde` mit Unterstrich gesetzt (`de_DE`). |
 | `orderDetailsUrl` | `/your-orders/order-details?orderID=` | Pfadpräfix der Bestelldetails; Bestellnummer wird angehängt. |
 | `debug` | `false` | `true` schaltet die Detail-Protokollierung ein. Die Zeilen stehen im MoneyMoney-Protokollfenster (Fenster → Protokollfenster). Sie können Bestellnummern, Links, Notiz-Werte und Texte aus Login-Seiten enthalten. Nur zur Fehlersuche verwenden und danach wieder entfernen. Ohne `debug` erscheinen nur Ergebnisse, Warnungen und Fehler. |
