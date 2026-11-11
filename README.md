@@ -92,7 +92,7 @@ Pflicht: `session-id` und ein Auth-Cookie (`at-acbde` / `at-main` bzw.
 Den Zugang mehrfach aktualisieren, bis nichts Offenes mehr gemeldet wird. Der
 erste vollständige Import kann mehrere Aktualisierungen brauchen.
 
-Die Kontonotiz `scanFiltersMonths` begrenzt auch diesen Erstimport. Zum Beispiel
+Die Konto-Notiz `scanFiltersMonths` begrenzt auch diesen Erstimport. Zum Beispiel
 setzt `6` das Altersfenster auf sechs Monate; `0` lässt alle Zeiträume zu. Bei
 Geschäftskonten gilt die Grenze für Business Analytics und ergänzende
 Jahresfilter. Amazon bietet in der Bestellliste nur ganze Kalenderjahre an;
