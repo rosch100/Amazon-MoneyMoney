@@ -17,7 +17,7 @@ reviews:
     enabled: true
     drafts: false
     base_branches:
-      - master
+      - ".*"
 
   path_filters:
     - "!**/node_modules/**"
