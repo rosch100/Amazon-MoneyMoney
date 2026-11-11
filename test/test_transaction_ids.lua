@@ -141,11 +141,15 @@ assert(repeatedLegacyIds[1]==legacyLines[1].transactionId
 
 local offsetDate=os.time({year=2026,month=10,day=20,hour=12})
 local function makeMonthlyOffset(purchases,knownIds)
-  env.assignAccountTransactionIds(purchases,account.accountNumber,offsetDate,function(id)
-    return knownIds[id] and {transactionId=id} or nil
-  end)
-  local context={transactions=purchases,now=offsetDate}
-  env.appendPeriodContraTransactions(context,env.ledgerModeProfile("monthly"))
+  local context={
+    transactions=purchases,
+    now=offsetDate,
+    accountNumber=account.accountNumber,
+  }
+  env.appendPeriodContraTransactions(
+    context,env.ledgerModeProfile("monthly"),function(id)
+      return knownIds[id] and {transactionId=id} or nil
+    end)
   local offsets={}
   for _,transaction in ipairs(context.transactions) do
     if transaction.name:find("Amazon Monatsausgleich",1,true)==1 then
