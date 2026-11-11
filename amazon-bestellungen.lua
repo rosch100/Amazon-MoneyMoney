@@ -7087,7 +7087,7 @@ function collectOrdersViaYourOrdersGet(subAccountLabel, kind, refreshSince, opts
   opts=type(opts) == 'table' and opts or {}
   logDebug("SPA/Business shell: harvest via GET timeFilter (css order-history first)")
   ensureOrderCache()
-  local now=os.time()
+  local now=type(opts.now) == 'number' and opts.now or os.time()
   local filters
   if opts.abaGapOnly then
     logDebug("GET harvest: year filters outside ABA window only")
