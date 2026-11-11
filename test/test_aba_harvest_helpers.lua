@@ -71,8 +71,12 @@ env.applyAccountAttribute("scanFiltersMonths", "6", true)
 local limitedJobs = env.enumerateAbaFullHarvestJobs(scanNow)
 assert(#limitedJobs == 1, "six-month limit must not schedule older ABA history")
 assert(limitedJobs[1].span == "CUSTOM_RANGE", "limited ABA harvest must use an exact date range")
-assert(limitedJobs[1].fromUnix == env.addCalendarMonths(scanNow, -6),
-  "limited ABA range must start at the configured month boundary")
+scanNow = os.time({ year = 2026, month = 11, day = 10, hour = 13 })
+limitedJobs = env.enumerateAbaFullHarvestJobs(scanNow)
+assert(#limitedJobs == 1, "six-month limit must retain one ABA range after noon")
+assert(limitedJobs[1].fromUnix == os.time({
+  year = 2026, month = 5, day = 10, hour = 0, min = 0, sec = 0,
+}), "limited ABA range must start at midnight on the configured cutoff date")
 assert(limitedJobs[1].toUnix == scanNow, "limited ABA range must end at refresh time")
 assert(#env.enumerateYourOrdersGetFiltersForAbaGap(scanNow) == 0,
   "six-month limit must not schedule Business GET year filters")
@@ -81,7 +85,9 @@ local widerJobs = env.enumerateAbaFullHarvestJobs(scanNow)
 assert(#widerJobs == 2, "24-month limit must retain exactly one older ABA range")
 assert(widerJobs[1].span == "PAST_12_MONTHS")
 assert(widerJobs[2].span == "CUSTOM_RANGE")
-assert(widerJobs[2].fromUnix == env.addCalendarMonths(scanNow, -24))
+assert(widerJobs[2].fromUnix == os.time({
+  year = 2024, month = 11, day = 10, hour = 0, min = 0, sec = 0,
+}))
 local gapYears = env.enumerateYourOrdersGetFiltersForAbaGap(scanNow)
 assert(#gapYears == 1 and gapYears[1].val == "year-2024",
   "24-month limit must only scan complete year outside ABA's preset span")

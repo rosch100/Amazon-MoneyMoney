@@ -5666,11 +5666,21 @@ function enumerateAbaFullHarvestJobs(now)
   local scanStart=nil
   if monthsLimit ~= nil and monthsLimit > 0 then
     scanStart=addCalendarMonths(now, -monthsLimit)
+    local parts=os.date('*t', scanStart)
+    scanStart=os.time({
+      year=parts.year, month=parts.month, day=parts.day,
+      hour=0, min=0, sec=0,
+    })
     if scanStart < minUnix then
       scanStart=minUnix
     end
   end
   local coverageStart=addCalendarMonths(now, -const.abaCoverageMonths)
+  local coverageParts=os.date('*t', coverageStart)
+  coverageStart=os.time({
+    year=coverageParts.year, month=coverageParts.month, day=coverageParts.day,
+    hour=0, min=0, sec=0,
+  })
   if scanStart == nil or scanStart <= coverageStart then
     table.insert(jobs, {
       reportType=const.abaItemsReportType,

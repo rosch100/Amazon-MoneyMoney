@@ -55,6 +55,17 @@ oldOrder.detailsDate = 0
 assert(env.orderNeedsDetailsForAccount(oldOrder, now, "test@example.com") == false,
   "an old order with known date must not be queued for another detail fetch")
 
+now = os.time({ year = 2026, month = 11, day = 10, hour = 13 })
+local earlyCutoffOrder = makeOrder(10)
+earlyCutoffOrder.bookingDate = os.time({
+  year = 2026,
+  month = 5,
+  day = 10,
+  hour = 8,
+})
+assert(#emit(earlyCutoffOrder) == 1,
+  "an order earlier on the cutoff date must be emitted when refresh starts after noon")
+
 env.LocalStorage = {
   cacheVersion = 23,
   OrderCache = {
