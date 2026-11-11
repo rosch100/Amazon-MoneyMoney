@@ -187,11 +187,12 @@ end
 -- Sandbox: load amazon-bestellungen.lua with host globals stubbed, return its env
 -- so tests can call its global functions (getOrdersFromSummary, etc.).
 ----------------------------------------------------------------------
-function M.loadPlugin(path, localStorage)
+function M.loadPlugin(path, localStorage, hostOverrides)
   local env = {}
+  hostOverrides=type(hostOverrides)=='table' and hostOverrides or {}
 
   local MM = {
-    md5 = function(s) return tostring(s) end,
+    md5 = hostOverrides.md5 or function(s) return tostring(s) end,
     base64 = function(s) return s end,
     urlencode = function(s) return tostring(s) end,
     toEncoding = function(_, s) return s end,
