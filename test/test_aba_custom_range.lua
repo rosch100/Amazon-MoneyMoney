@@ -35,6 +35,15 @@ end
 
 local now = os.time()
 local since = now - (5 * 24 * 60 * 60)
+env.applyAccountAttribute("scanFiltersMonths", "6", true)
+local afterNoon = os.time({
+  year = 2026, month = 11, day = 10, hour = 13,
+})
+local boundaryJob = env.enumerateAbaFullHarvestJobs(afterNoon)
+assert(#boundaryJob == 1 and boundaryJob[1].fromUnix == os.time({
+  year = 2026, month = 5, day = 10, hour = 0, min = 0, sec = 0,
+}), "ABA CUSTOM_RANGE must include the full cutoff day after noon; got "
+  .. tostring(boundaryJob[1] and boundaryJob[1].fromUnix))
 local fromParts = env.unixToAbaDateParts(since)
 local toParts = env.unixToAbaDateParts(now)
 assert(fromParts ~= nil and toParts ~= nil)

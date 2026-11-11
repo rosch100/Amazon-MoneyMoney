@@ -135,8 +135,14 @@ Wenn du von oder zu `inverse` wechselst, lösche die betroffenen Umsätze vorher
 in MoneyMoney. Sonst können dieselben Käufe zusätzlich mit umgekehrtem
 Vorzeichen erscheinen.
 Wenn du von `monthly` zu `yearly` wechselst, lösche die bisherigen
-Monatsausgleiche im neu eingelesenen Zeitraum, falls du nur Jahresausgleiche
-behalten möchtest. Sonst können beide Ausgleichsarten bestehen bleiben.
+Monatsausgleiche nicht einzeln, solange die zugehörigen Käufe und Erstattungen
+in MoneyMoney bleiben. Bereits bekannte Quellumsätze werden beim Neuimport
+ausgefiltert; dadurch entsteht für sie kein neuer Ausgleich. Ein Neuaufbau
+erfordert, alle betroffenen Käufe, Erstattungen und Monatsausgleiche in
+MoneyMoney zu löschen und anschließend `resetCache` auf einen neuen Wert zu
+setzen. `resetCache` allein löscht keine in MoneyMoney gespeicherten Umsätze.
+Ohne diesen vollständigen Neuaufbau können alte Monatsausgleiche bestehen
+bleiben oder Käufe unausgeglichen sein.
 
 Bei `monthly` und `yearly` gleicht jede Sammelbuchung die in diesem Abruf
 ausgegebenen Umsätze des jeweiligen Zeitraums aus. Buchungen mit gleichem
@@ -191,11 +197,11 @@ Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 
 `transactionId` ordnet bereits bekannte Umsätze zu, verhindert aber nicht
 MoneyMoneys Ähnlichkeits-Deduplizierung nach Buchungstag, Betrag, Name und
-Verwendungszweck. Wurden Zeilen zusammengefasst, müssen die betroffenen Umsätze
-gelöscht werden. Für den Neuimport `resetCache` in den Kontonotizen auf einen
-neuen Wert setzen und das Konto mehrfach aktualisieren, bis der Hinweis zum
-Erstimport verschwindet. Der Cache-Neuaufbau löscht keine bereits importierten
-Umsätze.
+Verwendungszweck. Wenn zwei Umsatzzeilen in diesen Feldern identisch sind,
+kann MoneyMoney sie auch nach einem Neuimport zusammenfassen. `resetCache`
+stellt solche zusammengefassten Zeilen daher nicht wieder her; unterschiedliche
+`transactionId`-Werte ändern daran nichts. Diese Erweiterung unterscheidet
+identische Zeilen derzeit nicht in einem für MoneyMoney relevanten Feld.
 
 ## Fehler & Ideen
 

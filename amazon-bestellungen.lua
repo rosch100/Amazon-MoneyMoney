@@ -2696,6 +2696,13 @@ function orderOutsideScanFiltersMonths(order, now)
     return false
   end
   local scanStart=addCalendarMonths(now, -scanMonths)
+  if type(scanStart) == 'number' then
+    local parts=os.date('*t', scanStart)
+    scanStart=os.time({
+      year=parts.year, month=parts.month, day=parts.day,
+      hour=0, min=0, sec=0,
+    })
+  end
   return type(scanStart) == 'number' and order.bookingDate < scanStart
 end
 
@@ -5632,11 +5639,21 @@ function enumerateAbaFullHarvestJobs(now)
   local scanStart=nil
   if monthsLimit ~= nil and monthsLimit > 0 then
     scanStart=addCalendarMonths(now, -monthsLimit)
+    local parts=os.date('*t', scanStart)
+    scanStart=os.time({
+      year=parts.year, month=parts.month, day=parts.day,
+      hour=0, min=0, sec=0,
+    })
     if scanStart < minUnix then
       scanStart=minUnix
     end
   end
   local coverageStart=addCalendarMonths(now, -const.abaCoverageMonths)
+  local coverageParts=os.date('*t', coverageStart)
+  coverageStart=os.time({
+    year=coverageParts.year, month=coverageParts.month, day=coverageParts.day,
+    hour=0, min=0, sec=0,
+  })
   if scanStart == nil or scanStart <= coverageStart then
     table.insert(jobs, {
       reportType=const.abaItemsReportType,
@@ -5860,7 +5877,8 @@ function ensureAbaFullHarvestBatch(refreshSince, now)
       and type(LocalStorage.abaFullHarvestJobs) == 'table'
       and type(LocalStorage.abaFullHarvestHarvestSince) == 'number' then
     local scanMonths=tonumber(config.scanFiltersMonths) or 0
-    if LocalStorage.abaFullHarvestScanMonths ~= scanMonths then
+    if LocalStorage.abaFullHarvestScanMonths ~= nil
+        and LocalStorage.abaFullHarvestScanMonths ~= scanMonths then
       beginAbaFullHarvestBatch(refreshSince, now)
       return
     end
