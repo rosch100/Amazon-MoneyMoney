@@ -125,12 +125,18 @@ in der Tabelle.
 | `monthly` | Gleicht die Umsätze jedes Monats mit einer Sammelbuchung aus. |
 | `yearly` | Gleicht die Umsätze jedes Jahres mit einer Sammelbuchung aus. |
 
-Ein Wechsel von `ledgerMode` ändert vorhandene Umsätze nicht. Für eine andere
-Buchungsart muss die Historie neu eingelesen werden: Setze `resetCache` auf
-einen neuen Wert und aktualisiere das Konto mehrfach, bis der Hinweis zum
-Erstimport verschwindet. Bereits vorhandene Umsätze bleiben dabei erhalten.
-Lösche sie vorher in MoneyMoney, wenn du zu `inverse` wechselst; andernfalls
-erscheinen dieselben Käufe zusätzlich mit umgekehrtem Vorzeichen.
+Ein Wechsel von `ledgerMode` ändert vorhandene Umsätze nicht. Ohne `resetCache`
+gilt die neue Buchungsart nur für neu importierte Umsätze.
+
+Für eine andere Buchungsart in der Historie setze `resetCache` auf einen neuen
+Wert und aktualisiere das Konto mehrfach, bis der Hinweis zum Erstimport
+verschwindet. Bereits vorhandene Umsätze bleiben dabei erhalten.
+Wenn du von oder zu `inverse` wechselst, lösche die betroffenen Umsätze vorher
+in MoneyMoney. Sonst können dieselben Käufe zusätzlich mit umgekehrtem
+Vorzeichen erscheinen.
+Wenn du von `monthly` zu `yearly` wechselst, lösche die bisherigen
+Monatsausgleiche im neu eingelesenen Zeitraum, falls du nur Jahresausgleiche
+behalten möchtest. Sonst können beide Ausgleichsarten bestehen bleiben.
 
 Bei `monthly` und `yearly` gleicht jede Sammelbuchung die in diesem Abruf
 ausgegebenen Umsätze des jeweiligen Zeitraums aus. Buchungen mit gleichem

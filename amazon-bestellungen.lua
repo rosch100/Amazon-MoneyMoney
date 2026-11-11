@@ -7570,7 +7570,11 @@ local function moneyMoneyTransactionKey(transaction)
   return table.concat(parts)
 end
 
-function appendPeriodContraTransactions(ctx,profile)
+function appendPeriodContraTransactions(ctx,profile,isKnownTransactionId)
+  if type(isKnownTransactionId)=='function' then
+    assignAccountTransactionIds(
+      ctx.transactions,ctx.accountNumber,ctx.now,isKnownTransactionId)
+  end
   local sums={}
   local transactionIdsByPeriod={}
   local periods={}
@@ -9354,7 +9358,7 @@ function refreshAccountSteps (account, since, isKnownTransactionId)
     if resyncDeletedTransactions then
       print("ledgerMode "..ledgerProfile.mode..": period offsets skipped during transaction resync")
     else
-      appendPeriodContraTransactions(ctx, ledgerProfile)
+      appendPeriodContraTransactions(ctx, ledgerProfile, isKnownTransactionId)
     end
   end
 

@@ -48,7 +48,7 @@ local function makeCache()
   }
 end
 
-local function refresh(mode)
+local function refresh(mode,isKnownTransactionId)
   env.LocalStorage={
     cacheVersion=23,
     loginCounter=1,
@@ -64,7 +64,7 @@ local function refresh(mode)
     accountNumber="test@example.com",
     owner="test@example.com",
     attributes={ledgerMode=mode=="sub" and "mix" or mode},
-  },os.time()-7*86400,function() return nil end)
+  },os.time()-7*86400,isKnownTransactionId or function() return nil end)
 end
 
 local function sum(transactions)
@@ -134,6 +134,23 @@ assert(close(monthlyOffsets["Amazon Monatsausgleich 2026-09"].amount,19.99),
 assert(monthlyOffsets["Amazon Monatsausgleich 2026-10"].purpose
     :find("Monatsausgleich 2026-10 (Abruf ",1,true)==1,
   "monthly offset purpose includes its refresh timestamp")
+
+local knownSourceTransactionId
+for _,transaction in ipairs(monthly.transactions) do
+  if transaction.endToEndReference=="303-1111111-1111111" then
+    knownSourceTransactionId=transaction.transactionId
+    break
+  end
+end
+assert(type(knownSourceTransactionId)=="string",
+  "monthly source transaction has a stable ID")
+local monthlyReimport=refresh("monthly",function(id)
+  if id==knownSourceTransactionId then
+    return {transactionId=id}
+  end
+end)
+assert(close(sum(monthlyReimport.transactions),0),
+  "period offsets balance only source transactions not already imported")
 
 local monthlyResync=resync("monthly","monthly-resync")
 assert(#monthlyResync.transactions>0,"monthly resync restores saved order transactions")
