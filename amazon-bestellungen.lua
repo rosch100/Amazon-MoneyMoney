@@ -1208,7 +1208,7 @@ end
 local baseurl='https://www'..const.domain
 
 -- NOTE: version must be a Lua number (no letters).
-WebBanking{version  = 2.09,
+WebBanking{version  = 2.10,
   url         = baseurl,
   services    = const.services,
   description = const.description}
