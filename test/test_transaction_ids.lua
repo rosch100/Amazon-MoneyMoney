@@ -2,19 +2,7 @@
 -- Run: test/run.sh test/test_transaction_ids.lua
 package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
-local ffi = require("ffi")
-
-ffi.cdef[[
-  unsigned char *MD5(const unsigned char *d, size_t n, unsigned char *md);
-]]
-local crypto = assert(ffi.load("crypto"), "OpenSSL libcrypto is required for transaction-ID tests")
-local function realMd5(value)
-  local digest=ffi.new("unsigned char[16]")
-  assert(crypto.MD5(value,#value,digest)~=nil,"OpenSSL MD5 calculation failed")
-  return (ffi.string(digest,16):gsub(".",function(byte)
-    return string.format("%02x",string.byte(byte))
-  end))
-end
+local realMd5 = require("md5").sumhexa
 
 local env = mm.loadPlugin("amazon-bestellungen.lua",nil,{md5=realMd5})
 assert(realMd5("test")=="098f6bcd4621d373cade4e832627b4f6",
@@ -72,13 +60,18 @@ assert(lines[1].transactionId~=lines[2].transactionId,
 assert(lines[1].transactionId:find("AMZ:"..code..":",1,true)==1,
   "transaction ID is namespaced by order")
 knownIds[lines[1].transactionId]=true
+env.clearOrderEmissionForAccount(env.LocalStorage.OrderCache[code],account.accountNumber)
 local repeated=env.RefreshAccount(account,now-86400,function(id)
   return knownIds[id] and {transactionId=id} or nil
 end)
+local remaining={}
 for _,transaction in ipairs(repeated.transactions) do
-  assert(transaction.endToEndReference~=code,
-    "known transaction IDs are filtered before MoneyMoney sees them")
+  if transaction.endToEndReference==code then
+    remaining[#remaining+1]=transaction
+  end
 end
+assert(#remaining==1 and remaining[1].transactionId==lines[2].transactionId,
+  "known transaction IDs are filtered before MoneyMoney sees them")
 
 local snapshot=env.LocalStorage.OrderCache[code]
 local stored=snapshot.emittedTransactionsByAccount["test@example.com"]
@@ -209,5 +202,35 @@ local sameTotalDifferentPurchases=makeMonthlyOffset({
 },{})
 assert(sameTotalDifferentPurchases[1].transactionId~=laterOffsets[1].transactionId,
   "offset identity includes its purchase set, not only amount and period")
+
+local mixCode="303-5555555-5555555"
+local legacyMixOrder={
+  orderCode=mixCode,
+  emittedTransactionsByAccount={
+    [account.accountNumber]={
+      {name="Amazon Gegenbuchung",amount=10,bookingDate=offsetDate,
+        endToEndReference=mixCode,
+        purpose="Gegenbuchung für Bestellung "..mixCode.." (1)"},
+    },
+  },
+}
+local firstMixBatch={accountNumber=account.accountNumber,transactions={
+  {name="Purchase",amount=-10,bookingDate=offsetDate,endToEndReference=mixCode},
+}}
+env.appendOrderContraTransactions(firstMixBatch,legacyMixOrder,mixCode,1)
+assert(firstMixBatch.transactions[2].purpose
+    =="Gegenbuchung für Bestellung "..mixCode.." (1)",
+  "legacy mix snapshots without transaction IDs do not advance contra numbering")
+env.assignAccountTransactionIds(firstMixBatch.transactions,account.accountNumber,offsetDate)
+env.rememberOrderTransactions(
+  legacyMixOrder,account.accountNumber,firstMixBatch.transactions,1,true)
+
+local secondMixBatch={accountNumber=account.accountNumber,transactions={
+  {name="Refund",amount=2,bookingDate=offsetDate,endToEndReference=mixCode},
+}}
+env.appendOrderContraTransactions(secondMixBatch,legacyMixOrder,mixCode,1)
+assert(secondMixBatch.transactions[2].purpose
+    =="Gegenbuchung für Bestellung "..mixCode.." (2)",
+  "incremental mix refreshes continue numbering after rebuilt contra transactions")
 
 print("test_transaction_ids OK")

@@ -7458,7 +7458,8 @@ function appendOrderContraTransactions(ctx,order,orderCode,firstIndex)
   -- Continue the sequence from the persisted snapshot, including earlier refunds.
   local contraIndex=0
   for _,stored in ipairs(cachedOrderTransactionsForAccount(order,ctx.accountNumber) or {}) do
-    if type(stored.purpose)=='string'
+    if type(stored.transactionId)=='string' and stored.transactionId~=''
+        and type(stored.purpose)=='string'
         and stored.purpose:find(encodeFormText("Gegenbuchung für Bestellung "..orderCode),1,true)==1 then
       contraIndex=contraIndex+1
     end

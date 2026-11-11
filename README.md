@@ -111,12 +111,11 @@ in der Tabelle.
 | `monthly` | Gleicht die Umsätze jedes Monats mit einer Sammelbuchung aus. |
 | `yearly` | Gleicht die Umsätze jedes Jahres mit einer Sammelbuchung aus. |
 
-Ein Wechsel von `ledgerMode` ändert vorhandene Umsätze nicht. Für eine andere
-Buchungsart muss die Historie neu eingelesen werden: Setze `resetCache` auf
-einen neuen Wert und aktualisiere das Konto mehrfach, bis der Hinweis zum
-Erstimport verschwindet. Bereits vorhandene Umsätze bleiben dabei erhalten.
-Lösche sie vorher in MoneyMoney, wenn du zu `inverse` wechselst; andernfalls
-erscheinen dieselben Käufe zusätzlich mit umgekehrtem Vorzeichen.
+Ein Wechsel von `ledgerMode` ändert vorhandene Umsätze nicht. Ohne Änderung an
+`resetCache` gilt die neue Buchungsart daher nur für neu importierte Umsätze.
+Lösche vor einem Wechsel zu oder von `inverse` die betroffenen Umsätze in
+MoneyMoney. Andernfalls können dieselben Käufe mit altem und umgekehrtem
+Vorzeichen bestehen bleiben.
 
 Bei `monthly` und `yearly` gleicht jede Sammelbuchung die in diesem Abruf
 ausgegebenen Umsätze des jeweiligen Zeitraums aus. Buchungen mit gleichem
@@ -127,6 +126,20 @@ Zeitraum erzeugen; die vorherige wird nicht verändert oder ersetzt.
 Bei einem Saldo von null entsteht keine Sammelbuchung. Ihr Buchungstag liegt
 am Periodenende, jedoch nicht in der Zukunft.
 
+Beim Wechsel zwischen `monthly` und `yearly` bleiben alte Sammelbuchungen
+bestehen. Lösche die bisherigen Monats- oder Jahresausgleiche, wenn du nur die
+neue Buchungsart behalten möchtest. Lösche beim Wechsel von `monthly` oder
+`yearly` zu `normal` ebenfalls die nicht mehr gewünschten Sammelbuchungen.
+`resyncDeletedTransactions` stellt gelöschte Monats- und Jahresausgleiche nicht
+wieder her; fehlende Ausgleiche können den Saldo unausgeglichen lassen.
+
+Ein Neuimport mit `resetCache` ist keine verlässliche Methode, gelöschte
+Sammelbuchungen wiederherzustellen: Ähnliche Quellumsätze können dabei
+zusammengefasst werden. Außerdem kann der Neuimport für denselben Zeitraum
+eine neue Sammelbuchung mit anderer `transactionId` erzeugen, während die alte
+Buchung in MoneyMoney bestehen bleibt. Lösche betroffene alte Sammelbuchungen
+vor dem Neuimport.
+
 ## Umlaute und gelöschte Umsätze
 
 Eine normale Aktualisierung ändert bereits gebuchte Zeilen nicht. Titel aus
@@ -136,8 +149,11 @@ beim erneuten Aufbau der Umsatzzeile korrigiert.
 Dafür in den Kontonotizen `resetCache` auf einen **neuen** Wert setzen und das
 Konto mehrfach aktualisieren, bis der Hinweis zum Erstimport verschwindet.
 Damit wird die ganze Bestellhistorie neu gelesen, nicht nur der Zeitraum seit
-dem letzten Abruf. Bereits vorhandene Umsätze bleiben; gelöschte kommen wieder
-dazu.
+dem letzten Abruf. Bereits vorhandene Umsätze bleiben; gelöschte
+Bestellumsätze können wiederkommen. Sammelbuchungen für `monthly` und `yearly`
+bilden eine Ausnahme: Ihre Wiederherstellung ist nicht verlässlich und kann
+neue Buchungen neben alten erzeugen. Beachte dazu die Hinweise unter
+[Buchungsarten](#buchungsarten).
 
 `resyncDeletedTransactions` reicht dafür nicht. Dabei werden die schon
 gespeicherten Texte erneut geschickt.
@@ -167,10 +183,12 @@ Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 `transactionId` ordnet bereits bekannte Umsätze zu, verhindert aber nicht
 MoneyMoneys Ähnlichkeits-Deduplizierung nach Buchungstag, Betrag, Name und
 Verwendungszweck. Wurden Zeilen zusammengefasst, müssen die betroffenen Umsätze
-gelöscht werden. Für den Neuimport `resetCache` in den Kontonotizen auf einen
-neuen Wert setzen und das Konto mehrfach aktualisieren, bis der Hinweis zum
-Erstimport verschwindet. Der Cache-Neuaufbau löscht keine bereits importierten
-Umsätze.
+gelöscht werden. Der Neuimport kann sie nicht zuverlässig einzeln
+wiederherstellen. Setze dafür `resetCache` in den Kontonotizen auf einen neuen
+Wert und aktualisiere das Konto mehrfach, bis der Hinweis zum Erstimport
+verschwindet. Bei `monthly` und `yearly` lösche vorher auch die betroffenen
+alten Sammelbuchungen. Der Cache-Neuaufbau löscht keine bereits importierten
+Umsätze; neu erzeugte Sammelbuchungen können deshalb neben den alten stehen.
 
 ## Fehler & Ideen
 
