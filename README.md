@@ -114,8 +114,11 @@ in der Tabelle.
 Ein Wechsel von `ledgerMode` ändert vorhandene Umsätze nicht. Ohne Änderung an
 `resetCache` gilt die neue Buchungsart daher nur für neu importierte Umsätze.
 Vor einem Wechsel zwischen `normal` und `inverse` müssen die betroffenen
-Umsätze gelöscht werden, damit alte Buchungen mit umgekehrtem Vorzeichen nicht
-zusätzlich bestehen bleiben. Das gilt beim Wechsel in beide Richtungen.
+Umsätze in MoneyMoney gelöscht werden, damit alte Buchungen mit umgekehrtem
+Vorzeichen nicht zusätzlich bestehen bleiben. Setze danach `resetCache` auf
+einen neuen Wert und aktualisiere das Konto mehrfach, bis der Hinweis zum
+Erstimport verschwindet. So werden die Bestellungen mit der neuen Buchungsart
+erneut eingelesen. Der Cache-Neuaufbau allein löscht keine vorhandenen Umsätze.
 
 Bei `monthly` und `yearly` gleicht jede Sammelbuchung die in diesem Abruf
 ausgegebenen Umsätze des jeweiligen Zeitraums aus. Buchungen mit gleichem
