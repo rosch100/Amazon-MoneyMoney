@@ -168,4 +168,51 @@ env.ensureAbaFullHarvestBatch(0, now)
 assert(env.LocalStorage.abaRollupPaginationVersion == 3)
 assert(env.LocalStorage.abaFullHarvestReplayRequired == true)
 
+-- Starting a widened batch must not erase the requirement to complete it.
+env.applyAccountAttribute("scanFiltersMonths", "120", true)
+env.LocalStorage = {
+  refreshSince = now - 7 * 86400,
+  abaRollupPaginationVersion = 3,
+  lastHarvestScanMonths = 6,
+  OrderCache = {
+    ["303-business-widened"] = {
+      orderCode = "303-business-widened",
+      subAccountKind = "business",
+      detailsDate = 0,
+    },
+  },
+}
+assert(env.scanWindowExpandedSinceLastHarvest() == true)
+env.takeAbaFullHarvestJobBatch(env.LocalStorage.refreshSince, now)
+assert(env.LocalStorage.abaFullHarvestHasMore == true,
+  "test requires more full-harvest jobs after the first batch")
+assert(env.scanWindowExpandedSinceLastHarvest() == true,
+  "a started ABA batch must not count as a completed harvest")
+assert(env.isIncrementalMoneyMoneyRefresh(env.LocalStorage.refreshSince, now) == false,
+  "a started full ABA batch must keep incremental routing disabled")
+local resumedJobs = env.enumerateAbaReportJobs(env.LocalStorage.refreshSince, now)
+assert(#resumedJobs > 0, "subsequent refresh must resume full-harvest jobs")
+assert(resumedJobs[1].span == "CUSTOM_RANGE",
+  "resumed batch must use its next full-history job")
+
+-- An open full batch remains non-incremental even when the configured window is unlimited.
+env.applyAccountAttribute("scanFiltersMonths", "0", true)
+env.LocalStorage = {
+  refreshSince = now - 7 * 86400,
+  lastHarvestSince = now - 7 * 86400,
+  lastHarvestScanMonths = 0,
+  abaRollupPaginationVersion = 3,
+  OrderCache = {
+    ["303-business-unlimited"] = {
+      orderCode = "303-business-unlimited",
+      subAccountKind = "business",
+      detailsDate = 0,
+    },
+  },
+}
+env.takeAbaFullHarvestJobBatch(env.LocalStorage.refreshSince, now)
+assert(env.abaHarvestStillOpen())
+assert(env.isIncrementalMoneyMoneyRefresh(env.LocalStorage.refreshSince, now) == false,
+  "an open unlimited ABA batch must not switch to incremental report jobs")
+
 print("test_aba_batch_reset_empty_cache OK")

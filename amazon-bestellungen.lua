@@ -909,41 +909,26 @@ function markInitialSyncHarvestDone()
   end
 end
 
-function ordersNeedingDetailsForInitialSync(now)
+function ordersNeedingDetailsForInitialSync(now, accountNumbers)
   if type(now) ~= 'number' then
     return false
   end
-  local pending=ordersNeedingDetailsInCache(now)
-  if #pending > 0 then
-    return true, pending[1].orderCode
+  if type(accountNumbers) ~= 'table' or #accountNumbers == 0 then
+    return false
   end
-  return false
-end
-
-function initialSyncSubAccountsNotYetRefreshed()
-  local discovered=LocalStorage and LocalStorage.discoveredSubAccounts
-  local refreshed=LocalStorage and LocalStorage.initialSyncRefreshedAccounts
-  if type(discovered) ~= 'table' or #discovered <= 1 then
-    return {}
-  end
-  if type(refreshed) ~= 'table' then
-    return discovered
-  end
-  -- The combined MoneyMoney account harvests every discovered sub-account.
-  -- It therefore satisfies the initial-sync requirement on its own.
-  if refreshed[emitAccountKey(secUsername)] ~= nil then
-    return {}
-  end
-  local missing={}
-  for _,sub in ipairs(discovered) do
-    if type(sub) == 'table' and type(sub.accountNumber) == 'string' then
-      local key=emitAccountKey(sub.accountNumber)
-      if refreshed[key] == nil then
-        missing[#missing+1]=sub.accountNumber
-      end
+  for _,accountNumber in ipairs(accountNumbers) do
+    local pending
+    if type(accountNumber) == 'string' and accountNumber ~= ''
+        and not isCombinedMoneyMoneyAccount(accountNumber) then
+      pending=ordersNeedingDetailsForAccount(accountNumber, now)
+    else
+      pending=ordersNeedingDetailsInCache(now)
+    end
+    if #pending > 0 then
+      return true, pending[1].orderCode
     end
   end
-  return missing
+  return false
 end
 
 function isSubAccountScanComplete()
@@ -957,30 +942,48 @@ function isSubAccountScanComplete()
   return state.incomplete ~= true
 end
 
-function tryCompleteInitialSync(now)
+function tryCompleteInitialSync(now, sessionComplete)
   if not isPendingInitialSync() or not isInitialSyncHarvestDone() then
     return
   end
-  if isAccountSetupSession() then
+  if isAccountSetupSession() or sessionComplete ~= true then
     return
   end
-  if not hasInitialSyncRefreshedAccounts() then
+  local refreshed=initialSyncRefreshedAccountNumbers()
+  if #refreshed == 0 then
     return
   end
-  local detailsPending, detailsLabel=ordersNeedingDetailsForInitialSync(now)
+  local detailsPending, detailsLabel=ordersNeedingDetailsForInitialSync(now, refreshed)
   if detailsPending then
     if type(detailsLabel) == 'string' then
       MM.printStatus("Amazon: Erstimport – Bestelldetails noch offen (z. B. "..detailsLabel..")")
     end
     return
   end
-  local notRefreshed=initialSyncSubAccountsNotYetRefreshed()
-  if #notRefreshed > 0 then
-    print("Erstimport: Unterkonten noch nicht abgerufen:", table.concat(notRefreshed, ", "))
-    MM.printStatus("Amazon: Erstimport – weitere Unterkonten beim ersten Abruf aktualisieren")
+  clearPendingInitialSync()
+end
+
+function tryCompleteInitialSyncAfterRefresh(accountNumber, now)
+  if not isPendingInitialSync() or isAccountSetupSession()
+      or not isInitialSyncHarvestDone() then
     return
   end
-  clearPendingInitialSync()
+  if not hasInitialSyncRefreshedAccounts() then
+    return
+  end
+  local detailsPending, detailsLabel=ordersNeedingDetailsForInitialSync(
+    now, initialSyncRefreshedAccountNumbers())
+  if detailsPending then
+    if type(detailsLabel) == 'string' then
+      MM.printStatus("Amazon: Erstimport – Bestelldetails noch offen (z. B. "..detailsLabel..")")
+    end
+    return
+  end
+  -- A combined-account refresh covers every discovered sub-account, while a
+  -- single sub-account refresh must wait for MoneyMoney's EndSession selection.
+  if isCombinedMoneyMoneyAccount(accountNumber) then
+    clearPendingInitialSync()
+  end
 end
 
 function effectiveRefreshSince(since)
@@ -5452,8 +5455,10 @@ function validMoneyMoneyRefreshAge(refreshSince, now)
 end
 
 function scanWindowExpandedSinceLastHarvest()
-  local previous=LocalStorage and tonumber(
-    LocalStorage.lastHarvestScanMonths or LocalStorage.abaFullHarvestScanMonths)
+  if abaHarvestStillOpen() then
+    return true
+  end
+  local previous=LocalStorage and tonumber(LocalStorage.lastHarvestScanMonths)
   local configured=tonumber(config.scanFiltersMonths)
   if configured == nil then
     return false
@@ -5854,7 +5859,8 @@ function ensureAbaFullHarvestBatch(refreshSince, now)
       and type(LocalStorage.abaFullHarvestJobs) == 'table'
       and type(LocalStorage.abaFullHarvestHarvestSince) == 'number' then
     local scanMonths=tonumber(config.scanFiltersMonths) or 0
-    if LocalStorage.abaFullHarvestScanMonths ~= scanMonths then
+    if LocalStorage.abaFullHarvestScanMonths ~= nil
+        and LocalStorage.abaFullHarvestScanMonths ~= scanMonths then
       beginAbaFullHarvestBatch(refreshSince, now)
       return
     end
@@ -7787,7 +7793,10 @@ function subAccountScanMatchesRefresh(state)
   if type(state) ~= 'table' or type(LocalStorage.refreshSince) ~= 'number' then
     return false
   end
-  return type(state.harvestSince) == 'number' and state.harvestSince == LocalStorage.refreshSince
+  local scanMonths=tonumber(config.scanFiltersMonths) or 0
+  return type(state.harvestSince) == 'number'
+    and state.harvestSince == LocalStorage.refreshSince
+    and tonumber(state.harvestScanMonths) == scanMonths
 end
 
 function newSubAccountScanDoneState(totalNew, incomplete)
@@ -7797,6 +7806,7 @@ function newSubAccountScanDoneState(totalNew, incomplete)
     incomplete=incomplete and true or false,
     loginCounter=LocalStorage.loginCounter,
     harvestSince=LocalStorage.refreshSince,
+    harvestScanMonths=tonumber(config.scanFiltersMonths) or 0,
     plan={},
     index=1,
   }
@@ -7853,6 +7863,7 @@ function completeSubAccountScan(state, incomplete)
   state.incomplete=incomplete and true or false
   state.phase='done'
   state.harvestSince=LocalStorage.refreshSince
+  state.harvestScanMonths=tonumber(config.scanFiltersMonths) or 0
 end
 
 function continueMfaSubAccountSwitch(state, otpCode)
@@ -7987,6 +7998,7 @@ function beginSubAccountScanPlan(options, priorityKind)
     totalNew=0,
     incomplete=false,
     loginCounter=LocalStorage.loginCounter,
+    harvestScanMonths=tonumber(config.scanFiltersMonths) or 0,
     harvestedPlanThisRefresh={},
   }
 end
@@ -8179,6 +8191,12 @@ end
 function continueSubAccountScan(otpCode)
   realignSubAccountScanForHarvestPriority(LocalStorage.harvestPriorityKind)
   local state=LocalStorage.subAccountScan
+  local scanMonths=tonumber(config.scanFiltersMonths) or 0
+  if type(state) == 'table' and tonumber(state.harvestScanMonths) ~= scanMonths then
+    print("sub-account scan stale (scan window changed); restarting")
+    clearSubAccountScanState()
+    state=nil
+  end
   if state ~= nil and state.phase == 'done' then
     return nil
   end
@@ -9322,7 +9340,7 @@ function refreshAccountSteps (account, since, isKnownTransactionId)
   if shouldRecordInitialSyncAccountRefresh(harvest, scanErr, scanComplete) then
     recordInitialSyncAccountRefresh(account.accountNumber)
   end
-  tryCompleteInitialSync(now)
+  tryCompleteInitialSyncAfterRefresh(account.accountNumber, now)
 
   local ctx={
     transactions=transactions,
@@ -9386,7 +9404,7 @@ end
 
 function EndSession ()
   clearAccountSetupState()
-  tryCompleteInitialSync(os.time())
+  tryCompleteInitialSync(os.time(), true)
   local persistLogin = shouldPersistAmazonLoginSession(LocalStorage)
   -- Multi-login and COOKIE: import: keep cookies; remote logout would invalidate
   -- the jar (imported at-* tokens) for the next sync of this login.

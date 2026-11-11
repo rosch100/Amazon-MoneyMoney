@@ -132,8 +132,22 @@ assert(env.shouldRunAccountHarvest(moneyMoneySince, now) == true,
   "expanding the saved scan window must bypass details-only optimization")
 
 env.LocalStorage.lastHarvestScanMonths = nil
-env.LocalStorage.abaFullHarvestScanMonths = nil
+env.LocalStorage.abaFullHarvestScanMonths = 24
 assert(env.isIncrementalMoneyMoneyRefresh(moneyMoneySince, now) == false,
-  "a configured window with existing orders and no prior window must replay history")
+  "an active ABA batch must not count as a completed scan window")
+
+env.LocalStorage.subAccountScan = {
+  phase = "done",
+  totalNew = 1,
+  incomplete = false,
+  loginCounter = env.LocalStorage.loginCounter,
+  harvestSince = moneyMoneySince,
+  harvestScanMonths = 6,
+}
+env.LocalStorage.refreshSince = moneyMoneySince
+assert(env.resolveSubAccountScanCache() == nil,
+  "completed sub-account scan with a narrower window must not be reused")
+assert(env.LocalStorage.subAccountScan == nil,
+  "stale sub-account scan state must be discarded when the window expands")
 
 print("test_incremental_session_optimizations OK")
