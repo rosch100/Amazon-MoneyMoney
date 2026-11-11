@@ -141,6 +141,9 @@ assert(repeatedLegacyIds[1]==legacyLines[1].transactionId
 
 local offsetDate=os.time({year=2026,month=10,day=20,hour=12})
 local function makeMonthlyOffset(purchases,knownIds)
+  env.assignAccountTransactionIds(purchases,account.accountNumber,offsetDate,function(id)
+    return knownIds[id] and {transactionId=id} or nil
+  end)
   local context={transactions=purchases,now=offsetDate}
   env.appendPeriodContraTransactions(context,env.ledgerModeProfile("monthly"))
   local offsets={}
@@ -166,6 +169,7 @@ local existingPurchase={
 local firstOffsets=makeMonthlyOffset({existingPurchase},{})
 assert(#firstOffsets==1,"first monthly batch creates a balancing offset")
 local firstOffsetId=firstOffsets[1].transactionId
+local firstSourceId=existingPurchase.transactionId
 
 local newPurchase={
   name="New purchase",
@@ -175,12 +179,15 @@ local newPurchase={
   endToEndReference="303-2222222-2222222",
 }
 local laterOffsets=makeMonthlyOffset(
-  {existingPurchase,newPurchase},{[firstOffsetId]=true})
+  {existingPurchase,newPurchase},{[firstOffsetId]=true,[firstSourceId]=true})
 assert(#laterOffsets==1,"a changed monthly batch still emits its new offset")
 assert(laterOffsets[1].transactionId~=firstOffsetId,
   "monthly offsets for changed period contents receive distinct IDs")
+assert(math.abs(laterOffsets[1].amount-20)<0.0001,
+  "later refresh offsets only the newly emitted source after filtering its known source")
 local repeatedOffsets=makeMonthlyOffset(
-  {existingPurchase,newPurchase},{[laterOffsets[1].transactionId]=true})
+  {existingPurchase,newPurchase},{[firstSourceId]=true,
+    [newPurchase.transactionId]=true,[laterOffsets[1].transactionId]=true})
 assert(#repeatedOffsets==0,
   "an identical monthly batch retains the same known offset ID")
 

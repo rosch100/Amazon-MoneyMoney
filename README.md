@@ -113,9 +113,9 @@ in der Tabelle.
 
 Ein Wechsel von `ledgerMode` ändert vorhandene Umsätze nicht. Ohne Änderung an
 `resetCache` gilt die neue Buchungsart daher nur für neu importierte Umsätze.
-Lösche vor einem Wechsel zu oder von `inverse` die betroffenen Umsätze in
-MoneyMoney. Andernfalls können dieselben Käufe mit altem und umgekehrtem
-Vorzeichen bestehen bleiben.
+Vor einem Wechsel zwischen `normal` und `inverse` müssen die betroffenen
+Umsätze gelöscht werden, damit alte Buchungen mit umgekehrtem Vorzeichen nicht
+zusätzlich bestehen bleiben. Das gilt beim Wechsel in beide Richtungen.
 
 Bei `monthly` und `yearly` gleicht jede Sammelbuchung die in diesem Abruf
 ausgegebenen Umsätze des jeweiligen Zeitraums aus. Buchungen mit gleichem
@@ -130,6 +130,9 @@ Beim Wechsel zwischen `monthly` und `yearly` bleiben alte Sammelbuchungen
 bestehen. Lösche die bisherigen Monats- oder Jahresausgleiche, wenn du nur die
 neue Buchungsart behalten möchtest. Lösche beim Wechsel von `monthly` oder
 `yearly` zu `normal` ebenfalls die nicht mehr gewünschten Sammelbuchungen.
+Das gilt auch für die Quellumsätze: `resetCache` allein löscht sie nicht aus
+MoneyMoney. Lösche vor dem Neuimport die betroffenen Käufe und Sammelbuchungen,
+wenn sie nicht neben den neu importierten Zeilen bestehen bleiben sollen.
 `resyncDeletedTransactions` stellt gelöschte Monats- und Jahresausgleiche nicht
 wieder her; fehlende Ausgleiche können den Saldo unausgeglichen lassen.
 
@@ -153,7 +156,8 @@ dem letzten Abruf. Bereits vorhandene Umsätze bleiben; gelöschte
 Bestellumsätze können wiederkommen. Sammelbuchungen für `monthly` und `yearly`
 bilden eine Ausnahme: Ihre Wiederherstellung ist nicht verlässlich und kann
 neue Buchungen neben alten erzeugen. Beachte dazu die Hinweise unter
-[Buchungsarten](#buchungsarten).
+[Buchungsarten](#buchungsarten). Lösche vor dem Neuimport auch die betroffenen
+alten Sammelbuchungen.
 
 `resyncDeletedTransactions` reicht dafür nicht. Dabei werden die schon
 gespeicherten Texte erneut geschickt.
