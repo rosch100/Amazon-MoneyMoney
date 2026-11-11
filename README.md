@@ -146,6 +146,11 @@ Abrufe mit weiteren Umsätzen können zusätzliche Sammelbuchungen für denselbe
 Zeitraum erzeugen; die vorherige wird nicht verändert oder ersetzt.
 Bei einem Saldo von null entsteht keine Sammelbuchung. Ihr Buchungstag liegt
 am Periodenende, jedoch nicht in der Zukunft.
+`resyncDeletedTransactions` stellt gelöschte Monats- und Jahresausgleiche nicht
+wieder her. Ein vollständiger Neuimport mit `resetCache` kann neue
+Periodenausgleiche erzeugen; bereits importierte Buchungen bleiben dabei
+bestehen. Entferne betroffene alte Ausgleiche vor dem Neuimport, damit keine
+doppelten Sammelbuchungen entstehen.
 
 ## Umlaute und gelöschte Umsätze
 
