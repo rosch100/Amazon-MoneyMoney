@@ -240,4 +240,45 @@ assert(secondMixBatch.transactions[2].purpose
     =="Gegenbuchung für Bestellung "..mixCode.." (2)",
   "incremental mix refreshes continue numbering after rebuilt contra transactions")
 
+local legacyResyncCode="303-6666666-6666666"
+local legacyResyncOrder={
+  orderCode=legacyResyncCode,
+  orderPositions={{purpose="Legacy mix item",amount=1000,qty=1}},
+  orderSum=1000,
+  orderTotal=1000,
+  bookingDate=offsetDate,
+  detailsDate=offsetDate+86400*30,
+  detailsParsed=true,
+  emittedAccounts={[account.accountNumber]=true},
+  emittedTransactionsByAccount={
+    [account.accountNumber]={
+      {name="Legacy mix item",amount=-10,bookingDate=offsetDate,
+        transactionId="AMZ:"..legacyResyncCode..":legacy-purchase",
+        endToEndReference=legacyResyncCode,purpose="Legacy mix item"},
+      {name="Amazon Gegenbuchung",amount=10,bookingDate=offsetDate,
+        endToEndReference=legacyResyncCode,
+        purpose="Gegenbuchung für Bestellung "..legacyResyncCode.." (1)"},
+    },
+  },
+}
+local legacyResyncContext={
+  accountNumber=account.accountNumber,
+  transactions={},
+  now=offsetDate,
+  divisor=-100,
+  contra="order",
+  resyncDeletedTransactions=true,
+}
+env.appendOrderToRefresh(legacyResyncContext,legacyResyncOrder,legacyResyncCode)
+local rebuiltLegacyContra
+for _,transaction in ipairs(legacyResyncContext.transactions) do
+  if transaction.name=="Amazon Gegenbuchung" then
+    rebuiltLegacyContra=transaction
+  end
+end
+assert(rebuiltLegacyContra
+    and rebuiltLegacyContra.purpose
+      =="Gegenbuchung für Bestellung "..legacyResyncCode.." (1)",
+  "resync rebuilds legacy mix contra numbering from the first transaction")
+
 print("test_transaction_ids OK")
