@@ -101,6 +101,10 @@ wird beim Abruf der Bestelldetails geprüft; Umsätze außerhalb des eingestellt
 Fensters werden nicht ausgegeben. Solche Bestellungen können beim Erstimport
 vorübergehend noch offene Bestelldetails verursachen.
 
+Bestellungen außerhalb des Fensters werden vollständig übersprungen, auch wenn
+später neue Erstattungen hinzukommen. Bereits ausgegebene Bestellungen werden
+nach einer Verkleinerung des Zeitraums ebenfalls nicht mehr aktualisiert.
+
 Die Bestellnummer steht unter **Referenz**, nicht in der Titelzeile. Käufe,
 Erstattungen und Rückgaben erscheinen als Umsätze. Wenn eine negative
 Gutschein- oder Aktionsrabatt-Gutschrift einer positiven Versandposition

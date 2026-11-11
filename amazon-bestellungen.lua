@@ -5672,7 +5672,9 @@ function ensureAbaRollupPaginationUpgrade()
 end
 
 function abaFullHarvestCompleteKey(refreshSince)
+  local scanMonths=tonumber(config.scanFiltersMonths) or 0
   return tostring(refreshSince)..':'..tostring(const.abaRollupPaginationVersion)
+    ..':'..tostring(scanMonths)
 end
 
 function isAbaFullHarvestCompleteForRefresh(refreshSince)
@@ -5811,7 +5813,8 @@ function ensureAbaFullHarvestBatch(refreshSince, now)
     return
   end
   ensureAbaRollupPaginationUpgrade()
-  if isIncrementalMoneyMoneyRefresh(refreshSince, now) and not abaHarvestStillOpen() then
+  if isIncrementalMoneyMoneyRefresh(refreshSince, now) and not abaHarvestStillOpen()
+      and LocalStorage.abaFullHarvestScanMonths == (tonumber(config.scanFiltersMonths) or 0) then
     clearAbaFullHarvestBatch()
     return
   end

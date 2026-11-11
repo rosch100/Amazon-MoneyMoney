@@ -104,6 +104,60 @@ env.markAbaFullHarvestCompleteForRefresh(0)
 assert(env.isAbaFullHarvestCompleteForRefresh(0) == true)
 assert(env.shouldRestartAbaFullHarvestBatch(0, now) == false)
 
+-- A completed batch belongs to its scan window; changing the window must start a new batch.
+env.applyAccountAttribute("scanFiltersMonths", "6", true)
+env.LocalStorage = {
+  refreshSince = 0,
+  abaRollupPaginationVersion = 3,
+  abaRollupHarvestIncomplete = nil,
+  OrderCache = {
+    ["303-business-1"] = {
+      orderCode = "303-business-1",
+      subAccountKind = "business",
+      detailsDate = 0,
+    },
+  },
+}
+env.beginAbaFullHarvestBatch(0, now)
+env.LocalStorage.abaFullHarvestJobs = nil
+env.LocalStorage.abaFullHarvestJobIndex = nil
+env.LocalStorage.abaFullHarvestHasMore = false
+env.markAbaFullHarvestCompleteForRefresh(0)
+assert(env.isAbaFullHarvestCompleteForRefresh(0) == true)
+env.applyAccountAttribute("scanFiltersMonths", "24", true)
+env.ensureAbaFullHarvestBatch(0, now)
+assert(env.isAbaFullHarvestCompleteForRefresh(0) == false,
+  "a completed batch for a different scan window must be stale")
+assert(env.LocalStorage.abaFullHarvestScanMonths == 24)
+assert(type(env.LocalStorage.abaFullHarvestJobs) == "table",
+  "changing a completed scan window must start a new batch")
+
+-- Incremental refreshes must also restart a completed batch when its scan window changes.
+local incrementalSince=now-7*86400
+env.applyAccountAttribute("scanFiltersMonths", "6", true)
+env.LocalStorage = {
+  refreshSince = incrementalSince,
+  abaRollupPaginationVersion = 3,
+  OrderCache = {
+    ["303-business-2"] = {
+      orderCode = "303-business-2",
+      subAccountKind = "business",
+      detailsDate = 0,
+    },
+  },
+}
+env.beginAbaFullHarvestBatch(incrementalSince, now)
+env.LocalStorage.abaFullHarvestJobs = nil
+env.LocalStorage.abaFullHarvestJobIndex = nil
+env.LocalStorage.abaFullHarvestHasMore = false
+env.markAbaFullHarvestCompleteForRefresh(incrementalSince)
+env.applyAccountAttribute("scanFiltersMonths", "24", true)
+env.ensureAbaFullHarvestBatch(incrementalSince, now)
+assert(env.LocalStorage.abaFullHarvestScanMonths == 24,
+  "incremental refresh must update the stored scan window")
+assert(type(env.LocalStorage.abaFullHarvestJobs) == "table",
+  "incremental refresh must restart a completed batch for a changed window")
+
 -- Pagination upgrade forces a full replay marker.
 env.LocalStorage = {
   refreshSince = 0,
