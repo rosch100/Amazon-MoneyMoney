@@ -2702,14 +2702,10 @@ function orderOutsideScanFiltersMonths(order, now)
   end
   local scanStart=addCalendarMonths(now, -scanMonths)
   if type(scanStart) == 'number' then
-    local scanStartParts=os.date('*t', scanStart)
+    local parts=os.date('*t', scanStart)
     scanStart=os.time({
-      year=scanStartParts.year,
-      month=scanStartParts.month,
-      day=scanStartParts.day,
-      hour=0,
-      min=0,
-      sec=0,
+      year=parts.year, month=parts.month, day=parts.day,
+      hour=0, min=0, sec=0,
     })
   end
   return type(scanStart) == 'number' and order.bookingDate < scanStart
