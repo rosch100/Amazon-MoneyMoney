@@ -185,6 +185,54 @@ assert(laterOffsets[1].transactionId~=firstOffsetId,
   "monthly offsets for changed period contents receive distinct IDs")
 assert(math.abs(laterOffsets[1].amount-20)<0.0001,
   "later refresh offsets only the newly emitted source after filtering its known source")
+
+local productionOrderKnownSources={
+  ["AMZ:known-monthly-source"]=true,
+  [firstOffsetId]=true,
+}
+local productionOrderContext={transactions={
+  {
+    name="Already booked purchase",
+    purpose="Already booked purchase",
+    amount=-10,
+    bookingDate=offsetDate,
+    endToEndReference="303-7777777-7777777",
+    transactionId="AMZ:known-monthly-source",
+  },
+  {
+    name="New purchase after rescan",
+    purpose="New purchase after rescan",
+    amount=-20,
+    bookingDate=offsetDate,
+    endToEndReference="303-8888888-8888888",
+    transactionId="AMZ:new-monthly-source",
+  },
+},now=offsetDate,accountNumber=account.accountNumber}
+local function productionOrderKnownTransaction(id)
+  return productionOrderKnownSources[id] and {transactionId=id} or nil
+end
+env.appendPeriodContraTransactions(
+  productionOrderContext,env.ledgerModeProfile("monthly"),productionOrderKnownTransaction)
+local productionOrderSources={}
+local productionOrderOffsets={}
+for _,transaction in ipairs(productionOrderContext.transactions) do
+  if transaction.name:find("Amazon Monatsausgleich",1,true)==1 then
+    productionOrderOffsets[#productionOrderOffsets+1]=transaction
+  else
+    productionOrderSources[#productionOrderSources+1]=transaction
+  end
+end
+assert(#productionOrderSources==1
+    and productionOrderSources[1].name=="New purchase after rescan",
+  "period calculation filters known source transactions before summing")
+assert(#productionOrderOffsets==1
+    and math.abs(productionOrderOffsets[1].amount-20)<0.0001,
+  "period offset balances only the source transactions still being emitted")
+env.assignAccountTransactionIds(
+  productionOrderOffsets,account.accountNumber,offsetDate,productionOrderKnownTransaction)
+assert(productionOrderOffsets[1].transactionId~=firstOffsetId,
+  "new period offset receives an ID after known source filtering")
+
 local repeatedOffsets=makeMonthlyOffset(
   {existingPurchase,newPurchase},{[firstSourceId]=true,
     [newPurchase.transactionId]=true,[laterOffsets[1].transactionId]=true})
