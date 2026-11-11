@@ -125,14 +125,17 @@ in der Tabelle.
 | `monthly` | Gleicht die Umsätze jedes Monats mit einer Sammelbuchung aus. |
 | `yearly` | Gleicht die Umsätze jedes Jahres mit einer Sammelbuchung aus. |
 
-Ein Wechsel von `ledgerMode` ändert vorhandene Umsätze nicht. Bei einem
-Neuimport mit `inverse` können deshalb Duplikate mit umgekehrten Vorzeichen
-entstehen.
+Ein Wechsel von `ledgerMode` ändert vorhandene Umsätze nicht. Für eine andere
+Buchungsart muss die Historie neu eingelesen werden: Setze `resetCache` auf
+einen neuen Wert und aktualisiere das Konto mehrfach, bis der Hinweis zum
+Erstimport verschwindet. Bereits vorhandene Umsätze bleiben dabei erhalten.
+Lösche sie vorher in MoneyMoney, wenn du zu `inverse` wechselst; andernfalls
+erscheinen dieselben Käufe zusätzlich mit umgekehrtem Vorzeichen.
 
 Bei `monthly` und `yearly` gleicht jede Sammelbuchung die in diesem Abruf
 ausgegebenen Umsätze des jeweiligen Zeitraums aus. Buchungen mit gleichem
 Buchungstag, Betrag, Namen und Verwendungszweck werden dabei nur einmal gezählt.
-Der Verwendungszweck nennt Monat oder Jahr, nicht den Abrufzeitpunkt. Spätere
+Der Verwendungszweck enthält Monat oder Jahr und den Abrufzeitpunkt. Spätere
 Abrufe mit weiteren Umsätzen können zusätzliche Sammelbuchungen für denselben
 Zeitraum erzeugen; die vorherige wird nicht verändert oder ersetzt.
 Bei einem Saldo von null entsteht keine Sammelbuchung. Ihr Buchungstag liegt
@@ -168,13 +171,12 @@ Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 | `keepStorno` | `false` | Nur `true`: Buchung und Gegenbuchung bei voller Erstattung/Storno behalten. |
 | `nameMaxLength` | `0` | Maximale Titellänge in Zeichen. `0` = unbegrenzt. |
 | `resyncDeletedTransactions` | leer | Gespeicherte Umsätze dieses Kontos erneut anbieten. Neuer, nichtleerer Wert je Wiederholung. |
+| `ledgerMode` | `normal` | Buchungsart festlegen. Siehe [Buchungsarten](#buchungsarten). |
 | `limitOrders` | `250` | Obergrenze neuer Bestellungen und Detailseiten pro Abruf. |
 | `scanFiltersMonths` | `0` | Altersfenster der Listenfilter in Monaten. Jahresfilter können zusätzliche ältere Bestellungen umfassen. `0` = alle angebotenen Zeiträume. |
 | `cookieLanguage` | leer | Sprache der Amazon-Seiten, z. B. `de-DE` oder `en-GB`. Leer = Deutsch (`de-DE`). Wird als Cookie `lc-acbde` mit Unterstrich gesetzt (`de_DE`). |
 | `orderDetailsUrl` | `/your-orders/order-details?orderID=` | Pfadpräfix der Bestelldetails; Bestellnummer wird angehängt. |
 | `debug` | `false` | `true` schaltet die Detail-Protokollierung ein. Die Zeilen stehen im MoneyMoney-Protokollfenster (Fenster → Protokollfenster). Sie können Bestellnummern, Links, Notiz-Werte und Texte aus Login-Seiten enthalten. Nur zur Fehlersuche verwenden und danach wieder entfernen. Ohne `debug` erscheinen nur Ergebnisse, Warnungen und Fehler. |
-
-| `ledgerMode` | `normal` | Buchungsart festlegen. Siehe [Buchungsarten](#buchungsarten). |
 
 `transactionId` ordnet bereits bekannte Umsätze zu, verhindert aber nicht
 MoneyMoneys Ähnlichkeits-Deduplizierung nach Buchungstag, Betrag, Name und
