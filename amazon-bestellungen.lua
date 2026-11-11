@@ -748,6 +748,11 @@ function appendCachedOrderTransactions(transactions, order, accountNumber)
     return false
   end
   for _,transaction in ipairs(entries) do
+    if type(transaction.transactionId) ~= 'string' or transaction.transactionId == '' then
+      return false
+    end
+  end
+  for _,transaction in ipairs(entries) do
     table.insert(transactions, copyAccountTransaction(transaction))
   end
   return true
@@ -767,6 +772,17 @@ function accountTransactionsEqual(left, right)
   return true
 end
 
+function transactionIdentityHash(transaction)
+  local fields={
+    tostring(transaction.bookingDate or ''),
+    tostring(transaction.amount or ''),
+    tostring(transaction.name or ''),
+    tostring(transaction.purpose or ''),
+    tostring(transaction.endToEndReference or ''),
+  }
+  return MM.md5(table.concat(fields,'\0'))
+end
+
 function rememberOrderTransactions(order, accountNumber, transactions, firstIndex, replace)
   if #transactions < firstIndex then
     return
@@ -776,15 +792,40 @@ function rememberOrderTransactions(order, accountNumber, transactions, firstInde
   end
   local key=emitAccountKey(accountNumber)
   local entries=order.emittedTransactionsByAccount[key]
+  local existingEntries=type(entries)=='table' and entries or {}
+  if replace then existingEntries={} end
+  local identityCounts={}
+  local matchingIds={}
+  for _,stored in ipairs(existingEntries) do
+    local identity=transactionIdentityHash(stored)
+    identityCounts[identity]=(identityCounts[identity] or 0)+1
+    if type(stored.transactionId)=='string' then
+      matchingIds[identity]=matchingIds[identity] or {}
+      matchingIds[identity][identityCounts[identity]]=stored.transactionId
+    end
+  end
   if replace or type(entries) ~= 'table' then
     entries={}
     order.emittedTransactionsByAccount[key]=entries
   end
+  local nextOccurrence={}
   for index=firstIndex,#transactions do
     local transaction=transactions[index]
+    local identity=transactionIdentityHash(transaction)
+    nextOccurrence[identity]=(nextOccurrence[identity] or 0)+1
+    if type(transaction.transactionId) ~= 'string' or transaction.transactionId == '' then
+      local known=matchingIds[identity] or {}
+      transaction.transactionId=known[nextOccurrence[identity]]
+    end
+    if type(transaction.transactionId) ~= 'string' or transaction.transactionId == '' then
+      transaction.transactionId="AMZ:"..tostring(order.orderCode)..":"
+        ..transactionIdentityHash(transaction)..":"
+        ..tostring(nextOccurrence[identity])
+    end
     local alreadyStored=false
     for _,stored in ipairs(entries) do
-      if accountTransactionsEqual(stored, transaction) then
+      if stored.transactionId == transaction.transactionId
+          or (stored.transactionId == nil and accountTransactionsEqual(stored, transaction)) then
         alreadyStored=true
         break
       end
@@ -2681,12 +2722,12 @@ function appendOrderToRefresh(ctx, order, orderCode)
   end
   local firstTransactionIndex=#ctx.transactions+1
   local isResync=ctx.resyncDeletedTransactions == true
-  local snapshotUsed=isResync
+  local hasEmittedTransactions=orderHasEmittedTransactionsForAccount(order, ctx.accountNumber)
+  local snapshotUsed=isResync and hasEmittedTransactions
     and appendCachedOrderTransactions(ctx.transactions, order, ctx.accountNumber)
   if snapshotUsed then
     return
   end
-  local hasEmittedTransactions=orderHasEmittedTransactionsForAccount(order, ctx.accountNumber)
   if isResync and hasEmittedTransactions then
     clearOrderEmissionForAccount(order, ctx.accountNumber)
   end
@@ -7538,10 +7579,12 @@ function appendOrderContraTransactions(ctx,order,orderCode,firstIndex)
       sums[date]=sums[date]+transaction.amount
     end
   end
-  -- Continue the sequence from the persisted snapshot, including earlier refunds.
+  -- Continue the sequence from the persisted snapshot, including legacy entries.
   local contraIndex=0
   for _,stored in ipairs(cachedOrderTransactionsForAccount(order,ctx.accountNumber) or {}) do
-    if type(stored.purpose)=='string'
+    local hasTransactionId=type(stored.transactionId)=='string' and stored.transactionId~=''
+    if (ctx.resyncDeletedTransactions ~= true or hasTransactionId)
+        and type(stored.purpose)=='string'
         and stored.purpose:find(encodeFormText("Gegenbuchung für Bestellung "..orderCode),1,true)==1 then
       contraIndex=contraIndex+1
     end
@@ -7574,8 +7617,13 @@ local function moneyMoneyTransactionKey(transaction)
   return table.concat(parts)
 end
 
-function appendPeriodContraTransactions(ctx,profile)
+function appendPeriodContraTransactions(ctx,profile,isKnownTransactionId)
+  if type(isKnownTransactionId)=='function' then
+    assignAccountTransactionIds(
+      ctx.transactions,ctx.accountNumber,ctx.now,isKnownTransactionId)
+  end
   local sums={}
+  local transactionIdsByPeriod={}
   local periods={}
   local unique={}
   local uniqueByKey={}
@@ -7594,9 +7642,11 @@ function appendPeriodContraTransactions(ctx,profile)
       local period=os.date(profile.periodFmt,transaction.bookingDate)
       if sums[period]==nil then
         sums[period]=0
+        transactionIdsByPeriod[period]={}
         periods[#periods+1]=period
       end
       sums[period]=sums[period]+transaction.amount
+      transactionIdsByPeriod[period][#transactionIdsByPeriod[period]+1]=transactionIdentityHash(transaction)
     end
   end
   for index=#ctx.transactions,1,-1 do ctx.transactions[index]=nil end
@@ -7608,13 +7658,16 @@ function appendPeriodContraTransactions(ctx,profile)
   for _,period in ipairs(periods) do
     local amount=roundTransactionAmount(-sums[period])
     if amount~=0 then
+      table.sort(transactionIdsByPeriod[period])
       local bookingDate=math.min(getLastDayOfPeriod(period),ctx.now)
+      local purpose=profile.periodLabel..' '..period..' (Abruf '..runLabel..')'
       local transaction={
         name=encodeFormText('Amazon '..profile.periodLabel..' '..period),
         amount=amount,
         bookingDate=bookingDate,
-        purpose=encodeFormText(profile.periodLabel..' '..period..' (Abruf '..runLabel..')'),
+        purpose=encodeFormText(purpose),
         endToEndReference='AMAZON-'..string.upper(profile.periodLabel)..'-'..period,
+        amazonPeriodTransactionSet=MM.md5(table.concat(transactionIdsByPeriod[period],'\0')),
       }
       table.insert(ctx.transactions,transaction)
     end
@@ -9365,7 +9418,7 @@ function refreshAccountSteps (account, since, isKnownTransactionId)
     if resyncDeletedTransactions then
       print("ledgerMode "..ledgerProfile.mode..": period offsets skipped during transaction resync")
     else
-      appendPeriodContraTransactions(ctx, ledgerProfile)
+      appendPeriodContraTransactions(ctx, ledgerProfile, isKnownTransactionId)
     end
   end
 
@@ -9390,6 +9443,7 @@ function refreshAccountSteps (account, since, isKnownTransactionId)
   reportEmptyEmitIfMisaligned(account.accountNumber, transactions, now)
 
   appendIncompleteHarvestDummy(transactions, account.accountNumber, now, harvest, detailsFetchState)
+  assignAccountTransactionIds(transactions,account.accountNumber,now,isKnownTransactionId)
   sortTransactionsNewestFirst(transactions)
   local resyncComplete=scanErr == nil
     and (not harvest or scanComplete)
@@ -9401,6 +9455,41 @@ function refreshAccountSteps (account, since, isKnownTransactionId)
   end
 
   return {balance=ctx.balance/divisor, transactions=transactions}
+end
+
+function assignAccountTransactionIds(transactions,accountNumber,now,isKnownTransactionId)
+  local occurrences={}
+  for _,transaction in ipairs(transactions) do
+    if type(transaction.transactionId)~='string' or transaction.transactionId=='' then
+      local orderCode=transaction.endToEndReference
+      if type(orderCode)~='string' or orderCode=='' then
+        orderCode=transaction.name or transaction.purpose or 'synthetic'
+      end
+      local identity=transactionIdentityHash(transaction)
+      occurrences[identity]=(occurrences[identity] or 0)+1
+      local occurrence=occurrences[identity]
+      if type(transaction.endToEndReference)=='string'
+          and transaction.endToEndReference:match('^AMAZON%-') then
+        transaction.transactionId="AMZ:"..transaction.endToEndReference..":"
+          ..tostring(transaction.amazonPeriodTransactionSet or identity)
+      else
+        transaction.transactionId="AMZ:"..tostring(orderCode)..":"..identity
+          ..":"..tostring(occurrence)
+      end
+    end
+    if type(isKnownTransactionId)=='function'
+        and isKnownTransactionId(transaction.transactionId)~=nil then
+      transaction.knownTransactionId=true
+    end
+    transaction.amazonPeriodTransactionSet=nil
+  end
+  for index=#transactions,1,-1 do
+    if transactions[index].knownTransactionId then
+      table.remove(transactions,index)
+    else
+      transactions[index].knownTransactionId=nil
+    end
+  end
 end
 
 function EndSession ()

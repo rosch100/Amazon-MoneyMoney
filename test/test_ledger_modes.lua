@@ -131,8 +131,9 @@ assert(close(monthlyOffsets["Amazon Monatsausgleich 2026-10"].amount,20),
   "monthly October nets purchase and refund")
 assert(close(monthlyOffsets["Amazon Monatsausgleich 2026-09"].amount,19.99),
   "monthly September offsets the separate order")
-assert(monthlyOffsets["Amazon Monatsausgleich 2026-10"].purpose:find("Abruf",1,true),
-  "monthly offset distinguishes refresh runs")
+assert(monthlyOffsets["Amazon Monatsausgleich 2026-10"].purpose
+    :find("Monatsausgleich 2026-10 (Abruf ",1,true)==1,
+  "monthly offset purpose includes its refresh timestamp")
 
 local monthlyResync=resync("monthly","monthly-resync")
 assert(#monthlyResync.transactions>0,"monthly resync restores saved order transactions")
