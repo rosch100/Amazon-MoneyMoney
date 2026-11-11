@@ -24,6 +24,18 @@ assert(env.LocalStorage.abaFullHarvestJobIndex == 1, "batch must restart at PAST
 assert(type(env.LocalStorage.abaFullHarvestJobs) == "table")
 assert(env.LocalStorage.abaFullHarvestJobs[1].span == "PAST_12_MONTHS")
 
+-- Changing the configured scan window restarts any partially consumed batch.
+env.LocalStorage.abaFullHarvestJobIndex = 2
+env.LocalStorage.abaFullHarvestHasMore = true
+env.LocalStorage.abaFullHarvestScanMonths = 0
+env.applyAccountAttribute("scanFiltersMonths", "6", true)
+env.ensureAbaFullHarvestBatch(0, now)
+assert(env.LocalStorage.abaFullHarvestJobIndex == 1,
+  "changed scan window must restart the ABA batch")
+assert(env.LocalStorage.abaFullHarvestScanMonths == 6)
+assert(#env.LocalStorage.abaFullHarvestJobs == 1)
+assert(env.LocalStorage.abaFullHarvestJobs[1].span == "CUSTOM_RANGE")
+
 -- Business orders in cache (even without emit-ready details) must not trigger restart.
 env.LocalStorage.OrderCache = {
   ["303-business-1"] = {
@@ -33,6 +45,13 @@ env.LocalStorage.OrderCache = {
   },
 }
 env.LocalStorage.abaFullHarvestJobIndex = 5
+env.LocalStorage.abaFullHarvestJobs = {
+  { reportType = "items_report_1", span = "PAST_12_MONTHS" },
+  { reportType = "items_report_1", span = "CUSTOM_RANGE", fromUnix = 1, toUnix = 2 },
+  { reportType = "items_report_1", span = "CUSTOM_RANGE", fromUnix = 3, toUnix = 4 },
+  { reportType = "items_report_1", span = "CUSTOM_RANGE", fromUnix = 5, toUnix = 6 },
+  { reportType = "items_report_1", span = "CUSTOM_RANGE", fromUnix = 7, toUnix = 8 },
+}
 assert(env.countBusinessOrdersInCache() == 1)
 assert(env.shouldRestartAbaFullHarvestBatch(0, now) == false)
 

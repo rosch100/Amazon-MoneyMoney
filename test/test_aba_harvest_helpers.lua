@@ -66,6 +66,26 @@ for i = 2, #allJobs do
 end
 assert(hasCustomRange == true)
 
+local scanNow = os.time({ year = 2026, month = 11, day = 10, hour = 12 })
+env.applyAccountAttribute("scanFiltersMonths", "6", true)
+local limitedJobs = env.enumerateAbaFullHarvestJobs(scanNow)
+assert(#limitedJobs == 1, "six-month limit must not schedule older ABA history")
+assert(limitedJobs[1].span == "CUSTOM_RANGE", "limited ABA harvest must use an exact date range")
+assert(limitedJobs[1].fromUnix == env.addCalendarMonths(scanNow, -6),
+  "limited ABA range must start at the configured month boundary")
+assert(limitedJobs[1].toUnix == scanNow, "limited ABA range must end at refresh time")
+assert(#env.enumerateYourOrdersGetFiltersForAbaGap(scanNow) == 0,
+  "six-month limit must not schedule Business GET year filters")
+env.applyAccountAttribute("scanFiltersMonths", "24", true)
+local widerJobs = env.enumerateAbaFullHarvestJobs(scanNow)
+assert(#widerJobs == 2, "24-month limit must retain exactly one older ABA range")
+assert(widerJobs[1].span == "PAST_12_MONTHS")
+assert(widerJobs[2].span == "CUSTOM_RANGE")
+assert(widerJobs[2].fromUnix == env.addCalendarMonths(scanNow, -24))
+local gapYears = env.enumerateYourOrdersGetFiltersForAbaGap(scanNow)
+assert(#gapYears == 1 and gapYears[1].val == "year-2024",
+  "24-month limit must only scan complete year outside ABA's preset span")
+
 local now = os.time()
 local since = now - (10 * 24 * 60 * 60)
 env.LocalStorage = { OrderCache = { ["303-0000000-0000001"] = {} } }
@@ -104,10 +124,12 @@ local lookalike = env.extractAbaDownloadUrls(
 assert(#lookalike == 0, "lookalike host must not enter ABA download list")
 
 -- Incremental refresh must not discard an unfinished full ABA harvest.
+env.applyAccountAttribute("scanFiltersMonths", "0", true)
 env.LocalStorage = {
   OrderCache = { ["303-1111111-0000001"] = { orderTotal = 1 } },
   abaRollupPaginationVersion = 3,
   abaRollupHarvestIncomplete = "pagination",
+  abaFullHarvestScanMonths = 0,
   abaFullHarvestHasMore = true,
   abaFullHarvestJobs = { { span = "PAST_12_MONTHS" }, { span = "CUSTOM_RANGE" } },
   abaFullHarvestJobIndex = 2,
