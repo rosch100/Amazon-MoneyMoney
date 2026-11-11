@@ -88,7 +88,10 @@ assert(#gapYears == 1 and gapYears[1].val == "year-2024",
 
 local now = os.time()
 local since = now - (10 * 24 * 60 * 60)
-env.LocalStorage = { OrderCache = { ["303-0000000-0000001"] = {} } }
+env.LocalStorage = {
+  OrderCache = { ["303-0000000-0000001"] = {} },
+  lastHarvestScanMonths = 24,
+}
 assert(env.isIncrementalMoneyMoneyRefresh(since, now) == true)
 assert(env.isIncrementalMoneyMoneyRefresh(0, now) == false)
 

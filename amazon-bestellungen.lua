@@ -55,6 +55,7 @@ local AMAZON_LOGIN_STATE_KEYS = {
   'initialSyncRefreshedAccounts',
   'accountSetupSession',
   'lastHarvestSince',
+  'lastHarvestScanMonths',
   'lastListHarvestAt',
   'refreshSince',
   'lastLoginCounter',
@@ -596,6 +597,7 @@ function resetImportState(requireFullReimport)
   clearOrderFilterCaches()
   LocalStorage.invalidCache={}
   LocalStorage.lastHarvestSince=nil
+  LocalStorage.lastHarvestScanMonths=nil
   LocalStorage.lastListHarvestAt=nil
   LocalStorage.subAccountScan=nil
   LocalStorage.pendingInitialSync=nil
@@ -2655,6 +2657,17 @@ function orderOutsideScanFiltersMonths(order, now)
     return false
   end
   local scanStart=addCalendarMonths(now, -scanMonths)
+  if type(scanStart) == 'number' then
+    local scanStartParts=os.date('*t', scanStart)
+    scanStart=os.time({
+      year=scanStartParts.year,
+      month=scanStartParts.month,
+      day=scanStartParts.day,
+      hour=0,
+      min=0,
+      sec=0,
+    })
+  end
   return type(scanStart) == 'number' and order.bookingDate < scanStart
 end
 
@@ -5438,7 +5451,26 @@ function validMoneyMoneyRefreshAge(refreshSince, now)
   return age
 end
 
+function scanWindowExpandedSinceLastHarvest()
+  local previous=LocalStorage and tonumber(
+    LocalStorage.lastHarvestScanMonths or LocalStorage.abaFullHarvestScanMonths)
+  local configured=tonumber(config.scanFiltersMonths)
+  if configured == nil then
+    return false
+  end
+  if previous == nil then
+    return orderCacheHasOrders() and configured > 0
+  end
+  if previous <= 0 then
+    return false
+  end
+  return configured <= 0 or configured > previous
+end
+
 function isIncrementalMoneyMoneyRefresh(refreshSince, now)
+  if scanWindowExpandedSinceLastHarvest() then
+    return false
+  end
   if not orderCacheHasOrders() then
     return false
   end
@@ -6018,6 +6050,9 @@ function shouldRunAccountHarvest(refreshSince, now)
   end
   if isAccountSetupSession() then
     return false
+  end
+  if scanWindowExpandedSinceLastHarvest() then
+    return true
   end
   if isPendingInitialSync() and not isInitialSyncHarvestDone() then
     return true
@@ -9249,6 +9284,7 @@ function refreshAccountSteps (account, since, isKnownTransactionId)
     elseif scanComplete then
       LocalStorage.lastLoginCounter = LocalStorage.loginCounter
       LocalStorage.lastHarvestSince=refreshSince
+      LocalStorage.lastHarvestScanMonths=tonumber(config.scanFiltersMonths) or 0
       LocalStorage.lastListHarvestAt=now
       if isPendingInitialSync() then
         markInitialSyncHarvestDone()

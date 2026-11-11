@@ -20,6 +20,7 @@ local env = mm.loadPlugin("amazon-bestellungen.lua", {
     },
   },
   lastHarvestSince = moneyMoneySince,
+  lastHarvestScanMonths = 0,
   lastListHarvestAt = now - 60,
   loginCounter = 2,
   lastLoginCounter = 2,
@@ -116,5 +117,23 @@ local n, e = env.collectOrdersFromOrderList("Biz", "business", moneyMoneySince)
 assert(e == nil)
 assert(n == 0)
 assert(entered == false)
+
+-- Expanding a completed scan window must bypass the details-only/incremental paths.
+env.applyAccountAttribute("scanFiltersMonths", "0", true)
+env.LocalStorage.lastHarvestScanMonths = 0
+env.LocalStorage.lastListHarvestAt = now - 60
+assert(env.isIncrementalMoneyMoneyRefresh(moneyMoneySince, now) == true,
+  "unchanged scan window should retain details-only optimization")
+env.LocalStorage.lastHarvestScanMonths = 6
+env.applyAccountAttribute("scanFiltersMonths", "24", true)
+assert(env.isIncrementalMoneyMoneyRefresh(moneyMoneySince, now) == false,
+  "expanding the saved scan window must force full-harvest routing")
+assert(env.shouldRunAccountHarvest(moneyMoneySince, now) == true,
+  "expanding the saved scan window must bypass details-only optimization")
+
+env.LocalStorage.lastHarvestScanMonths = nil
+env.LocalStorage.abaFullHarvestScanMonths = nil
+assert(env.isIncrementalMoneyMoneyRefresh(moneyMoneySince, now) == false,
+  "a configured window with existing orders and no prior window must replay history")
 
 print("test_incremental_session_optimizations OK")

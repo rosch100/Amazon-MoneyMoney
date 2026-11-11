@@ -36,6 +36,20 @@ assert(#emit(makeOrder(9)) == 0,
 assert(#emit(makeOrder(10)) == 1,
   "an order on the six-month cutoff date must be emitted")
 
+now = os.time({ year = 2026, month = 11, day = 10, hour = 13 })
+local earlyCutoffOrder = makeOrder(10)
+earlyCutoffOrder.bookingDate = os.time({
+  year = 2026,
+  month = 5,
+  day = 10,
+  hour = 8,
+})
+assert(#emit(earlyCutoffOrder) == 1,
+  "an order earlier on the cutoff date must be emitted")
+
+assert(#emit(makeOrder(10)) == 1,
+  "an order on the cutoff date must be emitted regardless of refresh time")
+
 local oldOrder = makeOrder(9)
 oldOrder.detailsDate = 0
 assert(env.orderNeedsDetailsForAccount(oldOrder, now, "test@example.com") == false,
