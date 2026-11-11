@@ -94,8 +94,57 @@ derselben Bestellung betragsgleich netto oder brutto (bei 19 % oder 7 % MwSt.)
 entspricht, werden beide als von Amazon (Prime) übernommene Versandkosten
 unterdrückt. Das gilt auch bei Rücksendungen. Nicht passende Warenkorb-Gutscheine
 bleiben in Bestellungen ohne Rückgabe erhalten; in Bestellungen mit Rückgabe
-werden nicht gepaarte Gutscheine und Rabatte nicht gebucht. Der synthetische
-**Amazon Ausgleich** ist derzeit deaktiviert.
+werden nicht gepaarte Gutscheine und Rabatte nicht gebucht.
+
+### Buchungsarten
+
+Die Kontonotiz `ledgerMode` legt fest, wie Käufe und Erstattungen gebucht werden.
+Standard ist `normal`.
+Setze `ledgerMode` unter **Konto → Einstellungen → Notizen** auf einen der Werte
+in der Tabelle.
+
+| Wert | Wirkung |
+|------|---------|
+| `normal` | Käufe sind Ausgaben, Erstattungen Einnahmen. |
+| `inverse` | Umgekehrte Vorzeichen: Käufe sind Einnahmen, Erstattungen Ausgaben. |
+| `mix` | Gleicht jede Bestellung für jeden Buchungstag mit einer Gegenbuchung aus. |
+| `monthly` | Gleicht die Umsätze jedes Monats mit einer Sammelbuchung aus. |
+| `yearly` | Gleicht die Umsätze jedes Jahres mit einer Sammelbuchung aus. |
+
+Ein Wechsel von `ledgerMode` ändert vorhandene Umsätze nicht. Ohne Änderung an
+`resetCache` gilt die neue Buchungsart daher nur für neu importierte Umsätze.
+Vor einem Wechsel zwischen `normal` und `inverse` müssen die betroffenen
+Umsätze in MoneyMoney gelöscht werden, damit alte Buchungen mit umgekehrtem
+Vorzeichen nicht zusätzlich bestehen bleiben. Setze danach `resetCache` auf
+einen neuen Wert und aktualisiere das Konto mehrfach, bis der Hinweis zum
+Erstimport verschwindet. So werden die Bestellungen mit der neuen Buchungsart
+erneut eingelesen. Der Cache-Neuaufbau allein löscht keine vorhandenen Umsätze.
+
+Bei `monthly` und `yearly` gleicht jede Sammelbuchung die in diesem Abruf
+ausgegebenen Umsätze des jeweiligen Zeitraums aus. Buchungen mit gleichem
+Buchungstag, Betrag, Namen und Verwendungszweck werden dabei nur einmal gezählt.
+Der Verwendungszweck enthält Monat oder Jahr und den Abrufzeitpunkt. Spätere
+Abrufe mit weiteren Umsätzen können zusätzliche Sammelbuchungen für denselben
+Zeitraum erzeugen; die vorherige wird nicht verändert oder ersetzt.
+Bei einem Saldo von null entsteht keine Sammelbuchung. Ihr Buchungstag liegt
+am Periodenende, jedoch nicht in der Zukunft.
+
+Beim Wechsel zwischen `monthly` und `yearly` bleiben alte Sammelbuchungen
+bestehen. Lösche die bisherigen Monats- oder Jahresausgleiche, wenn du nur die
+neue Buchungsart behalten möchtest. Lösche beim Wechsel von `monthly` oder
+`yearly` zu `normal` ebenfalls die nicht mehr gewünschten Sammelbuchungen.
+Das gilt auch für die Quellumsätze: `resetCache` allein löscht sie nicht aus
+MoneyMoney. Lösche vor dem Neuimport die betroffenen Käufe und Sammelbuchungen,
+wenn sie nicht neben den neu importierten Zeilen bestehen bleiben sollen.
+`resyncDeletedTransactions` stellt gelöschte Monats- und Jahresausgleiche nicht
+wieder her; fehlende Ausgleiche können den Saldo unausgeglichen lassen.
+
+Ein Neuimport mit `resetCache` ist keine verlässliche Methode, gelöschte
+Sammelbuchungen wiederherzustellen: Ähnliche Quellumsätze können dabei
+zusammengefasst werden. Außerdem kann der Neuimport für denselben Zeitraum
+eine neue Sammelbuchung mit anderer `transactionId` erzeugen, während die alte
+Buchung in MoneyMoney bestehen bleibt. Lösche betroffene alte Sammelbuchungen
+vor dem Neuimport.
 
 ## Umlaute und gelöschte Umsätze
 
@@ -106,15 +155,19 @@ beim erneuten Aufbau der Umsatzzeile korrigiert.
 Dafür in den Kontonotizen `resetCache` auf einen **neuen** Wert setzen und das
 Konto mehrfach aktualisieren, bis der Hinweis zum Erstimport verschwindet.
 Damit wird die ganze Bestellhistorie neu gelesen, nicht nur der Zeitraum seit
-dem letzten Abruf. Bereits vorhandene Umsätze bleiben; gelöschte kommen wieder
-dazu.
+dem letzten Abruf. Bereits vorhandene Umsätze bleiben; gelöschte
+Bestellumsätze können wiederkommen. Sammelbuchungen für `monthly` und `yearly`
+bilden eine Ausnahme: Ihre Wiederherstellung ist nicht verlässlich und kann
+neue Buchungen neben alten erzeugen. Beachte dazu die Hinweise unter
+[Buchungsarten](#buchungsarten). Lösche vor dem Neuimport auch die betroffenen
+alten Sammelbuchungen.
 
 `resyncDeletedTransactions` reicht dafür nicht. Dabei werden die schon
 gespeicherten Texte erneut geschickt.
 
 ## Konto-Notizen
 
-Schlüssel/Wert unter **Konto → Einstellungen → Notizen**. Die ersten sechs
+Schlüssel/Wert unter **Konto → Einstellungen → Notizen**. Die ersten sieben
 Felder bietet MoneyMoney beim Anlegen an; die erweiterten werden nur gelesen,
 wenn sie manuell eingetragen sind. Leere Werte behalten den Standard.
 Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
@@ -127,11 +180,22 @@ Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 | `keepStorno` | `false` | Nur `true`: Buchung und Gegenbuchung bei voller Erstattung/Storno behalten. |
 | `nameMaxLength` | `0` | Maximale Titellänge in Zeichen. `0` = unbegrenzt. |
 | `resyncDeletedTransactions` | leer | Gespeicherte Umsätze dieses Kontos erneut anbieten. Neuer, nichtleerer Wert je Wiederholung. |
+| `ledgerMode` | `normal` | Buchungsart festlegen. Siehe [Buchungsarten](#buchungsarten). |
 | `limitOrders` | `250` | Obergrenze neuer Bestellungen und Detailseiten pro Abruf. |
 | `scanFiltersMonths` | `0` | Altersfenster der Listenfilter in Monaten. `0` = alle angebotenen Zeiträume. |
 | `cookieLanguage` | leer | Sprache der Amazon-Seiten, z. B. `de-DE` oder `en-GB`. Leer = Deutsch (`de-DE`). Wird als Cookie `lc-acbde` mit Unterstrich gesetzt (`de_DE`). |
 | `orderDetailsUrl` | `/your-orders/order-details?orderID=` | Pfadpräfix der Bestelldetails; Bestellnummer wird angehängt. |
 | `debug` | `false` | `true` schaltet die Detail-Protokollierung ein. Die Zeilen stehen im MoneyMoney-Protokollfenster (Fenster → Protokollfenster). Sie können Bestellnummern, Links, Notiz-Werte und Texte aus Login-Seiten enthalten. Nur zur Fehlersuche verwenden und danach wieder entfernen. Ohne `debug` erscheinen nur Ergebnisse, Warnungen und Fehler. |
+
+`transactionId` ordnet bereits bekannte Umsätze zu, verhindert aber nicht
+MoneyMoneys Ähnlichkeits-Deduplizierung nach Buchungstag, Betrag, Name und
+Verwendungszweck. Wurden Zeilen zusammengefasst, müssen die betroffenen Umsätze
+gelöscht werden. Der Neuimport kann sie nicht zuverlässig einzeln
+wiederherstellen. Setze dafür `resetCache` in den Kontonotizen auf einen neuen
+Wert und aktualisiere das Konto mehrfach, bis der Hinweis zum Erstimport
+verschwindet. Bei `monthly` und `yearly` lösche vorher auch die betroffenen
+alten Sammelbuchungen. Der Cache-Neuaufbau löscht keine bereits importierten
+Umsätze; neu erzeugte Sammelbuchungen können deshalb neben den alten stehen.
 
 ## Fehler & Ideen
 

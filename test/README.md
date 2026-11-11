@@ -15,10 +15,11 @@ real (unmodified) `amazon-bestellungen.lua`, and calls its global functions
 ```sh
 brew install luajit luarocks
 luarocks --lua-version=5.1 install xmlua   # libxml2 binding (pulls luacs, luautf8)
+luarocks --lua-version=5.1 install md5    # real MD5 hashes for transaction-ID tests
 ```
 
-`xmlua` installs into `~/.luarocks` for Lua 5.1 (LuaJIT). `test/run.sh` wires up
-the right module paths for you.
+The LuaRocks dependencies install into `~/.luarocks` for Lua 5.1 (LuaJIT).
+`test/run.sh` wires up the right module paths for you.
 
 ## Running the tests
 
