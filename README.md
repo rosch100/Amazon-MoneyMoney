@@ -118,15 +118,11 @@ entstehen.
 Bei `monthly` und `yearly` gleicht jede Sammelbuchung die in diesem Abruf
 ausgegebenen Umsätze des jeweiligen Zeitraums aus. Buchungen mit gleichem
 Buchungstag, Betrag, Namen und Verwendungszweck werden dabei nur einmal gezählt.
-Spätere Abrufe können weitere Sammelbuchungen für denselben Monat oder dasselbe
-Jahr erzeugen.
+Der Verwendungszweck nennt Monat oder Jahr, nicht den Abrufzeitpunkt. Spätere
+Abrufe mit weiteren Umsätzen können zusätzliche Sammelbuchungen für denselben
+Zeitraum erzeugen; die vorherige wird nicht verändert oder ersetzt.
 Bei einem Saldo von null entsteht keine Sammelbuchung. Ihr Buchungstag liegt
 am Periodenende, jedoch nicht in der Zukunft.
-
-Bei `monthly` und `yearly` stellt `resyncDeletedTransactions` gelöschte
-Perioden-Gegenbuchungen nicht wieder her. Vorhandene Umsätze können dadurch
-unausgeglichen bleiben. `resetCache` kann beim Neuimport neue
-Perioden-Gegenbuchungen erzeugen; bereits importierte Umsätze bleiben bestehen.
 
 ## Umlaute und gelöschte Umsätze
 
@@ -164,10 +160,15 @@ Nur `blackListOrders` ist als Alias von `blacklistOrders` erlaubt.
 | `orderDetailsUrl` | `/your-orders/order-details?orderID=` | Pfadpräfix der Bestelldetails; Bestellnummer wird angehängt. |
 | `debug` | `false` | `true` schaltet die Detail-Protokollierung ein. Die Zeilen stehen im MoneyMoney-Protokollfenster (Fenster → Protokollfenster). Sie können Bestellnummern, Links, Notiz-Werte und Texte aus Login-Seiten enthalten. Nur zur Fehlersuche verwenden und danach wieder entfernen. Ohne `debug` erscheinen nur Ergebnisse, Warnungen und Fehler. |
 
+| `ledgerMode` | `normal` | Buchungsart festlegen. Siehe [Buchungsarten](#buchungsarten). |
+
 `transactionId` ordnet bereits bekannte Umsätze zu, verhindert aber nicht
 MoneyMoneys Ähnlichkeits-Deduplizierung nach Buchungstag, Betrag, Name und
 Verwendungszweck. Wurden Zeilen zusammengefasst, müssen die betroffenen Umsätze
-gelöscht und per `resetCache` erneut importiert werden.
+gelöscht werden. Für den Neuimport `resetCache` in den Kontonotizen auf einen
+neuen Wert setzen und das Konto mehrfach aktualisieren, bis der Hinweis zum
+Erstimport verschwindet. Der Cache-Neuaufbau löscht keine bereits importierten
+Umsätze.
 
 ## Fehler & Ideen
 

@@ -9,8 +9,21 @@
 -- tests exercise parsing, not live scraping.
 
 local xmlua = require("xmlua")
+local ffi = require("ffi")
 
 local M = {}
+
+ffi.cdef[[
+  unsigned char *MD5(const unsigned char *d, size_t n, unsigned char *md);
+]]
+local crypto = assert(ffi.load("crypto"), "OpenSSL libcrypto is required for transaction-ID tests")
+local function md5(value)
+  local digest=ffi.new("unsigned char[16]")
+  assert(crypto.MD5(value,#value,digest)~=nil,"OpenSSL MD5 calculation failed")
+  return (ffi.string(digest,16):gsub(".",function(byte)
+    return string.format("%02x",string.byte(byte))
+  end))
+end
 
 ----------------------------------------------------------------------
 -- NodeSet: array-like (result[1] is the first element) AND method-bearing.
@@ -187,11 +200,12 @@ end
 -- Sandbox: load amazon-bestellungen.lua with host globals stubbed, return its env
 -- so tests can call its global functions (getOrdersFromSummary, etc.).
 ----------------------------------------------------------------------
-function M.loadPlugin(path, localStorage)
+function M.loadPlugin(path, localStorage, hostOverrides)
   local env = {}
+  hostOverrides=type(hostOverrides)=='table' and hostOverrides or {}
 
   local MM = {
-    md5 = function(s) return tostring(s) end,
+    md5 = hostOverrides.md5 or function(s) return tostring(s) end,
     base64 = function(s) return s end,
     urlencode = function(s) return tostring(s) end,
     toEncoding = function(_, s) return s end,
