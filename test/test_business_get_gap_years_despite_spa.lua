@@ -7,7 +7,8 @@ local mm = require("mm_shim")
 local env = mm.loadPlugin("amazon-bestellungen.lua")
 env.LocalStorage = { OrderCache = {}, loginCounter = 1 }
 env.applyAccountAttribute("scanFiltersMonths", "24", true)
-local gapYear = tonumber(os.date("%Y")) - 2
+local now = os.time({ year = 2026, month = 6, day = 15, hour = 12 })
+local gapYear = 2024
 local gapYearFilter = "year-" .. gapYear
 local gapOrderCode = "302-" .. gapYear .. "000-1111111"
 
@@ -46,6 +47,7 @@ assert(env.businessGetHarvestBlockedBySpaShell() == true,
   "last30 probe is SPA for this fixture")
 
 local n = env.collectOrdersViaYourOrdersGet("Altanis GmbH", "business", 0, {
+  now = now,
   fullHarvest = true,
   abaGapOnly = true,
 })

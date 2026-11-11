@@ -4,6 +4,7 @@ package.path = "./test/?.lua;" .. package.path
 local mm = require("mm_shim")
 
 local env = mm.loadPlugin("amazon-bestellungen.lua")
+env.applyAccountAttribute("scanFiltersMonths", "6", true)
 env.LocalStorage = {
   loginCounter = 1,
   refreshSince = 1000,
@@ -11,6 +12,7 @@ env.LocalStorage = {
     phase = "done",
     loginCounter = 1,
     harvestSince = 1000,
+    harvestScanMonths = 6,
     totalNew = 3,
     incomplete = false,
   },
@@ -21,13 +23,20 @@ assert(env.subAccountScanMatchesRefresh(env.LocalStorage.subAccountScan) == true
 env.LocalStorage.refreshSince = 2000
 assert(env.subAccountScanMatchesRefresh(env.LocalStorage.subAccountScan) == false)
 
+env.LocalStorage.refreshSince = 1000
+env.applyAccountAttribute("scanFiltersMonths", "24", true)
+assert(env.subAccountScanMatchesRefresh(env.LocalStorage.subAccountScan) == false,
+  "a completed scan must not be reused after the scan window expands")
+
 env.LocalStorage.subAccountScan = {
   phase = "done",
   loginCounter = 1,
   harvestSince = 2000,
+  harvestScanMonths = 24,
   totalNew = 7,
   incomplete = false,
 }
+env.applyAccountAttribute("scanFiltersMonths", "24", true)
 env.LocalStorage.refreshSince = 2000
 assert(env.resolveSubAccountScanCache() == 7)
 
@@ -39,6 +48,7 @@ env.LocalStorage.subAccountScan = {
   phase = "done",
   loginCounter = 1,
   totalNew = 3,
+  harvestScanMonths = 24,
   incomplete = false,
 }
 env.LocalStorage.refreshSince = 1000

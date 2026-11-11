@@ -26,6 +26,7 @@ assert(fullJobs[1].span ~= "CUSTOM_RANGE")
 assert(env.effectiveScanFiltersMonths(recentSince, now) == 0)
 
 -- Populated cache + recent since => incremental.
+env.clearAbaFullHarvestBatch()
 env.LocalStorage.OrderCache = { ["303-1111111-2222222"] = { orderTotal = 1 } }
 assert(env.orderCacheHasOrders() == true)
 assert(env.isIncrementalMoneyMoneyRefresh(recentSince, now) == true)
