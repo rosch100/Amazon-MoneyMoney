@@ -133,6 +133,10 @@ assert(env.shouldRunAccountHarvest(moneyMoneySince, now) == true,
 
 env.LocalStorage.lastHarvestScanMonths = nil
 env.LocalStorage.abaFullHarvestScanMonths = 24
+env.LocalStorage.abaFullHarvestHasMore = true
+env.LocalStorage.abaFullHarvestJobs = { { span = "PAST_12_MONTHS" } }
+env.LocalStorage.abaFullHarvestJobIndex = 1
+env.LocalStorage.abaFullHarvestHarvestSince = moneyMoneySince
 assert(env.isIncrementalMoneyMoneyRefresh(moneyMoneySince, now) == false,
   "an active ABA batch must not count as a completed scan window")
 

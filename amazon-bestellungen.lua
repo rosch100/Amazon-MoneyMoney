@@ -5458,7 +5458,8 @@ function scanWindowExpandedSinceLastHarvest()
   if abaHarvestStillOpen() then
     return true
   end
-  local previous=LocalStorage and tonumber(LocalStorage.lastHarvestScanMonths)
+  local previous=LocalStorage and tonumber(
+    LocalStorage.lastHarvestScanMonths or LocalStorage.abaFullHarvestScanMonths)
   local configured=tonumber(config.scanFiltersMonths)
   if configured == nil then
     return false
