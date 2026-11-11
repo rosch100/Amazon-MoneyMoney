@@ -136,10 +136,16 @@ assert(monthlyOffsets["Amazon Monatsausgleich 2026-10"].purpose
   "monthly offset purpose includes its refresh timestamp")
 
 local knownSourceTransactionId
+local firstOctoberContraId
+local knownMonthlyIds={}
 for _,transaction in ipairs(monthly.transactions) do
   if transaction.endToEndReference=="303-1111111-1111111" then
-    knownSourceTransactionId=transaction.transactionId
-    break
+    knownSourceTransactionId=knownSourceTransactionId or transaction.transactionId
+    knownMonthlyIds[transaction.transactionId]=true
+  end
+  if transaction.name=="Amazon Monatsausgleich 2026-10" then
+    firstOctoberContraId=transaction.transactionId
+    knownMonthlyIds[transaction.transactionId]=true
   end
 end
 assert(type(knownSourceTransactionId)=="string",
@@ -151,6 +157,41 @@ local monthlyReimport=refresh("monthly",function(id)
 end)
 assert(close(sum(monthlyReimport.transactions),0),
   "period offsets balance only source transactions not already imported")
+
+-- A later refresh balances only newly emitted purchases for the same month.
+local laterDate=os.time({year=2026,month=10,day=28,hour=12})
+local laterOrderCode="303-4444444-4444444"
+env.LocalStorage.OrderCache[laterOrderCode]={
+  orderCode=laterOrderCode,
+  accountNumber="Business",
+  subAccountKind="business",
+  orderPositions={{purpose="Item D",amount=750,qty=1}},
+  orderSum=750,
+  orderTotal=750,
+  bookingDate=laterDate,
+  detailsDate=os.time()+86400,
+  detailsParsed=true,
+}
+local laterRefresh=env.RefreshAccount({
+  accountNumber="test@example.com",
+  owner="test@example.com",
+  attributes={ledgerMode="monthly"},
+},os.time()-7*86400,function(id)
+  return knownMonthlyIds[id] and {transactionId=id} or nil
+end)
+local laterOctoberOffset
+for _,transaction in ipairs(laterRefresh.transactions) do
+  if transaction.name=="Amazon Monatsausgleich 2026-10" then
+    laterOctoberOffset=transaction
+  end
+  assert(transaction.endToEndReference~="303-1111111-1111111",
+    "previously imported source must not be returned again")
+end
+assert(laterOctoberOffset~=nil,"later refresh creates an offset for the new purchase")
+assert(close(laterOctoberOffset.amount,7.5),
+  "later refresh offsets only the newly emitted purchase")
+assert(laterOctoberOffset.transactionId~=firstOctoberContraId,
+  "later refresh offset ID differs from the already booked offset")
 
 local monthlyResync=resync("monthly","monthly-resync")
 assert(#monthlyResync.transactions>0,"monthly resync restores saved order transactions")
