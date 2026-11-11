@@ -7455,10 +7455,11 @@ function appendOrderContraTransactions(ctx,order,orderCode,firstIndex)
       sums[date]=sums[date]+transaction.amount
     end
   end
-  -- Continue the sequence from the persisted snapshot, including earlier refunds.
+  -- Continue the sequence from the persisted snapshot, including legacy entries.
   local contraIndex=0
   for _,stored in ipairs(cachedOrderTransactionsForAccount(order,ctx.accountNumber) or {}) do
-    if type(stored.transactionId)=='string' and stored.transactionId~=''
+    local hasTransactionId=type(stored.transactionId)=='string' and stored.transactionId~=''
+    if (ctx.resyncDeletedTransactions ~= true or hasTransactionId)
         and type(stored.purpose)=='string'
         and stored.purpose:find(encodeFormText("Gegenbuchung für Bestellung "..orderCode),1,true)==1 then
       contraIndex=contraIndex+1

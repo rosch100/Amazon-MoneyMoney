@@ -273,23 +273,26 @@ local legacyMixOrder={
     },
   },
 }
+local function legacyMixContraPurpose(number)
+  return "Gegenbuchung für Bestellung "..mixCode.." ("..number..")"
+end
 local firstMixBatch={accountNumber=account.accountNumber,transactions={
   {name="Purchase",amount=-10,bookingDate=offsetDate,endToEndReference=mixCode},
 }}
 env.appendOrderContraTransactions(firstMixBatch,legacyMixOrder,mixCode,1)
 assert(firstMixBatch.transactions[2].purpose
-    =="Gegenbuchung für Bestellung "..mixCode.." (1)",
-  "legacy mix snapshots without transaction IDs do not advance contra numbering")
+    =="Gegenbuchung für Bestellung "..mixCode.." (2)",
+  "incremental mix refreshes continue after legacy offsets without IDs")
 env.assignAccountTransactionIds(firstMixBatch.transactions,account.accountNumber,offsetDate)
 env.rememberOrderTransactions(
-  legacyMixOrder,account.accountNumber,firstMixBatch.transactions,1,true)
+  legacyMixOrder,account.accountNumber,firstMixBatch.transactions,1,false)
 
 local secondMixBatch={accountNumber=account.accountNumber,transactions={
   {name="Refund",amount=2,bookingDate=offsetDate,endToEndReference=mixCode},
 }}
 env.appendOrderContraTransactions(secondMixBatch,legacyMixOrder,mixCode,1)
 assert(secondMixBatch.transactions[2].purpose
-    =="Gegenbuchung für Bestellung "..mixCode.." (2)",
+    =="Gegenbuchung für Bestellung "..mixCode.." (3)",
   "incremental mix refreshes continue numbering after rebuilt contra transactions")
 
 local legacyResyncCode="303-6666666-6666666"
@@ -313,6 +316,9 @@ local legacyResyncOrder={
     },
   },
 }
+local function legacyResyncContraPurpose(number)
+  return "Gegenbuchung für Bestellung "..legacyResyncCode.." ("..number..")"
+end
 local legacyResyncContext={
   accountNumber=account.accountNumber,
   transactions={},
@@ -330,7 +336,7 @@ for _,transaction in ipairs(legacyResyncContext.transactions) do
 end
 assert(rebuiltLegacyContra
     and rebuiltLegacyContra.purpose
-      =="Gegenbuchung für Bestellung "..legacyResyncCode.." (1)",
+      ==legacyResyncContraPurpose(1),
   "resync rebuilds legacy mix contra numbering from the first transaction")
 
 print("test_transaction_ids OK")
